@@ -1,0 +1,172 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* LoginPage custom styles */
+.lp-root {
+  min-height: 100vh;
+  display: flex; align-items: center; justify-content: center;
+  padding: 24px;
+  position: relative; overflow: hidden;
+  font-family: 'DM Sans', sans-serif;
+  background: #07070d;
+}
+
+/* ── dot grid ── */
+.lp-grid {
+  position: absolute; inset: 0; opacity: 0.18;
+  background-image: radial-gradient(#1e1e2e 0.5px, transparent 0.5px);
+  background-size: 22px 22px;
+  pointer-events: none;
+}
+
+/* ── radial glows ── */
+.lp-glow-a {
+  position: absolute; top: -15%; left: -10%;
+  width: 55%; height: 55%;
+  background: radial-gradient(circle, rgba(212,175,55,0.07) 0%, transparent 65%);
+  filter: blur(80px); pointer-events: none;
+}
+.lp-glow-b {
+  position: absolute; bottom: -20%; right: -10%;
+  width: 50%; height: 50%;
+  background: radial-gradient(circle, rgba(59,130,246,0.06) 0%, transparent 65%);
+  filter: blur(80px); pointer-events: none;
+}
+.lp-glow-c {
+  position: absolute; top: 40%; left: 50%;
+  transform: translate(-50%, -50%);
+  width: 60%; height: 60%;
+  background: radial-gradient(circle, rgba(212,175,55,0.025) 0%, transparent 60%);
+  filter: blur(100px); pointer-events: none;
+}
+
+/* ── card ── */
+.lp-card {
+  position: relative; z-index: 10;
+  width: 100%; max-width: 400px;
+  animation: lp-fade-up 0.55s cubic-bezier(.22,1,.36,1) both;
+}
+
+@keyframes lp-fade-up {
+  from { opacity: 0; transform: translateY(24px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ── keypad button ── */
+.kp {
+  height: 62px; border-radius: 12px;
+  background: rgba(255,255,255,0.025);
+  border: 1px solid rgba(255,255,255,0.06);
+  color: #eeeef5; font-size: 22px; font-weight: 300;
+  font-family: 'DM Sans', sans-serif;
+  cursor: pointer; transition: all 150ms ease;
+  display: flex; align-items: center; justify-content: center;
+  position: relative; overflow: hidden;
+  user-select: none;
+}
+.kp::after {
+  content: ''; position: absolute; inset: 0;
+  background: radial-gradient(circle at 50% 0%, rgba(255,255,255,0.06), transparent 70%);
+  opacity: 0; transition: opacity 150ms ease;
+}
+.kp:hover { background: rgba(255,255,255,0.055); border-color: rgba(255,255,255,0.12); transform: translateY(-2px); box-shadow: 0 8px 20px rgba(0,0,0,0.3); }
+.kp:hover::after { opacity: 1; }
+.kp:active { transform: scale(0.93); background: rgba(255,255,255,0.09); }
+
+.kp-clear {
+  background: rgba(239,68,68,0.07);
+  border-color: rgba(239,68,68,0.15);
+  color: #ef4444; font-size: 11px; font-weight: 700;
+  letter-spacing: 0.08em; text-transform: uppercase;
+}
+.kp-clear:hover { background: rgba(239,68,68,0.14); border-color: rgba(239,68,68,0.3); }
+
+.kp-enter {
+  background: linear-gradient(145deg, #d4af37, #b8932a);
+  border: none; color: #07070d; font-size: 12px; font-weight: 800;
+  letter-spacing: 0.12em; text-transform: uppercase;
+  box-shadow: 0 6px 20px rgba(212,175,55,0.2);
+}
+.kp-enter:hover:not(:disabled) {
+  background: linear-gradient(145deg, #e0bc44, #c49a31);
+  box-shadow: 0 10px 28px rgba(212,175,55,0.35);
+  transform: translateY(-2px);
+}
+.kp-enter:active:not(:disabled) { transform: scale(0.95); }
+.kp-enter:disabled { opacity: 0.3; cursor: not-allowed; transform: none; box-shadow: none; }
+
+/* ── PIN dot ── */
+.pin-dot {
+  width: 13px; height: 13px; border-radius: 50%;
+  transition: all 250ms cubic-bezier(0.175, 0.885, 0.32, 1.275);
+}
+.pin-dot.empty {
+  background: transparent;
+  border: 2px solid rgba(255,255,255,0.12);
+}
+.pin-dot.filled {
+  background: #d4af37;
+  border: 2px solid #d4af37;
+  box-shadow: 0 0 14px rgba(212,175,55,0.5);
+  transform: scale(1.25);
+}
+
+/* ── identity field ── */
+.lp-input {
+  width: 100%; padding: 13px 16px 13px 44px;
+  background: rgba(255,255,255,0.03);
+  border: 1px solid rgba(255,255,255,0.07);
+  border-radius: 12px; color: #eeeef5;
+  font-size: 14px; font-family: 'DM Sans', sans-serif;
+  outline: none; transition: all 180ms ease; color-scheme: dark;
+}
+.lp-input::placeholder { color: rgba(255,255,255,0.2); }
+.lp-input:focus { border-color: rgba(212,175,55,0.4); background: rgba(212,175,55,0.03); box-shadow: 0 0 0 3px rgba(212,175,55,0.07); }
+
+/* ── status pill ── */
+.status-pill {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 5px 12px; border-radius: 100px;
+  font-size: 10px; font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase;
+}
+
+/* ── error shake ── */
+@keyframes lp-shake { 0%,100%{transform:translateX(0)} 20%{transform:translateX(-6px)} 40%{transform:translateX(6px)} 60%{transform:translateX(-4px)} 80%{transform:translateX(4px)} }
+.lp-shake { animation: lp-shake 0.4s ease; }
+
+/* ── separating line ── */
+.lp-sep { height: 1px; background: linear-gradient(90deg, transparent, rgba(255,255,255,0.07), transparent); margin: 28px 0; }
+
+/* ── logo mark ── */
+.lp-logo-mark {
+  width: 52px; height: 52px; border-radius: 16px;
+  background: linear-gradient(145deg, #d4af37, #92400e);
+  display: flex; align-items: center; justify-content: center;
+  box-shadow: 0 10px 30px rgba(212,175,55,0.25), inset 0 1px 0 rgba(255,255,255,0.15);
+  flex-shrink: 0;
+}
+
+/* ── offline banner ── */
+.lp-offline {
+  display: flex; align-items: center; gap: 10px;
+  padding: 13px 18px; border-radius: 12px;
+  background: rgba(239,68,68,0.07); border: 1px solid rgba(239,68,68,0.2);
+  color: #ef4444; margin-bottom: 20px; animation: lp-fade-up 0.3s ease;
+}
+
+/* ── panel glass ── */
+.lp-panel {
+  background: rgba(16,16,25,0.85);
+  backdrop-filter: blur(24px);
+  border: 1px solid rgba(255,255,255,0.07);
+  border-radius: 24px;
+  padding: 38px 36px;
+  box-shadow: 0 40px 80px rgba(0,0,0,0.6), 0 0 0 1px rgba(255,255,255,0.03) inset;
+  position: relative; overflow: hidden;
+}
+.lp-panel::before {
+  content: '';
+  position: absolute; top: 0; left: 15%; right: 15%; height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(212,175,55,0.35), transparent);
+}

@@ -1,0 +1,21 @@
+# dependencies
+node_modules
+
+# build outputs
+dist
+build
+.vercel
+
+# misc
+.DS_Store
+server.log
+
+# local data / db
+database.db
+database.sqbpro
+data/
+public/uploads/
+
+# environment files
+.env
+.env.*.local
