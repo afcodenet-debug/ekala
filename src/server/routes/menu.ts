@@ -19,6 +19,8 @@ type TableRow = {
 router.get('/table/:qr_token', async (req, res) => {
   const { qr_token } = req.params;
 
+  console.log('[MENU ROUTE HIT]', qr_token);
+
   try {
     console.log('[Public Menu] /table lookup start', {
       qr_token,

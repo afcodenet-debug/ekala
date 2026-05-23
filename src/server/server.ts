@@ -14,59 +14,29 @@ const PORT = process.env.PORT || 3001;
 
 app.use(express.json());
 
-process.on('uncaughtException', (err) => {
-  console.error('[RENDER CRASH] uncaughtException:', err);
-  process.exit(1);
+// =============================================
+// FORENSIC REQUEST LOGGING (before everything)
+// =============================================
+app.use((req, res, next) => {
+  console.log('[HTTP]', req.method, req.originalUrl, 'origin=', req.headers.origin || 'none');
+  next();
 });
 
-process.on('unhandledRejection', (reason) => {
-  console.error('[RENDER CRASH] unhandledRejection:', reason);
-  process.exit(1);
+// =============================================
+// EXPRESS CORS HARDENING - BEFORE ALL ROUTES
+// Temporarily allow '*' for debugging the QR Menu
+// =============================================
+app.use((req, res, next) => {
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization, x-user-role');
+
+  if (req.method === 'OPTIONS') {
+    return res.sendStatus(200);
+  }
+
+  next();
 });
-
-const allowedOrigins = [
-  'https://great-olive.vercel.app',
-  'https://reat-olive-api.onrender.com',
-  'http://localhost:5173',
-  'http://localhost:3000',
-];
-
-app.use(cors({
-  origin: function(origin, callback) {
-    // allow requests with no origin (mobile apps, curl, postman)
-    if (!origin) return callback(null, true);
-
-    if (allowedOrigins.includes(origin)) {
-      return callback(null, true);
-    }
-
-    console.error('[CORS] Blocked origin:', origin);
-
-    return callback(new Error('Not allowed by CORS'));
-  },
-  credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
-}));
-
-app.options('*', cors({
-  origin: function(origin, callback) {
-    // allow requests with no origin (mobile apps, curl, postman)
-    if (!origin) return callback(null, true);
-
-    if (allowedOrigins.includes(origin)) {
-      return callback(null, true);
-    }
-
-    console.error('[CORS] Blocked origin:', origin);
-
-    return callback(new Error('Not allowed by CORS'));
-  },
-  credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
-}));
-
 
 // --- Render boot diagnostics (safe, low impact) ---
 app.get('/test', (_req, res) => {

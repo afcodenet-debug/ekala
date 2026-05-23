@@ -2,19 +2,24 @@ import { useEffect, useState, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { UtensilsCrossed } from 'lucide-react';
 
-// API base URL configurables pour Vercel (backend déployé séparément)
+/**
+ * API base URL (backend déployé séparément).
+ * - Sur Vercel, VITE_API_BASE_URL devrait être fourni en Environment Variables.
+ * - En fallback, on utilise la valeur Render attendue pour éviter "Failed to fetch"
+ *   quand VITE_API_BASE_URL n'est pas injectée (build déjà déployée, config oubliée, etc).
+ */
 const API_BASE_URL =
   (typeof import.meta !== 'undefined' &&
     (import.meta as any).env &&
     (import.meta as any).env.VITE_API_BASE_URL) ||
   '';
 
+const apiFallbackBaseUrl = 'https://reat-olive-api.onrender.com';
+
 const apiUrl = (endpoint: string) => {
-  const base = String(API_BASE_URL || '').replace(/\/$/, '');
-  if (!base) {
-    console.warn('[QR Menu] VITE_API_BASE_URL est vide → appel relatif (ne marchera pas en production)');
-    return endpoint;
-  }
+  const baseFromEnv = String(API_BASE_URL || '').replace(/\/$/, '');
+  const base = baseFromEnv || apiFallbackBaseUrl;
+
   return `${base}${endpoint}`;
 };
 
@@ -482,8 +487,11 @@ const PublicMenuPage = () => {
         setLoading(true);
         setError(null);
 
-        const targetUrl = apiUrl(`/api/menu/table/${encodeURIComponent(token)}`);
-        console.log('[QR Menu] Tentative de chargement depuis :', targetUrl);
+        // Ensure we ALWAYS use the full backend URL from env (no relative fallback in prod)
+        const API_BASE_URL = (import.meta as any).env?.VITE_API_BASE_URL || 'https://reat-olive-api.onrender.com';
+        const targetUrl = `${API_BASE_URL.replace(/\/$/, '')}/api/menu/table/${encodeURIComponent(token)}`;
+
+        console.log('[Frontend API URL]', targetUrl);
 
         const res = await fetch(targetUrl);
 
@@ -497,25 +505,9 @@ const PublicMenuPage = () => {
         setTable(data.table);
         setMenu(data.menu || []);
         setActivecat(data.menu?.[0]?.id ?? null);
-      } catch (e: any) {
-        console.error('Menu load error:', e);
-
-        const targetUrl = apiUrl(`/api/menu/table/${encodeURIComponent(token)}`);
-
-        // Message plus clair pour les développeurs / admins
-        if (!API_BASE_URL) {
-          setError(
-            `Configuration manquante : VITE_API_BASE_URL n'est pas défini.\n` +
-            `Le menu essaie d'appeler : ${targetUrl}\n\n` +
-            `Va dans Vercel → Environment Variables et ajoute VITE_API_BASE_URL = https://reat-olive-api.onrender.com`
-          );
-        } else {
-          setError(
-            `Impossible de joindre le serveur du menu.\n` +
-            `URL appelée : ${targetUrl}\n\n` +
-            `Erreur : ${e.message || 'NetworkError'}`
-          );
-        }
+      } catch (err) {
+        console.error('[MENU FETCH ERROR]', err);
+        setError(err instanceof Error ? err.message : 'Failed to fetch');
       } finally {
         setLoading(false);
       }
