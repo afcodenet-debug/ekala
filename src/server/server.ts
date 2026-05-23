@@ -12,9 +12,7 @@ const app = express();
 
 const PORT = process.env.PORT || 3001;
 
-
 app.use(express.json());
-app.use(cors({ origin: '*' }))
 
 process.on('uncaughtException', (err) => {
   console.error('[RENDER CRASH] uncaughtException:', err);
@@ -26,32 +24,49 @@ process.on('unhandledRejection', (reason) => {
   process.exit(1);
 });
 
-
-// CORS configuration for Vercel frontend + public QR menu
 const allowedOrigins = [
   'https://great-olive.vercel.app',
-  'https://great-olive-git-main.vercel.app', // common Vercel preview
+  'https://reat-olive-api.onrender.com',
   'http://localhost:5173',
   'http://localhost:3000',
-  'http://localhost:4173',
 ];
 
 app.use(cors({
-  origin: (origin, callback) => {
-    // Allow requests with no origin (mobile apps, curl, server-to-server)
+  origin: function(origin, callback) {
+    // allow requests with no origin (mobile apps, curl, postman)
     if (!origin) return callback(null, true);
 
-    if (allowedOrigins.includes(origin) || env.RENDER_CLOUD_MODE) {
-      // In cloud mode we are more permissive for public menu
-      callback(null, true);
-    } else {
-      callback(new Error(`CORS blocked: origin ${origin} not allowed`));
+    if (allowedOrigins.includes(origin)) {
+      return callback(null, true);
     }
+
+    console.error('[CORS] Blocked origin:', origin);
+
+    return callback(new Error('Not allowed by CORS'));
   },
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'x-user-role'],
-  credentials: false, // public endpoints, no cookies needed
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
 }));
+
+app.options('*', cors({
+  origin: function(origin, callback) {
+    // allow requests with no origin (mobile apps, curl, postman)
+    if (!origin) return callback(null, true);
+
+    if (allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    }
+
+    console.error('[CORS] Blocked origin:', origin);
+
+    return callback(new Error('Not allowed by CORS'));
+  },
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+}));
+
 
 // --- Render boot diagnostics (safe, low impact) ---
 app.get('/test', (_req, res) => {
