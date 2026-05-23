@@ -1,6 +1,6 @@
 // src/server/routes/menu.ts
 import express from 'express';
-import { db } from '../db/database';
+import { createClient } from '@supabase/supabase-js';
 import { getProductRepository } from '../products/repositories/product.repository.provider';
 import { getTableRepository } from '../tables/repositories/table.repository.provider';
 import { env } from '../config/env';
@@ -20,20 +20,43 @@ router.get('/table/:qr_token', async (req, res) => {
   const { qr_token } = req.params;
 
   try {
+    console.log('[Public Menu] /table lookup start', {
+      qr_token,
+      USE_SUPABASE_TABLES: env.USE_SUPABASE_TABLES,
+      USE_SUPABASE_PRODUCTS: env.USE_SUPABASE_PRODUCTS,
+    });
+
+    // Lazy-load local SQLite only when at least one flag is false (Render Supabase-only deploys must never open the DB file)
+    const useLegacy = !env.USE_SUPABASE_TABLES || !env.USE_SUPABASE_PRODUCTS;
+    let localDb: any = null;
+    if (useLegacy) {
+      const dbMod = await import('../db/database');
+      localDb = dbMod.db;
+      console.log('[Public Menu] Local SQLite module loaded (legacy path)');
+    }
+
     // === TABLE (Supabase si flag activé) ===
     let table: any;
     if (env.USE_SUPABASE_TABLES) {
       const tableRepo = getTableRepository();
-      table = await tableRepo.findByQrToken(qr_token, 'default-business');
-      console.log('[Public Menu] Table lookup via Supabase');
+      table = await tableRepo.findByQrToken(qr_token);
+      console.log('[Public Menu] Table lookup via Supabase (businessId ignored)', {
+        qr_token,
+        tableFound: !!table,
+        tableId: table?.id ?? null,
+      });
     } else {
-      table = db.prepare(`
+      table = localDb.prepare(`
         SELECT id, table_number, capacity, status, assigned_waiter_id, qr_token
         FROM restaurant_tables
         WHERE qr_token = ?
         LIMIT 1
       `).get(qr_token) as TableRow | undefined;
-      console.log('[Public Menu] Table lookup via local SQLite');
+      console.log('[Public Menu] Table lookup via local SQLite', {
+        qr_token,
+        tableFound: !!table,
+        tableId: table?.id ?? null,
+      });
     }
 
     if (!table) {
@@ -63,7 +86,7 @@ router.get('/table/:qr_token', async (req, res) => {
       }));
     } else {
       console.log('[Public Menu] Serving products from local SQLite');
-      products = db.prepare(`
+      products = localDb.prepare(`
         SELECT 
           p.id, p.category_id, p.name, p.description,
           p.selling_price as price, 'ZMW' as currency,
@@ -80,13 +103,32 @@ router.get('/table/:qr_token', async (req, res) => {
       new Set(products.map(p => p.category_id).filter((x): x is number => typeof x === 'number'))
     );
 
-    const categories = categoryIds.length
-      ? (db.prepare(`
-          SELECT id, name, description
-          FROM categories
-          WHERE id IN (${categoryIds.map(() => '?').join(',')})
-        `).all(...categoryIds) as Array<{ id: number; name: string; description: string | null }>)
-      : [];
+    // === CATEGORIES (Supabase ou local selon flags) ===
+    let categories: Array<{ id: number; name: string; description: string | null }> = [];
+
+    if (env.USE_SUPABASE_PRODUCTS) {
+      // Fetch categories directly from Supabase (no local DB)
+      if (categoryIds.length > 0) {
+        const supabase = createClient(env.SUPABASE_URL!, env.SUPABASE_SERVICE_ROLE_KEY!, {
+          auth: { persistSession: false },
+        });
+        const { data: catData, error: catErr } = await supabase
+          .from('categories')
+          .select('id, name, description')
+          .in('id', categoryIds);
+        if (catErr) {
+          console.warn('[Public Menu] Supabase categories query error:', catErr.message);
+        } else {
+          categories = (catData || []) as any;
+        }
+      }
+    } else if (localDb && categoryIds.length > 0) {
+      categories = localDb.prepare(`
+        SELECT id, name, description
+        FROM categories
+        WHERE id IN (${categoryIds.map(() => '?').join(',')})
+      `).all(...categoryIds) as any;
+    }
 
     const categoriesById = new Map(categories.map(c => [c.id, c]));
 

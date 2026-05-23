@@ -1,10 +1,15 @@
 import { ITableRepository } from './table.repository.interface';
 import { SupabaseTableRepository } from './supabase/supabase-table.repository';
-import { LegacySQLiteTableAdapter } from './legacy/legacy-sqlite-table.adapter';
 import { env } from '../../config/env';
 
+let legacyTableAdapter: any = null;
+
 export function getTableRepository(): ITableRepository {
-  return env.USE_SUPABASE_TABLES
-    ? new SupabaseTableRepository()
-    : new LegacySQLiteTableAdapter();
+  if (env.USE_SUPABASE_TABLES) {
+    return new SupabaseTableRepository();
+  }
+  if (!legacyTableAdapter) {
+    legacyTableAdapter = require('./legacy/legacy-sqlite-table.adapter').LegacySQLiteTableAdapter;
+  }
+  return new legacyTableAdapter();
 }

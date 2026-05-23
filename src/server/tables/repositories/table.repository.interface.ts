@@ -8,5 +8,6 @@ export interface TableEntity {
 }
 
 export interface ITableRepository {
-  findByQrToken(qrToken: string, businessId: string): Promise<TableEntity | null>;
+  // businessId is intentionally optional (public QR menu must work regardless of tenant/business_id)
+  findByQrToken(qrToken: string, businessId?: string): Promise<TableEntity | null>;
 }

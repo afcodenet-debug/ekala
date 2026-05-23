@@ -13,16 +13,39 @@ process.on('unhandledRejection', (reason) => {
 });
 
 const app = express();
-app.use(express.json());
-
-console.log('[RENDER START] booting express server...');
-
-app.use('/api/menu', menuRoutes);
-
-app.get('/health', (_req, res) => res.json({ status: 'ok' }));
 
 const PORT = process.env.PORT || 3001;
+
+app.use(express.json());
+
+// --- Render boot diagnostics (safe, low impact) ---
+app.get('/test', (_req, res) => {
+  res.status(200).json({ ok: true, ts: new Date().toISOString() });
+});
+
+app.get('/health', (_req, res) => {
+  res.status(200).json({ ok: true, ts: new Date().toISOString() });
+});
+
+console.log('[RENDER START] booting express server...');
+console.log('[RENDER START] PORT=', PORT);
+
+app.use('/api/menu', menuRoutes);
+app.use('/menu', menuRoutes);   // clean public URLs for QR codes (e.g. /menu/table/<token>)
+
 app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
-  console.log(`Supabase mode → PRODUCTS=${env.USE_SUPABASE_PRODUCTS}, TABLES=${env.USE_SUPABASE_TABLES}`);
+  console.log(`[RENDER BOOT] Express listening on port ${PORT}`);
+
+  if (env.RENDER_CLOUD_MODE) {
+    console.log('══════════════════════════════════════════════════════════════');
+    console.log('[RENDER_CLOUD_MODE] ACTIVE — Pure Supabase backend only');
+    console.log('[RENDER_CLOUD_MODE] Local SQLite is FORBIDDEN on this instance');
+    console.log('[RENDER_CLOUD_MODE] All data must come from Supabase (tables + products + categories)');
+    console.log('══════════════════════════════════════════════════════════════');
+  }
+
+  console.log(
+    `Supabase mode → PRODUCTS=${env.USE_SUPABASE_PRODUCTS}, TABLES=${env.USE_SUPABASE_TABLES}, RENDER_CLOUD_MODE=${env.RENDER_CLOUD_MODE}`
+  );
+  console.log('[RENDER BOOT] endpoints: /health, /test, /api/menu/..., /menu/...');
 });

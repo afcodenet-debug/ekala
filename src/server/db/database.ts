@@ -40,6 +40,24 @@ if (!fs.existsSync(dataDir))    fs.mkdirSync(dataDir,    { recursive: true });
 if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
 
 const dbPath = path.join(dataDir, 'database.db');
+
+// === HARD GUARD: Prevent local SQLite on the public Render service when Supabase is enabled ===
+// This makes it impossible to accidentally use SQLite on the cloud QR menu backend.
+const renderCloudMode = process.env.RENDER_CLOUD_MODE === 'true' || process.env.RENDER_CLOUD_MODE === '1';
+const useSupabaseTables = process.env.USE_SUPABASE_TABLES === 'true' || process.env.USE_SUPABASE_TABLES === '1';
+const useSupabaseProducts = process.env.USE_SUPABASE_PRODUCTS === 'true' || process.env.USE_SUPABASE_PRODUCTS === '1';
+
+if (renderCloudMode || ((useSupabaseTables || useSupabaseProducts) && process.env.NODE_ENV === 'production')) {
+  console.error('══════════════════════════════════════════════════════════════════');
+  console.error('[FATAL] Local SQLite initialization blocked on cloud backend.');
+  console.error('RENDER_CLOUD_MODE=', process.env.RENDER_CLOUD_MODE);
+  console.error('USE_SUPABASE_TABLES=', process.env.USE_SUPABASE_TABLES);
+  console.error('USE_SUPABASE_PRODUCTS=', process.env.USE_SUPABASE_PRODUCTS);
+  console.error('SQLite is only allowed for local Electron POS. Cloud must use Supabase only.');
+  console.error('══════════════════════════════════════════════════════════════════');
+  throw new Error('Local SQLite is disabled in RENDER_CLOUD_MODE / Supabase production mode');
+}
+
 console.log('[Database] Connecting to:', dbPath);
 
 // --- connection ------------------------------------------------------------
