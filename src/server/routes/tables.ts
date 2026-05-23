@@ -23,17 +23,16 @@ router.get('/', async (req, res) => {
 });
 
 // Get tables assigned to a specific waiter (for staff management)
-router.get('/waiter/:waiterId', (req, res) => {
+router.get('/waiter/:waiterId', async (req, res) => {
   const { waiterId } = req.params;
 
   try {
     if (env.RENDER_CLOUD_MODE || env.USE_SUPABASE_TABLES) {
-      // In cloud mode we should use the repository, but for now return empty
-      // until TableService supports waiter filtering in Supabase
+      // Cloud mode: use Supabase repository (stub for now)
       return res.json([]);
     }
 
-    // Local SQLite only
+    // Local SQLite only - lazy load
     const dbMod = await import('../db/database');
     const localDb = dbMod.db;
 
@@ -43,6 +42,7 @@ router.get('/waiter/:waiterId', (req, res) => {
       WHERE t.assigned_waiter_id = ?
       ORDER BY t.table_number
     `).all(waiterId);
+
     res.json(tables);
   } catch (error) {
     console.error('[Tables] GET by waiter error:', error);

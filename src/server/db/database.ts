@@ -47,6 +47,8 @@ const renderCloudMode = process.env.RENDER_CLOUD_MODE === 'true' || process.env.
 const useSupabaseTables = process.env.USE_SUPABASE_TABLES === 'true' || process.env.USE_SUPABASE_TABLES === '1';
 const useSupabaseProducts = process.env.USE_SUPABASE_PRODUCTS === 'true' || process.env.USE_SUPABASE_PRODUCTS === '1';
 
+let dbInstance: any = null;
+
 if (renderCloudMode || ((useSupabaseTables || useSupabaseProducts) && process.env.NODE_ENV === 'production')) {
   console.warn('══════════════════════════════════════════════════════════════════');
   console.warn('[Database] Cloud mode detected — exporting null DB stub.');
@@ -54,24 +56,23 @@ if (renderCloudMode || ((useSupabaseTables || useSupabaseProducts) && process.en
   console.warn('All data operations must go through Supabase repositories.');
   console.warn('══════════════════════════════════════════════════════════════════');
 
-  // Export a safe stub so that routes can still be imported without crashing the process
-  export const db = null as any;
+  dbInstance = null;
+} else {
+  console.log('[Database] Connecting to:', dbPath);
+
+  dbInstance = new Database(dbPath, {
+    verbose: undefined,
+    timeout: 5000,
+  });
+
+  dbInstance.pragma('journal_mode = WAL');
+  dbInstance.pragma('synchronous = NORMAL');
+  dbInstance.pragma('busy_timeout = 5000');
+  dbInstance.pragma('cache_size = -64000');
+  dbInstance.pragma('foreign_keys = ON');
 }
 
-console.log('[Database] Connecting to:', dbPath);
-
-// --- connection ------------------------------------------------------------
-
-export const db = new Database(dbPath, {
-  verbose: undefined,                                             // set to console.log for SQL debug
-  timeout: 5000,                                                   // wait up to 5s when DB is locked (better-sqlite3 SQLITE_BUSY handling)
-});
-
-db.pragma('journal_mode = WAL');
-db.pragma('synchronous = NORMAL');
-db.pragma('busy_timeout = 5000'); // wait up to 5s when DB is locked by another writer
-db.pragma('cache_size = -64000');   // -64 KiB pages ≈ 64 MB RAM
-db.pragma('foreign_keys = ON');
+export const db = dbInstance;
 
 // --- public factory --------------------------------------------------------
 
