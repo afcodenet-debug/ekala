@@ -174,9 +174,36 @@ const FloorPlan = () => {
     }
   }, [user?.id, user?.role, setUserContext, fetchTables]);
 
+  // Base URL PUBLIC (Vercel) pour générer des QR toujours "en ligne"
+  // Config à faire côté Vercel : VITE_PUBLIC_MENU_BASE_URL = https://great-olive.vercel.app (par ex)
+  const PUBLIC_MENU_BASE_URL =
+    (typeof import.meta !== 'undefined' &&
+      (import.meta as any).env &&
+      (import.meta as any).env.VITE_PUBLIC_MENU_BASE_URL) ||
+    '';
+
+  const getPublicBaseUrl = () => {
+    const explicit = String(PUBLIC_MENU_BASE_URL || '').trim();
+    if (explicit) return explicit.replace(/\/$/, '');
+
+    if (typeof window === 'undefined') return '';
+
+    const { hostname, protocol } = window.location;
+
+    // Sur Vercel: on force https + hostname (évite localhost si la config env n’est pas prise)
+    const isVercelHost =
+      hostname.includes('vercel.app') || hostname.includes('vercel.');
+
+    if (isVercelHost) return `https://${hostname}`.replace(/\/$/, '');
+
+    // Local dev fallback
+    return String(protocol + '//' + hostname).replace(/\/$/, '');
+  };
+
   const getQrUrl = (table: Table) => {
     if (!table.qr_token) return '';
-    return `${window.location.origin}/menu?token=${table.qr_token}`;
+    const base = getPublicBaseUrl();
+    return `${base}/menu?token=${table.qr_token}`;
   };
 
   const copyQrLink = async (table: Table) => {

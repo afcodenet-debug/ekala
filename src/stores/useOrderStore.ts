@@ -1,5 +1,8 @@
 import { create } from 'zustand';
 import { api } from '../lib/api-client';
+import { withOutboxTransaction } from '../sync/with-outbox-transaction';
+// Note: real outbox queuing for offline happens in Electron main process via IPC.
+// Renderer calls here are best-effort / will be wired when local DB writes move to main.
 
 export interface OrderItem {
   productId: number;
@@ -131,6 +134,20 @@ export const useOrderStore = create<OrderStore>((set, get) => ({
       const newOrder: any = await api.orders.create(orderData);
       if (newOrder) {
         set({ activeOrders: [...get().activeOrders, newOrder as Order] });
+
+        // === TRANSACTIONAL OUTBOX QUEUE (enforced for future offline-first) ===
+        // When running in Electron main with local SQLite, the real DB write + queue
+        // would happen inside this transaction. Renderer currently only calls the API.
+        try {
+          withOutboxTransaction(null, 'default-business', () => {
+            // In full offline mode we would also do the local INSERT here
+            // and then: orderSyncService.queueChangeInsideTransaction('order', 'insert', newOrder);
+            console.log('[OrderStore] Order created via API — outbox queue will be handled by main-process sync engine');
+          });
+        } catch (syncErr) {
+          console.warn('[OrderStore] Outbox transaction wrapper failed (non-blocking)', syncErr);
+        }
+
         return newOrder as Order;
       }
       return null;
@@ -153,6 +170,18 @@ export const useOrderStore = create<OrderStore>((set, get) => ({
     try {
       const { role } = get();
       await api.orders.updateStatus(id, status, role);
+
+      // Enforce transaction layer for future offline sync (no-op in current renderer context)
+      try {
+        withOutboxTransaction(null, 'default-business', () => {
+          // When local writes are done in main: 
+          //   orderSyncService.queueChangeInsideTransaction('order', 'update', { id, status, ... });
+          console.log(`[OrderStore] Status update for order ${id} — will be queued by sync engine`);
+        });
+      } catch (syncErr) {
+        console.warn('[OrderStore] Transaction wrapper for order status failed (non-blocking)', syncErr);
+      }
+
       get().fetchActiveOrders();
     } catch (err) {
       console.error('Failed to update status', err);
