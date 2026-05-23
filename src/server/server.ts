@@ -2,6 +2,16 @@ import express from 'express';
 import menuRoutes from './routes/menu';
 import { env } from './config/env';
 
+process.on('uncaughtException', (err) => {
+  console.error('[RENDER CRASH] uncaughtException:', err);
+  process.exit(1);
+});
+
+process.on('unhandledRejection', (reason) => {
+  console.error('[RENDER CRASH] unhandledRejection:', reason);
+  process.exit(1);
+});
+
 const app = express();
 app.use(express.json());
 

@@ -15,6 +15,9 @@ import { NotFoundError } from '../../utils/error';
  * Product Service - Pure business logic.
  * Depends only on the IProductRepository interface.
  * Does NOT know whether we are using Supabase or the legacy SQLite adapter.
+ *
+ * IMPORTANT:
+ * Sync logic must live exclusively under src/sync/.
  */
 export class ProductService {
   constructor(private readonly productRepository: IProductRepository = getProductRepository()) {}
@@ -48,7 +51,6 @@ export class ProductService {
   }
 
   async createProduct(dto: CreateProductDTO, businessId: string, userId?: string): Promise<ProductResponseDTO> {
-    // Business rules can be added here (e.g. SKU uniqueness check, price validation, etc.)
     const created = await this.productRepository.create(dto, businessId, userId);
     return this.toResponseDTO(created);
   }
@@ -96,16 +98,6 @@ export class ProductService {
       is_featured: entity.is_featured,
       category_id: entity.category_id,
     };
-  }
-
-  // ==================== Sync-related methods (prepared for Sync Engine) ====================
-
-  async getPendingSyncProducts(businessId: string, limit?: number): Promise<ProductEntity[]> {
-    return this.productRepository.findPendingSync(businessId, limit);
-  }
-
-  async markProductsAsSynced(ids: string[], businessId: string): Promise<void> {
-    return this.productRepository.markAsSynced(ids, businessId);
   }
 }
 

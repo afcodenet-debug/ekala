@@ -46,16 +46,17 @@ router.get('/table/:qr_token', async (req, res) => {
     if (env.USE_SUPABASE_PRODUCTS) {
       console.log('[Public Menu] Serving products from Supabase');
       const productRepo = getProductRepository();
-      const items = await productRepo.findAvailableForMenu('default-business');
 
-      products = items.map((p: any) => ({
+      const result = await productRepo.findAll('default-business', { is_available: true, limit: 1000, page: 1 });
+
+      products = result.data.map((p: any) => ({
         id: p.id,
         category_id: p.category_id,
         name: p.name,
         description: p.description,
         price: p.price,
         currency: 'ZMW',
-        unit: p.unit ?? null,
+        unit: (p as any).unit ?? null,
         image_url: p.image_url,
         is_available: p.is_available ? 1 : 0,
         stock_quantity: p.stock_quantity ?? 0,
