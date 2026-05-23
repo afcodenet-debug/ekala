@@ -1,9 +1,10 @@
 import { ProductEntity } from '../types/product.types';
 
 export interface IProductRepository {
-  findById(id: string, businessId: string): Promise<ProductEntity | null>;
+  // businessId is now optional for single-tenant / public QR menu mode
+  findById(id: string, businessId?: string): Promise<ProductEntity | null>;
   findAll(
-    businessId: string,
+    businessId?: string,
     query?: {
       page?: number;
       limit?: number;
@@ -22,7 +23,7 @@ export interface IProductRepository {
     hasMore: boolean;
   }>;
 
-  create(dto: any, businessId: string, userId?: string): Promise<ProductEntity>;
-  update(id: string, dto: any, businessId: string): Promise<ProductEntity>;
-  softDelete(id: string, businessId: string): Promise<void>;
+  create(dto: any, businessId?: string, userId?: string): Promise<ProductEntity>;
+  update(id: string, dto: any, businessId?: string): Promise<ProductEntity>;
+  softDelete(id: string, businessId?: string): Promise<void>;
 }

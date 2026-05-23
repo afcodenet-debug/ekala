@@ -67,33 +67,24 @@ router.get('/table/:qr_token', async (req, res) => {
     let products: any[] = [];
 
     if (env.USE_SUPABASE_PRODUCTS) {
-      console.log('[Public Menu][FORENSIC] Serving products from Supabase (public path, no business_id filter)');
+      console.log('[Public Menu] Serving products from Supabase (single-tenant, no business_id)');
 
-      const supabase = createClient(env.SUPABASE_URL!, env.SUPABASE_SERVICE_ROLE_KEY!, {
-        auth: { persistSession: false },
+      const productRepo = getProductRepository();
+      // Pass undefined for businessId → no business filter (single-tenant public menu)
+      const result = await productRepo.findAll(undefined, {
+        is_available: true,
+        limit: 1000,
+        page: 1,
       });
 
-      const { data: supaProducts, error: prodErr } = await supabase
-        .from('products')
-        .select('*')
-        .eq('is_available', true)
-        .limit(1000);
-
-      if (prodErr) {
-        console.error('[Public Menu][FORENSIC] Products query error:', prodErr);
-        throw prodErr;
-      }
-
-      console.log('[Public Menu][FORENSIC] Products loaded from Supabase (unfiltered by business_id):', supaProducts?.length ?? 0);
-
-      products = (supaProducts || []).map((p: any) => ({
+      products = result.data.map((p: any) => ({
         id: p.id,
         category_id: p.category_id,
         name: p.name,
         description: p.description,
-        price: p.price ?? p.selling_price,
+        price: p.price,
         currency: 'ZMW',
-        unit: p.unit ?? null,
+        unit: (p as any).unit ?? null,
         image_url: p.image_url,
         is_available: p.is_available ? 1 : 0,
         stock_quantity: p.stock_quantity ?? 0,

@@ -22,7 +22,7 @@ import { NotFoundError } from '../../utils/error';
 export class ProductService {
   constructor(private readonly productRepository: IProductRepository = getProductRepository()) {}
 
-  async getProductById(id: string, businessId: string): Promise<ProductResponseDTO> {
+  async getProductById(id: string, businessId?: string): Promise<ProductResponseDTO> {
     const product = await this.productRepository.findById(id, businessId);
 
     if (!product) {
@@ -32,7 +32,7 @@ export class ProductService {
     return this.toResponseDTO(product);
   }
 
-  async listProducts(businessId: string, query: ProductListQuery): Promise<{
+  async listProducts(businessId: string | undefined, query: ProductListQuery): Promise<{
     items: ProductListItemDTO[];
     total: number;
     page: number;
@@ -50,17 +50,17 @@ export class ProductService {
     };
   }
 
-  async createProduct(dto: CreateProductDTO, businessId: string, userId?: string): Promise<ProductResponseDTO> {
+  async createProduct(dto: CreateProductDTO, businessId?: string, userId?: string): Promise<ProductResponseDTO> {
     const created = await this.productRepository.create(dto, businessId, userId);
     return this.toResponseDTO(created);
   }
 
-  async updateProduct(id: string, dto: UpdateProductDTO, businessId: string): Promise<ProductResponseDTO> {
+  async updateProduct(id: string, dto: UpdateProductDTO, businessId?: string): Promise<ProductResponseDTO> {
     const updated = await this.productRepository.update(id, dto, businessId);
     return this.toResponseDTO(updated);
   }
 
-  async deleteProduct(id: string, businessId: string): Promise<void> {
+  async deleteProduct(id: string, businessId?: string): Promise<void> {
     await this.productRepository.softDelete(id, businessId);
   }
 

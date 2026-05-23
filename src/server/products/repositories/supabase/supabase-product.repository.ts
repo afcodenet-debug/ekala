@@ -8,21 +8,25 @@ export class SupabaseProductRepository implements IProductRepository {
     auth: { persistSession: false },
   });
 
-  async findById(id: string, businessId: string): Promise<ProductEntity | null> {
-    const { data, error } = await this.supabase
+  async findById(id: string, businessId?: string): Promise<ProductEntity | null> {
+    let qb = this.supabase
       .from('products')
       .select('*')
       .eq('id', id)
-      .eq('business_id', businessId)
-      .is('deleted_at', null)
-      .maybeSingle();
+      .is('deleted_at', null);
+
+    if (businessId) {
+      qb = qb.eq('business_id', businessId);
+    }
+
+    const { data, error } = await qb.maybeSingle();
 
     if (error) throw error;
     return data ? this.map(data) : null;
   }
 
   async findAll(
-    businessId: string,
+    businessId?: string,
     query?: {
       page?: number;
       limit?: number;
@@ -47,8 +51,11 @@ export class SupabaseProductRepository implements IProductRepository {
     let qb = this.supabase
       .from('products')
       .select('*', { count: 'exact' })
-      .eq('business_id', businessId)
       .is('deleted_at', null);
+
+    if (businessId) {
+      qb = qb.eq('business_id', businessId);
+    }
 
     if (query?.search) {
       qb = qb.ilike('name', `%${query.search}%`);
@@ -84,12 +91,12 @@ export class SupabaseProductRepository implements IProductRepository {
     };
   }
 
-  async create(dto: any, businessId: string, userId?: string): Promise<ProductEntity> {
-    const payload = {
+  async create(dto: any, businessId?: string, userId?: string): Promise<ProductEntity> {
+    const payload: any = {
       ...dto,
-      business_id: businessId,
-      // if DB has audit fields, keep compatibility by passing userId optionally
-      ...(userId ? { created_by: userId, updated_by: userId } : null),
+      // Only include business_id if provided (single-tenant mode may not have the column)
+      ...(businessId ? { business_id: businessId } : {}),
+      ...(userId ? { created_by: userId, updated_by: userId } : {}),
     };
 
     const { data, error } = await this.supabase.from('products').insert(payload).select('*').single();
@@ -97,29 +104,37 @@ export class SupabaseProductRepository implements IProductRepository {
     return this.map(data);
   }
 
-  async update(id: string, dto: any, businessId: string): Promise<ProductEntity> {
+  async update(id: string, dto: any, businessId?: string): Promise<ProductEntity> {
     const payload = { ...dto };
 
-    const { data, error } = await this.supabase
+    let qb = this.supabase
       .from('products')
       .update(payload)
       .eq('id', id)
-      .eq('business_id', businessId)
-      .is('deleted_at', null)
-      .select('*')
-      .single();
+      .is('deleted_at', null);
+
+    if (businessId) {
+      qb = qb.eq('business_id', businessId);
+    }
+
+    const { data, error } = await qb.select('*').single();
 
     if (error) throw error;
     return this.map(data);
   }
 
-  async softDelete(id: string, businessId: string): Promise<void> {
-    const { error } = await this.supabase
+  async softDelete(id: string, businessId?: string): Promise<void> {
+    let qb = this.supabase
       .from('products')
       .update({ deleted_at: new Date().toISOString() })
       .eq('id', id)
-      .eq('business_id', businessId)
       .is('deleted_at', null);
+
+    if (businessId) {
+      qb = qb.eq('business_id', businessId);
+    }
+
+    const { error } = await qb;
 
     if (error) throw error;
   }

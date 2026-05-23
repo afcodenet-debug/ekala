@@ -7,8 +7,8 @@ import { AuthenticatedRequest } from '../../middleware/auth.middleware';
 export class ProductController {
   async getProducts(req: AuthenticatedRequest, res: Response, next: NextFunction) {
     try {
-      const businessId = req.businessId!;
-      const query = req.query as any; // Will be properly validated by middleware later
+      const businessId = req.businessId; // now optional for single-tenant
+      const query = req.query as any;
 
       const result = await productService.listProducts(businessId, query);
 
@@ -24,7 +24,7 @@ export class ProductController {
   async getProductById(req: AuthenticatedRequest, res: Response, next: NextFunction) {
     try {
       const id = req.params.id as string;
-      const businessId = req.businessId!;
+      const businessId = req.businessId;
 
       const product = await productService.getProductById(id, businessId);
 
@@ -40,7 +40,7 @@ export class ProductController {
   async createProduct(req: AuthenticatedRequest, res: Response, next: NextFunction) {
     try {
       const dto = req.body as CreateProductDTO;
-      const businessId = req.businessId!;
+      const businessId = req.businessId;
       const userId = req.user?.id;
 
       const product = await productService.createProduct(dto, businessId, userId);
@@ -58,7 +58,7 @@ export class ProductController {
     try {
       const id = (req.params.id as string) || '';
       const dto = req.body as UpdateProductDTO;
-      const businessId = req.businessId!;
+      const businessId = req.businessId;
 
       const product = await productService.updateProduct(id, dto, businessId);
 
@@ -74,7 +74,7 @@ export class ProductController {
   async deleteProduct(req: AuthenticatedRequest, res: Response, next: NextFunction) {
     try {
       const id = (req.params.id as string) || '';
-      const businessId = req.businessId!;
+      const businessId = req.businessId;
 
       await productService.deleteProduct(id, businessId);
 
