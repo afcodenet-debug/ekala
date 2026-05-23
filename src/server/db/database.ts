@@ -240,6 +240,35 @@ function ensureCoreQrMenuTables(): void {
   `);
 
   console.log('[Database] Core QR menu tables ensured (IF NOT EXISTS)');
+
+  // Seed a demo table with a predictable token for easy testing on fresh deploy
+  try {
+    const hasDemo = db.prepare(
+      `SELECT 1 FROM restaurant_tables WHERE qr_token = ?`
+    ).get('e98fec05c08940318dd90aa02b6b85f5');
+
+    if (!hasDemo) {
+      db.prepare(`
+        INSERT INTO restaurant_tables (table_number, capacity, status, qr_token)
+        VALUES ('TEST-1', 4, 'available', 'e98fec05c08940318dd90aa02b6b85f5')
+      `).run();
+
+      // Add a couple of demo products if none exist
+      const productCount = db.prepare(`SELECT COUNT(*) as c FROM products`).get() as { c: number };
+      if (productCount.c === 0) {
+        db.prepare(`
+          INSERT INTO products (name, description, selling_price, unit, is_available, category_id)
+          VALUES 
+            ('Coca Cola', 'Boisson gazeuse 33cl', 25, 'pcs', 1, 1),
+            ('Eau Minérale 50cl', 'Eau plate', 15, 'pcs', 1, 1),
+            ('Café Express', 'Café court', 30, 'pcs', 1, 2)
+        `).run();
+        console.log('[Database] Demo table + products seeded for testing');
+      }
+    }
+  } catch (e) {
+    console.warn('[Database] Demo seed skipped:', e);
+  }
 }
 
 // ───────────────────────────────────────────────────────────────────────────────
