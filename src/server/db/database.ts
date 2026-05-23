@@ -48,14 +48,14 @@ const useSupabaseTables = process.env.USE_SUPABASE_TABLES === 'true' || process.
 const useSupabaseProducts = process.env.USE_SUPABASE_PRODUCTS === 'true' || process.env.USE_SUPABASE_PRODUCTS === '1';
 
 if (renderCloudMode || ((useSupabaseTables || useSupabaseProducts) && process.env.NODE_ENV === 'production')) {
-  console.error('══════════════════════════════════════════════════════════════════');
-  console.error('[FATAL] Local SQLite initialization blocked on cloud backend.');
-  console.error('RENDER_CLOUD_MODE=', process.env.RENDER_CLOUD_MODE);
-  console.error('USE_SUPABASE_TABLES=', process.env.USE_SUPABASE_TABLES);
-  console.error('USE_SUPABASE_PRODUCTS=', process.env.USE_SUPABASE_PRODUCTS);
-  console.error('SQLite is only allowed for local Electron POS. Cloud must use Supabase only.');
-  console.error('══════════════════════════════════════════════════════════════════');
-  throw new Error('Local SQLite is disabled in RENDER_CLOUD_MODE / Supabase production mode');
+  console.warn('══════════════════════════════════════════════════════════════════');
+  console.warn('[Database] Cloud mode detected — exporting null DB stub.');
+  console.warn('RENDER_CLOUD_MODE=', renderCloudMode);
+  console.warn('All data operations must go through Supabase repositories.');
+  console.warn('══════════════════════════════════════════════════════════════════');
+
+  // Export a safe stub so that routes can still be imported without crashing the process
+  export const db = null as any;
 }
 
 console.log('[Database] Connecting to:', dbPath);

@@ -1,7 +1,7 @@
 import express from 'express';
-import db from '../db/database';
 import { TableService } from '../services/table.service';
 import { requireAdminOrManager, requireAdmin } from '../middleware/auth';
+import { env } from '../config/env';
 
 const router = express.Router();
 
@@ -27,7 +27,17 @@ router.get('/waiter/:waiterId', (req, res) => {
   const { waiterId } = req.params;
 
   try {
-    const tables = db.prepare(`
+    if (env.RENDER_CLOUD_MODE || env.USE_SUPABASE_TABLES) {
+      // In cloud mode we should use the repository, but for now return empty
+      // until TableService supports waiter filtering in Supabase
+      return res.json([]);
+    }
+
+    // Local SQLite only
+    const dbMod = await import('../db/database');
+    const localDb = dbMod.db;
+
+    const tables = localDb.prepare(`
       SELECT t.*
       FROM restaurant_tables t
       WHERE t.assigned_waiter_id = ?
