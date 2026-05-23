@@ -91,6 +91,19 @@ app.get('/health', (req, res) => {
   res.json({ status: 'healthy', timestamp: new Date().toISOString() });
 });
 
+// Friendly root (for when you open the backend URL in a browser)
+app.get('/', (req, res) => {
+  res.type('html').send(`
+    <h1>Great Olive API</h1>
+    <p>✅ Backend is running</p>
+    <ul>
+      <li><a href="/health">Health check</a></li>
+      <li>Menu endpoint example: <code>/api/menu/table/YOUR_TOKEN</code></li>
+    </ul>
+    <p><small>Version: 2026-05</small></p>
+  `);
+});
+
 // ─── Static file serving for uploads ───────────────────────────────────────
 const uploadsDir = path.resolve(process.cwd(), 'data', 'uploads');
 if (fs.existsSync(uploadsDir)) {
