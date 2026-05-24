@@ -503,6 +503,14 @@ router.post('/checkout', async (req, res) => {
       itemsCount: items.length,
     });
 
+    // Best decision: automatically repair the orders.id sequence after every public QR order.
+    // This prevents the "duplicate key on orders_pkey" error from recurring due to sync/manual inserts.
+    try {
+      await supabase.rpc('advance_orders_sequence');
+    } catch (seqErr) {
+      console.warn('[Public Menu] Sequence auto-advance failed (non-fatal, run the SQL setup once):', seqErr);
+    }
+
     return res.json({
       success: true,
       orderId: newOrderId,
