@@ -6,6 +6,9 @@ import fs from 'fs';
 // import { syncService } from '../sync';
 import { AnalyticsService } from '../services/analytics.service';
 import { notifyStockAdjustment, notifyNewProduct, loadRawSettings } from '../services/notification.service';
+import { env } from '../config/env';
+import { productService } from '../products/services/product.service';
+import { createClient } from '@supabase/supabase-js';
 
 const router = express.Router();
 const UPLOAD_DIR = path.resolve(process.cwd(), 'data', 'uploads', 'products');
@@ -73,10 +76,37 @@ router.get('/analytics', async (_req, res) => {
   }
 });
 
-// Get product by ID
-router.get('/:id', (req, res) => {
+// Get product by ID (with Supabase compat in cloud)
+router.get('/:id', async (req, res) => {
   try {
     const { id } = req.params;
+    const isSupabaseMode = env.RENDER_CLOUD_MODE || env.USE_SUPABASE_PRODUCTS;
+
+    if (isSupabaseMode) {
+      const businessId = (req as any).businessId;
+      const p = await productService.getProductById(id, businessId).catch(() => null as any);
+      if (!p) return res.status(404).json({ error: 'Product not found' });
+
+      let category_name: string | null = null;
+      if (p.category_id && env.SUPABASE_URL && env.SUPABASE_SERVICE_ROLE_KEY) {
+        try {
+          const supa = createClient(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false } });
+          const { data } = await supa.from('categories').select('name').eq('id', p.category_id).single();
+          category_name = (data as any)?.name || null;
+        } catch {}
+      }
+
+      return res.json({
+        ...p,
+        id: p.id,
+        buying_price: p.cost_price != null ? Number(p.cost_price) : 0,
+        selling_price: p.price != null ? Number(p.price) : 0,
+        category_name,
+        is_available: p.is_available ? 1 : 0,
+      });
+    }
+
+    // legacy SQLite
     const product = db.prepare(`
       SELECT p.*, c.name as category_name
       FROM products p
@@ -96,7 +126,41 @@ router.get('/:id', (req, res) => {
 });
 
 // Create new product
-router.post('/', requireRole(['admin', 'manager']), (req, res) => {
+router.post('/', requireRole(['admin', 'manager']), async (req, res) => {
+  const isSupabaseMode = env.RENDER_CLOUD_MODE || env.USE_SUPABASE_PRODUCTS;
+  if (isSupabaseMode) {
+    try {
+      const businessId = (req as any).businessId;
+      const b = req.body || {};
+      if (!b.name) return res.status(400).json({ error: 'Product name is required' });
+      const dto = {
+        name: b.name,
+        description: b.description ?? null,
+        sku: b.sku ?? null,
+        barcode: b.barcode ?? null,
+        price: b.selling_price != null ? String(b.selling_price) : '0',
+        cost_price: b.buying_price != null ? String(b.buying_price) : null,
+        stock_quantity: b.stock_quantity ?? 0,
+        low_stock_threshold: b.minimum_stock ?? 5,
+        image_url: b.image_url ?? null,
+        is_available: b.is_available !== false,
+        is_featured: !!b.is_featured,
+        category_id: b.category_id ? String(b.category_id) : null,
+        sort_order: 0,
+      };
+      const created = await productService.createProduct(dto as any, businessId, (req as any).user?.id);
+      // return legacy shape (spread first, then overrides — no duplicate keys)
+      return res.status(201).json({
+        ...created,
+        selling_price: Number(created.price) || 0,
+        buying_price: created.cost_price ? Number(created.cost_price) : 0,
+      });
+    } catch (e: any) {
+      console.error('[Supabase create product]', e);
+      return res.status(500).json({ error: e?.message || 'Failed to create product (Supabase)' });
+    }
+  }
+
   const transaction = db.transaction(() => {
     try {
       const allowed = ['name', 'barcode', 'sku', 'category_id', 'buying_price', 'selling_price',
@@ -152,7 +216,32 @@ router.post('/', requireRole(['admin', 'manager']), (req, res) => {
 });
 
 // Update product
-router.patch('/:id', requireRole(['admin', 'manager']), (req, res) => {
+router.patch('/:id', requireRole(['admin', 'manager']), async (req, res) => {
+  const isSupabaseMode = env.RENDER_CLOUD_MODE || env.USE_SUPABASE_PRODUCTS;
+  if (isSupabaseMode) {
+    try {
+      const id = (req.params.id as string) || '';
+      const b = req.body || {};
+      const dto: any = {};
+      if (b.name !== undefined) dto.name = b.name;
+      if (b.description !== undefined) dto.description = b.description;
+      if (b.selling_price !== undefined) dto.price = String(b.selling_price);
+      if (b.buying_price !== undefined) dto.cost_price = b.buying_price != null ? String(b.buying_price) : null;
+      if (b.stock_quantity !== undefined) dto.stock_quantity = b.stock_quantity;
+      if (b.minimum_stock !== undefined) dto.low_stock_threshold = b.minimum_stock;
+      if (b.category_id !== undefined) dto.category_id = b.category_id ? String(b.category_id) : null;
+      // add more fields as needed
+      const updated = await productService.updateProduct(id, dto, (req as any).businessId);
+      return res.json({ success: true, data: {
+        ...updated,
+        selling_price: Number(updated.price) || 0,
+        buying_price: updated.cost_price ? Number(updated.cost_price) : 0,
+      }});
+    } catch (e: any) {
+      return res.status(500).json({ error: e?.message || 'Failed to update (Supabase)' });
+    }
+  }
+
   const transaction = db.transaction(() => {
     try {
       const { id } = req.params;
@@ -249,9 +338,21 @@ router.delete('/:id', requireRole(['admin', 'manager']), (req, res) => {
   }
 });
 
-// Get low stock products
-router.get('/low-stock', (_req, res) => {
+// Get low stock products (Supabase compat)
+router.get('/low-stock', async (_req, res) => {
   try {
+    const isSupabaseMode = env.RENDER_CLOUD_MODE || env.USE_SUPABASE_PRODUCTS;
+    if (isSupabaseMode) {
+      const businessId = (_req as any).businessId;
+      const result = await productService.listProducts(businessId, { is_available: true, limit: 500, page: 1 });
+      const low = (result.items || []).filter((p: any) => (p.stock_quantity ?? 0) <= (p.low_stock_threshold ?? 0));
+      // minimal shape for existing UI
+      return res.json(low.map((p: any) => ({
+        id: p.id, name: p.name, stock_quantity: p.stock_quantity, minimum_stock: p.low_stock_threshold,
+        unit: 'pcs', category_name: null,
+        selling_price: Number(p.price) || 0,
+      })));
+    }
     const products = db.prepare(`
       SELECT p.id, p.name, p.stock_quantity, p.minimum_stock, p.unit,
              c.name as category_name
@@ -433,9 +534,80 @@ router.post(
 
 // ─── Professional Inventory Endpoints (PHASE 1) ─────────────────────
 
-// GET /products - supports both legacy flat array and new professional pagination
-router.get('/', (req, res) => {
+// GET /products - supports both legacy flat array and new professional pagination.
+// In Supabase/Render cloud mode: delegates to modern productService + shape adapter
+// so that POS, ProductsGrid, etc. receive selling_price, category_name, etc. (fixes price=0 bug).
+router.get('/', async (req, res) => {
   try {
+    const isSupabaseMode = env.RENDER_CLOUD_MODE || env.USE_SUPABASE_PRODUCTS;
+
+    if (isSupabaseMode) {
+      const businessId = (req as any).businessId || undefined;
+      const hasPagination = !!(req.query.page || req.query.limit || req.query.search || req.query.lowStock || req.query.category_id);
+
+      const page = hasPagination ? Math.max(1, parseInt(String(req.query.page)) || 1) : 1;
+      const limit = hasPagination
+        ? Math.min(100, Math.max(5, parseInt(String(req.query.limit)) || 1000))
+        : 1000;
+      const search = (req.query.search as string || '').trim() || undefined;
+      const categoryId = req.query.category_id ? String(req.query.category_id) : undefined;
+
+      const svcResult = await productService.listProducts(businessId, {
+        page,
+        limit,
+        search,
+        category_id: categoryId,
+        is_available: true,
+      });
+
+      // Enrich category_name (Supabase products table has only category_id; frontend expects the name)
+      const catMap = new Map<string, string>();
+      if (env.SUPABASE_URL && env.SUPABASE_SERVICE_ROLE_KEY) {
+        try {
+          const supa = createClient(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false } });
+          const { data: cats } = await supa.from('categories').select('id, name');
+          (cats || []).forEach((c: any) => catMap.set(String(c.id), c.name || ''));
+        } catch (e) {
+          console.warn('[Products] Supabase category enrichment skipped:', (e as any)?.message);
+        }
+      }
+
+      const adapted = (svcResult.items || []).map((p: any) => ({
+        id: p.id,                    // UUID string (tolerated by most UI; sync/desktop may differ)
+        name: p.name,
+        description: p.description ?? null,
+        barcode: p.barcode ?? null,
+        sku: (p as any).sku ?? null,
+        image_url: p.image_url ?? null,
+        buying_price: p.cost_price != null ? Number(p.cost_price) : 0,
+        selling_price: p.price != null ? Number(p.price) : 0,   // ← critical fix for "prices show 0"
+        stock_quantity: p.stock_quantity ?? 0,
+        minimum_stock: p.low_stock_threshold ?? 0,
+        unit: 'pcs',
+        is_available: p.is_available ? 1 : 0,
+        created_at: p.created_at,
+        updated_at: p.updated_at,
+        category_id: p.category_id,
+        category_name: catMap.get(String(p.category_id)) || null,
+      }));
+
+      if (!hasPagination) {
+        return res.json(adapted);
+      }
+      return res.json({
+        data: adapted,
+        pagination: {
+          page: svcResult.page,
+          limit: svcResult.limit,
+          total: svcResult.total,
+          totalPages: Math.ceil(svcResult.total / (svcResult.limit || 1)),
+          hasNext: svcResult.hasMore,
+          hasPrev: svcResult.page > 1,
+        },
+      });
+    }
+
+    // ── ORIGINAL LEGACY SQLITE PATH (unchanged for local dev / non-Supabase deploys) ──
     const hasPagination = req.query.page || req.query.limit || req.query.search || req.query.lowStock || req.query.category_id;
 
     if (!hasPagination) {

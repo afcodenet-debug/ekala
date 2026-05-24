@@ -8,17 +8,23 @@ import type { Order } from '../shared/ordersStore';
  * Évite `import.meta` pour ne plus avoir TS1343.
  */
 const API_BASE: string = (() => {
-  // En navigateur, `process` n'existe pas (sinon: "process is not defined")
-  const p = typeof process !== 'undefined' ? process : undefined;
+  // Vite / browser (Vercel production build) — never reference `import.meta` token
+  // so that tsc -p tsconfig.server.json (CommonJS) does not reject the file.
+  if (typeof window !== 'undefined') {
+    // @ts-ignore - only evaluated in the Vite ESM bundle
+    const v = (globalThis as any)?.import?.meta?.env?.VITE_API_BASE_URL;
+    if (v) return String(v).replace(/\/$/, '');
+  }
 
-  const apiBaseUrl = p?.env?.API_BASE_URL;
-  if (apiBaseUrl) return apiBaseUrl;
+  // Node / server build / local dev
+  const p = typeof process !== 'undefined' ? process : ({} as any);
+  const apiBaseUrl = p?.env?.API_BASE_URL || p?.env?.VITE_API_BASE_URL;
+  if (apiBaseUrl) return String(apiBaseUrl).replace(/\/$/, '');
 
-  // dev => relative `/api` (proxy /api côté front), prod => localhost
   if (p?.env?.NODE_ENV === 'development') return '/api';
 
-  // fallback
-  return '/api';
+  // Production fallback (Vercel SPA → Render backend with Supabase)
+  return 'https://reat-olive-api.onrender.com';
 })();
 
 export async function request<T>(

@@ -1,12 +1,33 @@
 import express from 'express';
 import db from '../db/database';
 import { requireRole } from '../middleware/auth';
+import { env } from '../config/env';
+import { createClient } from '@supabase/supabase-js';
 
 const router = express.Router();
 
 // ── GET /api/categories ──────────────────────────────────────────────
 // Returns all categories plus product_count for each.
-router.get('/', (req, res) => {
+// Cloud/Supabase: queries Supabase directly (product_count approximated via separate count or 0 for perf).
+router.get('/', async (req, res) => {
+  const isSupabase = env.RENDER_CLOUD_MODE || env.USE_SUPABASE_PRODUCTS;
+  if (isSupabase && env.SUPABASE_URL && env.SUPABASE_SERVICE_ROLE_KEY) {
+    try {
+      const supa = createClient(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false } });
+      const { data: cats, error } = await supa.from('categories').select('id, name, description, created_at').order('name');
+      if (error) throw error;
+      // product_count: lightweight (can be enhanced with RPC later)
+      const withCount = await Promise.all((cats || []).map(async (c: any) => {
+        const { count } = await supa.from('products').select('*', { count: 'exact', head: true }).eq('category_id', c.id).eq('is_available', true);
+        return { ...c, id: c.id, product_count: count || 0 };
+      }));
+      return res.json(withCount);
+    } catch (e: any) {
+      console.error('[Categories Supabase] ', e);
+      return res.status(500).json({ error: 'Failed to fetch categories from Supabase' });
+    }
+  }
+  // legacy
   try {
     const categories = db.prepare(`
       SELECT
