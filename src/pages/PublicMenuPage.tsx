@@ -503,8 +503,12 @@ const PublicMenuPage = () => {
 
         const data = await res.json();
         setTable(data.table);
-        setMenu(data.menu || []);
-        setActivecat(data.menu?.[0]?.id ?? null);
+        const normalized = (data.menu || []).map((cat: any) => ({
+          ...cat,
+          items: (cat.items || []).map((it: any) => ({ ...it, price: Number(it.price) || 0 })),
+        }));
+        setMenu(normalized);
+        setActivecat(normalized[0]?.id ?? null);
       } catch (err) {
         console.error('[MENU FETCH ERROR]', err);
         setError(err instanceof Error ? err.message : 'Failed to fetch');
