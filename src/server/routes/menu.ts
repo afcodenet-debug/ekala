@@ -360,10 +360,10 @@ router.post('/checkout', async (req, res) => {
       });
     }
 
-    // 2. Find the table from qr_token
+    // 2. Find the table from qr_token (including assigned waiter for the order)
     const { data: table, error: tableErr } = await supabase
       .from('restaurant_tables')
-      .select('id, table_number')
+      .select('id, table_number, assigned_waiter_id')
       .eq('qr_token', qr_token)
       .single();
 
@@ -371,13 +371,21 @@ router.post('/checkout', async (req, res) => {
       return res.status(404).json({ error: 'Table introuvable pour ce code QR' });
     }
 
-    // 3. Create a minimal order in Supabase (for admin validation/rejection later)
-    // We use only the safest columns to avoid schema mismatch errors.
+    // 3. Create order in Supabase (minimal but respecting the schema)
+    // waiter_id is REQUIRED (NOT NULL) → we use the table's assigned_waiter_id
+    if (!table.assigned_waiter_id) {
+      console.error('[Public Menu] Table has no assigned_waiter_id for order creation');
+      return res.status(400).json({ error: 'Aucun serveur assigné à cette table' });
+    }
+
     const orderPayload: any = {
       table_id: table.id,
+      waiter_id: table.assigned_waiter_id,
+      customer_id: customer.id,
       status: 'pending',
+      items: items,                    // store the cart items as JSONB
+      total: Number(req.body.total || 0),
       notes: notes || null,
-      total: 0, // can be updated later by admin or calculated
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     };
