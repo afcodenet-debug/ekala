@@ -396,11 +396,12 @@ const PublicMenuPage = () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           qr_token: token,
-          customer_phone: customerPhone || undefined,
+          customer_phone: localOrderData.customer_phone || customerPhone || undefined,
           pin_code: pin,
           items: localOrderData.items,
           notes: localOrderData.notes,
           order_id: activeOrderId || undefined,
+          total: localOrderData.total,   // ensure total is sent at root level
         }),
       });
       const coData = await coRes.json().catch(() => ({}));
