@@ -351,22 +351,24 @@ router.post('/checkout', async (req, res) => {
 
     if (customer_phone) {
       finalCustomerPhone = String(customer_phone).replace(/\D/g, '');
-      const { data, error: custErr } = await supabase
+      const { data: rows, error: custErr } = await supabase
         .from('customers')
         .select('id, phone_number, pin_code, name')
         .eq('phone_number', finalCustomerPhone)
         .eq('pin_code', cleanPin)
-        .single();
+        .limit(1);
 
+      const data = rows?.[0] ?? null;
       if (!custErr && data) customer = data;
     } else {
       // No phone provided → search by PIN only
-      const { data, error: custErr } = await supabase
+      const { data: rows, error: custErr } = await supabase
         .from('customers')
         .select('id, phone_number, pin_code, name')
         .eq('pin_code', cleanPin)
-        .single();
+        .limit(1);
 
+      const data = rows?.[0] ?? null;
       if (!custErr && data) {
         customer = data;
         finalCustomerPhone = data.phone_number;  // found from DB
@@ -399,8 +401,21 @@ router.post('/checkout', async (req, res) => {
     // waiter_id is REQUIRED (NOT NULL + FK to users)
     let waiterId = table.assigned_waiter_id;
 
+    // Verify the waiter exists (to avoid FK violation)
+    if (waiterId) {
+      const { data: exists } = await supabase
+        .from('users')
+        .select('id')
+        .eq('id', waiterId)
+        .single();
+
+      if (!exists) {
+        waiterId = null; // invalid, try fallback
+      }
+    }
+
     if (!waiterId) {
-      // Fallback: try to find any active admin/manager user to attach the customer order to
+      // Fallback: find any admin or manager
       const { data: fallbackUser } = await supabase
         .from('users')
         .select('id')
@@ -412,7 +427,7 @@ router.post('/checkout', async (req, res) => {
     }
 
     if (!waiterId) {
-      console.error('[Public Menu] No valid waiter_id found for customer order (table has none, no admin/manager users)');
+      console.error('[Public Menu] No valid waiter_id found for customer order');
       return res.status(500).json({ error: 'Aucun serveur disponible pour traiter cette commande pour le moment' });
     }
 
@@ -421,11 +436,10 @@ router.post('/checkout', async (req, res) => {
       waiter_id: waiterId,
       customer_id: customer.id,
       status: 'pending',
-      items: items,                    // store the cart items as JSONB
+      items: items,                    // store the cart items as JSONB for easy viewing by admin
       total: Number(req.body.total || 0),
       notes: notes || null,
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
+      // Let the database/trigger handle created_at and updated_at
     };
 
     const { data: newOrder, error: orderError } = await supabase
@@ -436,13 +450,13 @@ router.post('/checkout', async (req, res) => {
 
     if (orderError) {
       console.error('[Public Menu][CHECKOUT ERROR] Full Supabase error when inserting into orders:');
-      console.error(orderError);                    // ← This will show the real reason (e.g. FK violation on waiter_id)
-      console.error('Payload we tried to insert:', orderPayload);
+      console.error(orderError);
+      console.error('Payload we tried to insert:', JSON.stringify(orderPayload, null, 2));
 
       return res.status(500).json({ 
         error: 'Impossible de créer la commande pour le moment',
-        // Temporary for debugging - remove in production
-        debug: process.env.NODE_ENV !== 'production' ? orderError.message : undefined
+        // Return real error for debugging (remove in final prod)
+        debug: orderError.message || orderError.details || JSON.stringify(orderError)
       });
     }
 

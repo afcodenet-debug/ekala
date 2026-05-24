@@ -322,7 +322,7 @@ const PublicMenuPage = () => {
     };
     setLocalOrderData(localData); persistLocalOrder(localData);
     setCart({}); setShowAccountCreation(false); setPinAttempts(0); setOrderNotes('');
-    const msg = "Commande préparée. Entrez votre code PIN (4 chiffres) pour l'envoyer.";
+    const msg = "Commande préparée. Entrez votre code PIN (6 chiffres) pour l'envoyer.";
     setPendingOrderMessage(msg); setPendingOrderTotal(cartTotal);
     persistOrder(null, msg, null, cartTotal);
     window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -365,13 +365,13 @@ const PublicMenuPage = () => {
       const data = await res.json().catch(() => ({}));
       if (!res.ok || !data?.success) throw new Error(data?.error || 'Échec enregistrement');
       setCustomerPhone(data.phone_number);
-      setCustomerPin(data.pin_code || digits.slice(-4));
-      persistCustomer(data.phone_number, data.pin_code || digits.slice(-4));
+      setCustomerPin(data.pin_code || digits.slice(-6));
+      persistCustomer(data.phone_number, data.pin_code || digits.slice(-6));
       showToast(
         'success',
         data.alreadyExists
           ? 'Numéro déjà enregistré. Bienvenue !'
-          : `Compte créé ! Téléphone: ${data.phone_number} — PIN: ${data.pin_code || digits.slice(-4)}`
+          : `Compte créé ! Téléphone: ${data.phone_number} — PIN: ${data.pin_code || digits.slice(-6)}`
       );
       setShowAccountCreation(false);
     } catch (e: any) {
@@ -464,10 +464,10 @@ const PublicMenuPage = () => {
       const rawL = localStorage.getItem(`qr_local_order_${token}`);
       if (rawL) {
         const l = JSON.parse(rawL);
-        if (l) { setLocalOrderData(l); if (!hasActive) { setPendingOrderMessage("Commande préparée. Entrez votre code PIN (4 chiffres)."); setPendingOrderTotal(l.total ?? null); } }
+        if (l) { setLocalOrderData(l); if (!hasActive) { setPendingOrderMessage("Commande préparée. Entrez votre code PIN (6 chiffres)."); setPendingOrderTotal(l.total ?? null); } }
       }
       const rawC = localStorage.getItem(`qr_customer_${token}`);
-      if (rawC) { const c = JSON.parse(rawC); if (c?.phone) { setCustomerPhone(c.phone); setCustomerPin(c.pin || c.phone.replace(/\D/g, '').slice(-4)); } }
+      if (rawC) { const c = JSON.parse(rawC); if (c?.phone) { setCustomerPhone(c.phone); setCustomerPin(c.pin || c.phone.replace(/\D/g, '').slice(-6)); } }
     } catch {}
   }, [token]);
 
