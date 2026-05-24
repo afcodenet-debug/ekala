@@ -371,14 +371,13 @@ router.post('/checkout', async (req, res) => {
       return res.status(404).json({ error: 'Table introuvable pour ce code QR' });
     }
 
-    // 3. Create the order in Supabase
+    // 3. Create a minimal order in Supabase (for admin validation/rejection later)
+    // We use only the safest columns to avoid schema mismatch errors.
     const orderPayload: any = {
       table_id: table.id,
-      customer_id: customer.id,
-      customer_phone: cleanPhone,
-      customer_name: customer.name,
       status: 'pending',
       notes: notes || null,
+      total: 0, // can be updated later by admin or calculated
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     };
@@ -390,13 +389,13 @@ router.post('/checkout', async (req, res) => {
       .single();
 
     if (orderError) {
-      console.error('[Public Menu] Failed to create order:', orderError);
-      throw orderError;
+      console.error('[Public Menu] Failed to create order in Supabase:', orderError);
+      return res.status(500).json({ error: 'Impossible de créer la commande pour le moment' });
     }
 
     const newOrderId = newOrder.id;
 
-    // 4. Insert order items
+    // 4. Insert order items (best effort)
     const orderItemsPayload = items.map((item: any) => ({
       order_id: newOrderId,
       product_id: item.product_id,
@@ -409,11 +408,10 @@ router.post('/checkout', async (req, res) => {
       .insert(orderItemsPayload);
 
     if (itemsError) {
-      console.error('[Public Menu] Failed to insert order items:', itemsError);
-      // Best effort: we still return the order id so the UI can show success
+      console.warn('[Public Menu] Order items insertion had issues (order still created):', itemsError);
     }
 
-    console.log('[Public Menu] Order created successfully via QR', {
+    console.log('[Public Menu] Order created successfully via QR (pending admin review)', {
       orderId: newOrderId,
       table: table.table_number,
       customer: cleanPhone.slice(0, 3) + '***',

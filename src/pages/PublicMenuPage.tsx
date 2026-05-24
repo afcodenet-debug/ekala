@@ -670,11 +670,26 @@ const PublicMenuPage = () => {
                          onKeyDown={e => { if (e.key === 'Enter') validateOrderWithPin(); }}
                          style={{ width: 110, padding: '9px 12px', borderRadius: 10, border: `1px solid ${T.goldBorder}`, background: T.bg2, color: T.text, fontSize: 16, textAlign: 'center', fontFamily: T.mono, letterSpacing: '0.22em', outline: 'none' }}
                        />
-                       <button onClick={validateOrderWithPin} disabled={isValidatingOrder}
-                         style={{ ...btnGoldSolid, opacity: isValidatingOrder ? 0.7 : 1, cursor: isValidatingOrder ? 'wait' : 'pointer' }}>
-                         {isValidatingOrder ? '…' : 'Envoyer commande'}
-                       </button>
-                     </div>
+                        <button onClick={validateOrderWithPin} disabled={isValidatingOrder}
+                          style={{ ...btnGoldSolid, opacity: isValidatingOrder ? 0.7 : 1, cursor: isValidatingOrder ? 'wait' : 'pointer' }}>
+                          {isValidatingOrder ? '…' : 'Envoyer commande'}
+                        </button>
+
+                        <button 
+                          onClick={() => {
+                            // Client cancels the prepared order before sending
+                            setLocalOrderData(null);
+                            persistLocalOrder(null);
+                            setValidationPinInput('');
+                            setPinAttempts(0);
+                            setShowAccountCreation(false);
+                            showToast('info', 'Commande annulée');
+                          }}
+                          style={{ ...btnGhost, padding: '9px 14px', fontSize: 12 }}
+                        >
+                          Annuler
+                        </button>
+                      </div>
                     {pinAttempts >= 3 && (
                       <div style={{ marginTop: 6 }}>
                         <button onClick={() => setShowAccountCreation(true)} style={btnLink}>Pas de PIN ? Créer un compte</button>
