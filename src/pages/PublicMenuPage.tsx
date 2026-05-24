@@ -411,7 +411,8 @@ const PublicMenuPage = () => {
           setPinAttempts(n);
           if (n >= 3) setShowAccountCreation(true);
         }
-        showToast('error', err);
+        const displayError = coData?.debug ? `${err} (détail: ${coData.debug})` : err;
+        showToast('error', displayError);
         return;
       }
       if (!coData?.orderId) throw new Error(coData?.error || 'Échec création commande');

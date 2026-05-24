@@ -363,7 +363,7 @@ router.post('/checkout', async (req, res) => {
     // 2. Find the table from qr_token (including assigned waiter for the order)
     const { data: table, error: tableErr } = await supabase
       .from('restaurant_tables')
-      .select('id, table_number, assigned_waiter_id')
+      .select('id, table_number, assigned_waiter_id, status')
       .eq('qr_token', qr_token)
       .single();
 
@@ -372,15 +372,29 @@ router.post('/checkout', async (req, res) => {
     }
 
     // 3. Create order in Supabase (minimal but respecting the schema)
-    // waiter_id is REQUIRED (NOT NULL) → we use the table's assigned_waiter_id
-    if (!table.assigned_waiter_id) {
-      console.error('[Public Menu] Table has no assigned_waiter_id for order creation');
-      return res.status(400).json({ error: 'Aucun serveur assigné à cette table' });
+    // waiter_id is REQUIRED (NOT NULL + FK to users)
+    let waiterId = table.assigned_waiter_id;
+
+    if (!waiterId) {
+      // Fallback: try to find any active admin/manager user to attach the customer order to
+      const { data: fallbackUser } = await supabase
+        .from('users')
+        .select('id')
+        .in('role', ['admin', 'manager'])
+        .limit(1)
+        .single();
+
+      waiterId = fallbackUser?.id;
+    }
+
+    if (!waiterId) {
+      console.error('[Public Menu] No valid waiter_id found for customer order (table has none, no admin/manager users)');
+      return res.status(500).json({ error: 'Aucun serveur disponible pour traiter cette commande pour le moment' });
     }
 
     const orderPayload: any = {
       table_id: table.id,
-      waiter_id: table.assigned_waiter_id,
+      waiter_id: waiterId,
       customer_id: customer.id,
       status: 'pending',
       items: items,                    // store the cart items as JSONB
@@ -397,8 +411,15 @@ router.post('/checkout', async (req, res) => {
       .single();
 
     if (orderError) {
-      console.error('[Public Menu] Failed to create order in Supabase:', orderError);
-      return res.status(500).json({ error: 'Impossible de créer la commande pour le moment' });
+      console.error('[Public Menu][CHECKOUT ERROR] Full Supabase error when inserting into orders:');
+      console.error(orderError);                    // ← This will show the real reason (e.g. FK violation on waiter_id)
+      console.error('Payload we tried to insert:', orderPayload);
+
+      return res.status(500).json({ 
+        error: 'Impossible de créer la commande pour le moment',
+        // Temporary for debugging - remove in production
+        debug: process.env.NODE_ENV !== 'production' ? orderError.message : undefined
+      });
     }
 
     const newOrderId = newOrder.id;
