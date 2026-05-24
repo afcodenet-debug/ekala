@@ -311,8 +311,13 @@ const PublicMenuPage = () => {
       if (d.length > 14) { showToast('error', 'Numéro maximum 14 chiffres.'); return; }
     }
     const localData = {
-      items: cartItems.map(it => ({ product_id: it.productId, quantity: it.quantity })),
-      total: cartTotal, customer_phone: customerPhone || undefined,
+      items: cartItems.map(it => ({ 
+        product_id: it.productId, 
+        quantity: it.quantity,
+        name: it.name   // for display in the PIN confirmation screen
+      })),
+      total: cartTotal, 
+      customer_phone: customerPhone || undefined,
       notes: orderNotes.trim() || undefined,
     };
     setLocalOrderData(localData); persistLocalOrder(localData);
@@ -626,19 +631,50 @@ const PublicMenuPage = () => {
                     <button onClick={() => setShowAccountCreation(false)} style={btnLink}>J'ai un PIN</button>
                   </div>
                 ) : (
-                  <>
-                    <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-                      <input
-                        type="text" inputMode="numeric" maxLength={4} placeholder="••••"
-                        value={validationPinInput} onChange={e => setValidationPinInput(e.target.value)}
-                        onKeyDown={e => { if (e.key === 'Enter') validateOrderWithPin(); }}
-                        style={{ width: 88, padding: '9px 12px', borderRadius: 10, border: `1px solid ${T.goldBorder}`, background: T.bg2, color: T.text, fontSize: 16, textAlign: 'center', fontFamily: T.mono, letterSpacing: '0.22em', outline: 'none' }}
-                      />
-                      <button onClick={validateOrderWithPin} disabled={isValidatingOrder}
-                        style={{ ...btnGoldSolid, opacity: isValidatingOrder ? 0.7 : 1, cursor: isValidatingOrder ? 'wait' : 'pointer' }}>
-                        {isValidatingOrder ? '…' : 'Envoyer commande'}
-                      </button>
-                    </div>
+                   <>
+                     {/* Order summary before PIN entry */}
+                     {localOrderData?.items?.length > 0 && (
+                       <div style={{ 
+                         background: T.bg2, 
+                         border: `1px solid ${T.goldBorder}`, 
+                         borderRadius: 10, 
+                         padding: '10px 12px', 
+                         marginBottom: 10,
+                         fontSize: 12 
+                       }}>
+                         <div style={{ fontWeight: 600, color: T.gold, marginBottom: 6 }}>Votre commande :</div>
+                         {localOrderData.items.map((it: any, idx: number) => (
+                           <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 2 }}>
+                             <span>{it.quantity} × {it.name || `Article #${it.product_id}`}</span>
+                           </div>
+                         ))}
+                         <div style={{ 
+                           marginTop: 6, 
+                           paddingTop: 6, 
+                           borderTop: `1px solid ${T.goldBorder}`, 
+                           display: 'flex', 
+                           justifyContent: 'space-between',
+                           fontWeight: 700,
+                           color: T.gold2
+                         }}>
+                           <span>Total</span>
+                           <span>{Number(localOrderData.total || 0).toFixed(0)} ZMW</span>
+                         </div>
+                       </div>
+                     )}
+
+                     <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                       <input
+                         type="text" inputMode="numeric" maxLength={6} placeholder="••••••"
+                         value={validationPinInput} onChange={e => setValidationPinInput(e.target.value)}
+                         onKeyDown={e => { if (e.key === 'Enter') validateOrderWithPin(); }}
+                         style={{ width: 110, padding: '9px 12px', borderRadius: 10, border: `1px solid ${T.goldBorder}`, background: T.bg2, color: T.text, fontSize: 16, textAlign: 'center', fontFamily: T.mono, letterSpacing: '0.22em', outline: 'none' }}
+                       />
+                       <button onClick={validateOrderWithPin} disabled={isValidatingOrder}
+                         style={{ ...btnGoldSolid, opacity: isValidatingOrder ? 0.7 : 1, cursor: isValidatingOrder ? 'wait' : 'pointer' }}>
+                         {isValidatingOrder ? '…' : 'Envoyer commande'}
+                       </button>
+                     </div>
                     {pinAttempts >= 3 && (
                       <div style={{ marginTop: 6 }}>
                         <button onClick={() => setShowAccountCreation(true)} style={btnLink}>Pas de PIN ? Créer un compte</button>

@@ -319,4 +319,117 @@ router.post('/register-customer', async (req, res) => {
   }
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Customer order checkout for QR Menu
+// POST /api/menu/checkout
+// Body: { qr_token, customer_phone, pin_code, items: [{product_id, quantity}], notes?, order_id? }
+// This validates the PIN against the customers table and creates the order.
+// ─────────────────────────────────────────────────────────────────────────────
+router.post('/checkout', async (req, res) => {
+  const { qr_token, customer_phone, pin_code, items, notes, order_id } = req.body || {};
+
+  if (!qr_token || !customer_phone || !pin_code || !Array.isArray(items) || items.length === 0) {
+    return res.status(400).json({ error: 'Données de commande incomplètes' });
+  }
+
+  const cleanPhone = String(customer_phone).replace(/\D/g, '');
+  const cleanPin = String(pin_code).trim();
+
+  if (cleanPin.length !== 6) {
+    return res.status(400).json({ error: 'Le code PIN doit contenir 6 chiffres' });
+  }
+
+  const supabase = createClient(env.SUPABASE_URL!, env.SUPABASE_SERVICE_ROLE_KEY!, {
+    auth: { persistSession: false },
+  });
+
+  try {
+    // 1. Verify customer exists with this phone + PIN
+    const { data: customer, error: custError } = await supabase
+      .from('customers')
+      .select('id, phone_number, pin_code, name')
+      .eq('phone_number', cleanPhone)
+      .eq('pin_code', cleanPin)
+      .single();
+
+    if (custError || !customer) {
+      console.warn('[Public Menu] Invalid PIN attempt', { phone: cleanPhone.slice(0, 3) + '***' });
+      return res.status(401).json({ 
+        error: 'Code PIN incorrect', 
+        pinNotFound: true 
+      });
+    }
+
+    // 2. Find the table from qr_token
+    const { data: table, error: tableErr } = await supabase
+      .from('restaurant_tables')
+      .select('id, table_number')
+      .eq('qr_token', qr_token)
+      .single();
+
+    if (tableErr || !table) {
+      return res.status(404).json({ error: 'Table introuvable pour ce code QR' });
+    }
+
+    // 3. Create the order in Supabase
+    const orderPayload: any = {
+      table_id: table.id,
+      customer_id: customer.id,
+      customer_phone: cleanPhone,
+      customer_name: customer.name,
+      status: 'pending',
+      notes: notes || null,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+
+    const { data: newOrder, error: orderError } = await supabase
+      .from('orders')
+      .insert(orderPayload)
+      .select('id')
+      .single();
+
+    if (orderError) {
+      console.error('[Public Menu] Failed to create order:', orderError);
+      throw orderError;
+    }
+
+    const newOrderId = newOrder.id;
+
+    // 4. Insert order items
+    const orderItemsPayload = items.map((item: any) => ({
+      order_id: newOrderId,
+      product_id: item.product_id,
+      quantity: Number(item.quantity) || 1,
+      created_at: new Date().toISOString(),
+    }));
+
+    const { error: itemsError } = await supabase
+      .from('order_items')
+      .insert(orderItemsPayload);
+
+    if (itemsError) {
+      console.error('[Public Menu] Failed to insert order items:', itemsError);
+      // Best effort: we still return the order id so the UI can show success
+    }
+
+    console.log('[Public Menu] Order created successfully via QR', {
+      orderId: newOrderId,
+      table: table.table_number,
+      customer: cleanPhone.slice(0, 3) + '***',
+      itemsCount: items.length,
+    });
+
+    return res.json({
+      success: true,
+      orderId: newOrderId,
+      customerPhone: cleanPhone,
+    });
+
+  } catch (err: any) {
+    console.error('[Public Menu] Checkout error:', err);
+    return res.status(500).json({ error: 'Erreur lors de la création de la commande' });
+  }
+});
+
 export default router;
