@@ -322,8 +322,9 @@ router.post('/register-customer', async (req, res) => {
 // ─────────────────────────────────────────────────────────────────────────────
 // Customer order checkout for QR Menu
 // POST /api/menu/checkout
-// Body: { qr_token, customer_phone, pin_code, items: [{product_id, quantity}], notes?, order_id? }
-// This validates the PIN against the customers table and creates the order.
+// Body: { qr_token, customer_phone?, pin_code, items: [{product_id, quantity, name?}], notes?, order_id?, total? }
+// Validates PIN (phone optional → lookup by pin_code alone) and creates pending order in Supabase.
+// Notes (special instructions) are accepted and embedded as cartItems.notes inside the items JSONB.
 // ─────────────────────────────────────────────────────────────────────────────
 router.post('/checkout', async (req, res) => {
   const { qr_token, customer_phone, pin_code, items, notes, order_id } = req.body || {};
@@ -431,14 +432,20 @@ router.post('/checkout', async (req, res) => {
       return res.status(500).json({ error: 'Aucun serveur disponible pour traiter cette commande pour le moment' });
     }
 
+    // Preserve special instructions inside the items JSONB (as .notes on the array)
+    // so they survive without a 'notes' column on the orders table.
+    const cartItems: any = [...items];
+    if (notes && String(notes).trim()) {
+      cartItems.notes = String(notes).trim();
+    }
+
     const orderPayload: any = {
       table_id: table.id,
       waiter_id: waiterId,
       customer_id: customer.id,
       status: 'pending',
-      items: items,                    // store the cart items as JSONB for easy viewing by admin
+      items: cartItems,                // array (with optional .notes) stored as JSONB
       total: Number(req.body.total || 0),
-      notes: notes || null,
       // Let the database/trigger handle created_at and updated_at
     };
 
