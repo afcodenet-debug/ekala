@@ -2,6 +2,8 @@ import express from 'express';
 import db from '../db/database';
 import { OrderService } from '../services/order.service';
 import { requirePermission } from '../middleware/auth';
+import { createClient } from '@supabase/supabase-js';
+import { env } from '../config/env';
 // import { syncService } from '../sync';
 
 const router = express.Router();
@@ -223,22 +225,57 @@ router.patch('/:id/items', requirePermission('UPDATE_ORDER_STATUS'), async (req,
 // Get order by ID
 router.get('/:id', async (req, res) => {
   const { id } = req.params;
+  const orderId = Number(id);
 
   try {
-    const order = await OrderService.getById(Number(id));
+    // Cloud / Supabase mode: fetch directly from Supabase (orders created by public QR menu live here)
+    const isCloud = !db || env.USE_SUPABASE_TABLES;
+    if (isCloud) {
+      if (!env.SUPABASE_URL || !env.SUPABASE_SERVICE_ROLE_KEY) {
+        return res.status(500).json({ error: 'Supabase not configured for order lookup' });
+      }
+
+      const supabase = createClient(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, {
+        auth: { persistSession: false },
+      });
+
+      const { data: supaOrder, error: supaErr } = await supabase
+        .from('orders')
+        .select('id, status, total, items, created_at, updated_at, table_id, waiter_id, customer_id')
+        .eq('id', orderId)
+        .single();
+
+      if (supaErr || !supaOrder) {
+        return res.status(404).json({ error: 'Order not found' });
+      }
+
+      // Normalize for the public polling client (only needs status + total + items array)
+      const normalized = {
+        id: supaOrder.id,
+        status: supaOrder.status || 'pending',
+        total: Number(supaOrder.total || 0),
+        items: Array.isArray(supaOrder.items) ? supaOrder.items : [],
+        created_at: supaOrder.created_at,
+      };
+
+      return res.json(normalized);
+    }
+
+    // Legacy SQLite path (POS)
+    const order = await OrderService.getById(orderId);
     if (order) {
       res.json(order);
     } else {
       res.status(404).json({ error: 'Order not found' });
     }
   } catch (error: any) {
-    console.error('=== ORDERS ACTIVE FETCH ERROR ===');
+    console.error('=== ORDERS GET /:id ERROR ===');
     console.error('Error message:', error?.message);
     console.error('Error code:', error?.code);
     console.error('Full error:', error);
     console.error(error?.stack);
     res.status(500).json({ 
-      error: 'Failed to fetch orders',
+      error: 'Failed to fetch order',
       details: process.env.NODE_ENV === 'development' ? (error?.message || error?.toString()) : undefined 
     });
   }
