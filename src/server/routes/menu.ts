@@ -332,10 +332,7 @@ router.post('/checkout', async (req, res) => {
     return res.status(400).json({ error: 'Données de commande incomplètes' });
   }
 
-  // customer_phone can be optional in some flows, but we will try to use it for customer lookup
-  const finalCustomerPhone = customer_phone ? String(customer_phone).replace(/\D/g, '') : null;
-
-    const cleanPin = String(pin_code).trim();
+  const cleanPin = String(pin_code).trim();
 
   if (cleanPin.length !== 6) {
     return res.status(400).json({ error: 'Le code PIN doit contenir 6 chiffres' });
@@ -346,25 +343,46 @@ router.post('/checkout', async (req, res) => {
   });
 
   try {
-    // 1. Verify customer exists with this phone + PIN (phone is required for lookup)
-    if (!finalCustomerPhone) {
-      return res.status(400).json({ error: 'Numéro de téléphone manquant pour la vérification du PIN' });
+    // 1. Lookup customer by PIN (phone number is optional in the request)
+    // If phone is provided → use it for faster/more precise lookup
+    // If phone is not provided → lookup by PIN only (as per your requirement)
+    let customer = null;
+    let finalCustomerPhone = null;
+
+    if (customer_phone) {
+      finalCustomerPhone = String(customer_phone).replace(/\D/g, '');
+      const { data, error: custErr } = await supabase
+        .from('customers')
+        .select('id, phone_number, pin_code, name')
+        .eq('phone_number', finalCustomerPhone)
+        .eq('pin_code', cleanPin)
+        .single();
+
+      if (!custErr && data) customer = data;
+    } else {
+      // No phone provided → search by PIN only
+      const { data, error: custErr } = await supabase
+        .from('customers')
+        .select('id, phone_number, pin_code, name')
+        .eq('pin_code', cleanPin)
+        .single();
+
+      if (!custErr && data) {
+        customer = data;
+        finalCustomerPhone = data.phone_number;  // found from DB
+      }
     }
 
-    const { data: customer, error: custError } = await supabase
-      .from('customers')
-      .select('id, phone_number, pin_code, name')
-      .eq('phone_number', finalCustomerPhone)
-      .eq('pin_code', cleanPin)
-      .single();
-
-    if (custError || !customer) {
-      console.warn('[Public Menu] Invalid PIN attempt', { phone: finalCustomerPhone ? finalCustomerPhone.slice(0, 3) + '***' : 'unknown' });
+    if (!customer) {
+      console.warn('[Public Menu] Invalid PIN attempt (no matching customer found)');
       return res.status(401).json({ 
         error: 'Code PIN incorrect', 
         pinNotFound: true 
       });
     }
+
+    // Use the phone found in DB if it wasn't sent by the client
+    if (!finalCustomerPhone) finalCustomerPhone = customer.phone_number;
 
     // 2. Find the table from qr_token (including assigned waiter for the order)
     const { data: table, error: tableErr } = await supabase
