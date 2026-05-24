@@ -211,4 +211,112 @@ router.get('/table/:qr_token', async (req, res) => {
   }
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Customer registration for QR Menu (public, no auth required)
+// POST /api/menu/register-customer
+// Body: { phone_number: string (digits) }
+// Response: { success: boolean, phone_number: string, pin_code: string, alreadyExists?: boolean }
+// Requirements implemented:
+// - phone_number UNIQUE
+// - email UNIQUE (optional)
+// - name = "Client" + random 6 digits
+// - pin_code = last 6 digits of phone_number
+// - Professional error handling + logging
+// ─────────────────────────────────────────────────────────────────────────────
+router.post('/register-customer', async (req, res) => {
+  const { phone_number } = req.body || {};
+
+  console.log('[Public Menu] register-customer request', { phone_number: phone_number ? phone_number.slice(0, 3) + '***' : null });
+
+  if (!phone_number || typeof phone_number !== 'string') {
+    return res.status(400).json({ error: 'Numéro de téléphone requis' });
+  }
+
+  const digits = phone_number.replace(/\D/g, '');
+
+  if (digits.length < 9) {
+    return res.status(400).json({ error: 'Numéro minimum 9 chiffres' });
+  }
+  if (digits.length > 14) {
+    return res.status(400).json({ error: 'Numéro maximum 14 chiffres' });
+  }
+
+  const supabase = createClient(env.SUPABASE_URL!, env.SUPABASE_SERVICE_ROLE_KEY!, {
+    auth: { persistSession: false },
+  });
+
+  try {
+    // 1. Check if phone already exists
+    const { data: existing, error: checkErr } = await supabase
+      .from('customers')
+      .select('phone_number, pin_code, name')
+      .eq('phone_number', digits)
+      .single();
+
+    if (checkErr && checkErr.code !== 'PGRST116') { // PGRST116 = no rows
+      console.error('[Public Menu] Error checking existing customer:', checkErr);
+      return res.status(500).json({ error: 'Erreur lors de la vérification du numéro' });
+    }
+
+    if (existing) {
+      // Already registered → return existing PIN (last 6 digits)
+      console.log('[Public Menu] Customer already exists', { phone: digits.slice(0, 3) + '***' });
+      return res.json({
+        success: true,
+        phone_number: existing.phone_number,
+        pin_code: existing.pin_code,
+        alreadyExists: true,
+      });
+    }
+
+    // 2. Generate data
+    const randomSuffix = Math.floor(100000 + Math.random() * 900000); // 6 digits
+    const name = `Client${randomSuffix}`;
+    const pin_code = digits.slice(-6); // last 6 digits (pad left with 0 if needed? but phones are long enough)
+    const email = null; // optional, not provided in this flow
+
+    // 3. Insert new customer
+    const { data: inserted, error: insertErr } = await supabase
+      .from('customers')
+      .insert({
+        phone_number: digits,
+        name,
+        pin_code,
+        email,                    // can be updated later
+        created_at: new Date().toISOString(),
+      })
+      .select('phone_number, pin_code')
+      .single();
+
+    if (insertErr) {
+      // Handle unique constraint violations gracefully
+      if (insertErr.code === '23505') { // unique_violation
+        console.warn('[Public Menu] Duplicate during insert (race condition)', insertErr.details);
+        return res.status(409).json({
+          error: 'Ce numéro est déjà enregistré',
+          alreadyExists: true,
+        });
+      }
+      console.error('[Public Menu] Failed to insert customer:', insertErr);
+      return res.status(500).json({ error: 'Erreur d’enregistrement' });
+    }
+
+    console.log('[Public Menu] New customer registered successfully', {
+      phone: digits.slice(0, 3) + '***',
+      name,
+      pin_code: '******',
+    });
+
+    return res.json({
+      success: true,
+      phone_number: inserted.phone_number,
+      pin_code: inserted.pin_code,
+      alreadyExists: false,
+    });
+  } catch (err: any) {
+    console.error('[Public Menu] Unexpected error in register-customer:', err);
+    return res.status(500).json({ error: 'Erreur d’enregistrement' });
+  }
+});
+
 export default router;
