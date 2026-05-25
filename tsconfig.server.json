@@ -28,6 +28,9 @@
     "src/lib",
     "src/components",
     "src/pages",
-    "src/features"
+    "src/features",
+    "src/sync/electron-integration.ts",
+    "src/sync/production-sync-setup.ts",
+    "src/sync/test/**/*"
   ]
 }
