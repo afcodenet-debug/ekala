@@ -148,6 +148,14 @@ export class ProductSyncService {
       try {
         const payload = JSON.parse(item.payload);
 
+        // Normalize record_id (outbox stores it as TEXT, Supabase products.id is bigint)
+        const recordId = Number(item.record_id);
+        if (isNaN(recordId)) {
+          console.warn(`[Sync] Skipping invalid record_id in outbox: ${item.record_id} for ${entity}`);
+          this.db.prepare(`UPDATE sync_outbox SET status = 'failed', last_error = 'invalid record_id' WHERE id = ?`).run(item.id);
+          continue;
+        }
+
         if (item.operation === 'insert' || item.operation === 'update') {
           // --- Tolerant push for legacy schemas (no business_id, no version, no sync_status) ---
           // Primary goal right now: keep stock_quantity in sync.
@@ -168,7 +176,7 @@ export class ProductSyncService {
           const { error } = await this.supabase
             .from(table)
             .update(safeUpdate)
-            .eq('id', item.record_id);
+            .eq('id', recordId);
 
           if (error) throw error;
 
@@ -177,7 +185,7 @@ export class ProductSyncService {
           const { error } = await this.supabase
             .from(table)
             .update({ is_available: 0, updated_at: new Date().toISOString() })
-            .eq('id', item.record_id);
+            .eq('id', recordId);
 
           if (error) throw error;
         }
@@ -216,7 +224,7 @@ export class ProductSyncService {
     const { data, error } = await this.supabase
       .from('products')
       .select('*')
-      .eq('business_id', businessId)
+      // Tolerant: do not filter by business_id if the remote table is legacy (no business_id column)
       .gt('updated_at', since)
       .order('updated_at', { ascending: true });
 
