@@ -835,6 +835,9 @@ const T = {
     cartTitle:         d('Your cart', 'Votre panier', 'Seu carrinho'),
     orderInProgress:   d('Order in progress', 'Commande en cours', 'Pedido em andamento'),
     menuFooter:        d('General menu · Real-time updates', 'Carte générale · Mise à jour en temps réel', 'Menu geral · Atualizações em tempo real'),
+    sendOrder:         d('Send order', 'Envoyer commande', 'Enviar pedido'),
+    clear:             d('Clear', 'Vider', 'Limpar'),
+    cancel:            d('Cancel', 'Annuler', 'Cancelar'),
 
     // Cart
     yourOrder: d('Your order', 'Votre commande', 'Seu pedido'),

@@ -1024,7 +1024,7 @@ const PublicMenuPage = () => {
                        />
                         <button onClick={validateOrderWithPin} disabled={isValidatingOrder}
                           style={{ ...btnGoldSolid, opacity: isValidatingOrder ? 0.7 : 1, cursor: isValidatingOrder ? 'wait' : 'pointer' }}>
-                          {isValidatingOrder ? '…' : 'Envoyer commande'}
+                           {isValidatingOrder ? '…' : t('qrMenu.sendOrder')}
                         </button>
 
                         <button 
@@ -1039,7 +1039,7 @@ const PublicMenuPage = () => {
                           }}
                           style={{ ...btnGhost, padding: '9px 14px', fontSize: 12 }}
                         >
-                          Annuler
+                           {t('qrMenu.cancel')}
                         </button>
                       </div>
                     {pinAttempts >= 3 && (
@@ -1250,7 +1250,7 @@ const PublicMenuPage = () => {
                     </div>
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                    <button onClick={() => { setCart({}); setIsCartOpen(false); }} style={{ background: 'none', border: 'none', color: T.text3, fontSize: 11, cursor: 'pointer', fontFamily: T.sans }}>Vider</button>
+                     <button onClick={() => { setCart({}); setIsCartOpen(false); }} style={{ background: 'none', border: 'none', color: T.text3, fontSize: 11, cursor: 'pointer', fontFamily: T.sans }}>{t('qrMenu.clear')}</button>
                     <button onClick={() => setIsCartOpen(false)} style={{ width: 32, height: 32, borderRadius: '50%', background: 'rgba(255,255,255,0.06)', border: 'none', color: T.text2, fontSize: 18, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>×</button>
                   </div>
                 </div>
