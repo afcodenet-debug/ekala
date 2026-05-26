@@ -1,11 +1,13 @@
-// === Environment loading ===
-// Only load .env locally (via dynamic import).
-// On Render (RENDER_CLOUD_MODE) or production, env vars are injected by the platform.
-// This prevents TS build errors when dotenv is not installed (npm ci --omit=dev).
+// === Environment loading (local only) ===
+// Render + production builds do NOT have dotenv installed (npm ci --omit=dev).
+// We use require + ts-ignore to avoid TypeScript complaining about the missing module.
 if (process.env.NODE_ENV !== 'production' && !process.env.RENDER_CLOUD_MODE) {
-  import('dotenv/config').catch(() => {
-    // Silently ignore — dotenv is only for local development
-  });
+  try {
+    // @ts-ignore - dotenv may not be installed in production builds
+    require('dotenv/config');
+  } catch {
+    // dotenv not present — this is expected on Render
+  }
 }
 
 import express from 'express';
