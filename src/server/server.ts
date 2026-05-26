@@ -1,5 +1,12 @@
-// Load .env into process.env as early as possible (critical for hybrid Supabase + local SQLite mode)
-import 'dotenv/config';
+// === Environment loading ===
+// Only load .env locally (via dynamic import).
+// On Render (RENDER_CLOUD_MODE) or production, env vars are injected by the platform.
+// This prevents TS build errors when dotenv is not installed (npm ci --omit=dev).
+if (process.env.NODE_ENV !== 'production' && !process.env.RENDER_CLOUD_MODE) {
+  import('dotenv/config').catch(() => {
+    // Silently ignore — dotenv is only for local development
+  });
+}
 
 import express from 'express';
 import menuRoutes from './routes/menu';
