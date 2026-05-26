@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useSearchParams, useLocation } from 'react-router-dom';
 import { APP_NAME } from '../lib/app-config';
 import { useI18n } from '../lib/i18n';  // for future full i18n; we use local override for public QR default EN
 import { 
@@ -228,7 +228,26 @@ const StatusChip = ({ status }: { status: string }) => {
 // ─── Main component ───────────────────────────────────────────────────────────
 const PublicMenuPage = () => {
   const [searchParams] = useSearchParams();
-  const token = searchParams.get('token') || '';
+  const location = useLocation();
+
+  // Token can be provided either as:
+  // 1) ?token=<qr_token> (query param)
+  // 2) /menu/table/<qr_token> (path segment) — what the QR codes use
+  const tokenFromQuery = searchParams.get('token') || '';
+  const tokenFromPath = (() => {
+    try {
+      const parts = String(location.pathname || '').split('/').filter(Boolean);
+      // expected tail: .../menu/table/:qr_token
+      const tokenIndex = parts.lastIndexOf('table');
+      if (tokenIndex >= 0 && parts[tokenIndex + 1]) return parts[tokenIndex + 1];
+      // fallback: if route is directly /menu/<anything>/<token>
+      return parts[parts.length - 1] || '';
+    } catch {
+      return '';
+    }
+  })();
+
+  const token = tokenFromQuery || tokenFromPath || '';
 
   // Local language for public QR Menu (independent of staff settings)
   // Default: English as requested
