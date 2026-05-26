@@ -67,6 +67,8 @@ function App() {
         <I18nProvider lang={language}>
           <Routes>
             <Route path="/login" element={<LoginPage />} />
+            {/* Public routes (work on static Vercel deploy too) */}
+            <Route path="/" element={<PublicMenuPage />} />
             <Route path="/menu" element={<PublicMenuPage />} />
             <Route
               path="/*"

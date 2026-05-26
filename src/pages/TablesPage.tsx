@@ -175,7 +175,7 @@ const FloorPlan = () => {
   }, [user?.id, user?.role, setUserContext, fetchTables]);
 
   // Base URL PUBLIC (Vercel) pour générer des QR toujours "en ligne"
-  // Config à faire côté Vercel : VITE_PUBLIC_MENU_BASE_URL = https://great-olive.vercel.app (par ex)
+  // Optionnel : définir VITE_PUBLIC_MENU_BASE_URL dans Vercel env vars pour forcer un domaine custom.
   const PUBLIC_MENU_BASE_URL =
     (typeof import.meta !== 'undefined' &&
       (import.meta as any).env &&

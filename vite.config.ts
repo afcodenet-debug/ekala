@@ -11,12 +11,12 @@ export default defineConfig({
     }
   },
 
-  // IMPORTANT for Electron packaged build:
-  // main process loads: file://${__dirname}/../renderer/index.html
-  // so Vite must output to dist/renderer.
+  // Note: for Electron, the packager (electron-builder) expects renderer in dist/renderer.
+  // For Vercel / static web deploys we use outDir: 'dist' (see vercel.json + build:vercel script).
+  // The two use-cases are separate; Vercel always runs `vite build` directly.
   build: {
-    outDir: 'dist/renderer',
-    // Avoid noisy devtools “Source map error” in packaged runs
+    outDir: 'dist',
+    emptyOutDir: true,
     sourcemap: false
   },
 

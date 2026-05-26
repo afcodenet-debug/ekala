@@ -15,24 +15,38 @@ import {
 } from 'lucide-react';
 
 /**
- * API base URL (backend déployé séparément).
- * - Sur Vercel, VITE_API_BASE_URL devrait être fourni en Environment Variables.
- * - En fallback, on utilise la valeur Render attendue pour éviter "Failed to fetch"
- *   quand VITE_API_BASE_URL n'est pas injectée (build déjà déployée, config oubliée, etc).
+ * Robust API base URL resolver for the public QR menu.
+ * Priority:
+ * 1. Explicit VITE_API_BASE_URL at build time (Vercel env var)
+ * 2. Smart runtime detection: localhost → local backend, otherwise production Render
+ * This guarantees that a deployed Vercel build never accidentally calls localhost.
  */
-const API_BASE_URL =
-  (typeof import.meta !== 'undefined' &&
-    (import.meta as any).env &&
-    (import.meta as any).env.VITE_API_BASE_URL) ||
-  '';
+function getApiBaseUrl(): string {
+  const envBase =
+    (typeof import.meta !== 'undefined' &&
+      (import.meta as any).env &&
+      (import.meta as any).env.VITE_API_BASE_URL) ||
+    '';
 
-// const apiFallbackBaseUrl = 'https://reat-olive-api.onrender.com';
-const apiFallbackBaseUrl = 'http://localhost:3001';   // ← change ici
+  if (envBase) {
+    return String(envBase).replace(/\/$/, '');
+  }
+
+  if (typeof window !== 'undefined') {
+    const host = window.location.hostname;
+    if (host === 'localhost' || host === '127.0.0.1' || host.includes('.local')) {
+      return 'http://localhost:3001';
+    }
+  }
+
+  // Production static deploy (Vercel, etc.) → the public Render backend
+  return 'https://reat-olive-api.onrender.com';
+}
+
+const API_BASE_URL = getApiBaseUrl();
 
 const apiUrl = (endpoint: string) => {
-  const baseFromEnv = String(API_BASE_URL || '').replace(/\/$/, '');
-  const base = baseFromEnv || apiFallbackBaseUrl;
-
+  const base = API_BASE_URL.replace(/\/$/, '');
   return `${base}${endpoint}`;
 };
 
@@ -761,7 +775,7 @@ const PublicMenuPage = () => {
   // ─── Fetch menu ───────────────────────────────────────────────────────────
   useEffect(() => {
     if (!token) {
-      setError('Aucun token de table fourni dans l’URL.');
+      // No token → this is a direct/root visit to the public site (nice landing, not an error)
       setLoading(false);
       return;
     }
@@ -771,10 +785,8 @@ const PublicMenuPage = () => {
         setLoading(true);
         setError(null);
 
-        // Always prefer explicit VITE_API_BASE_URL. In local dev, fall back to localhost backend.
-        const envBase = (import.meta as any).env?.VITE_API_BASE_URL;
-        const API_BASE_URL = envBase || 'http://localhost:3001';
-        const targetUrl = `${API_BASE_URL.replace(/\/$/, '')}/api/menu/table/${encodeURIComponent(token)}`;
+        // Use the same robust resolver as the rest of the page (never localhost in production)
+        const targetUrl = apiUrl(`/api/menu/table/${encodeURIComponent(token)}`);
 
         console.log('[Frontend API URL]', targetUrl);
 
@@ -815,7 +827,29 @@ const PublicMenuPage = () => {
     </div>
   );
 
-  // ─── Error ────────────────────────────────────────────────────────────────
+  // ─── Public landing (root visit, no token) or real error ────────────────
+  if (!token) {
+    // Beautiful public landing page for bare domain / direct visits
+    return (
+      <div style={{ minHeight: '100vh', background: T.bg, color: T.text, fontFamily: T.sans, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
+        <div style={{ maxWidth: 420, textAlign: 'center' }}>
+          <div style={{ width: 72, height: 72, borderRadius: '50%', border: `2px solid ${T.gold}`, background: T.bg2, display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 24px' }}>
+            <UtensilsCrossed color={T.gold} size={32} />
+          </div>
+          <h1 style={{ fontFamily: T.serif, fontSize: 42, fontWeight: 700, color: T.text, marginBottom: 12, lineHeight: 1.05 }}>
+            {APP_NAME}
+          </h1>
+          <p style={{ fontSize: 15, color: T.text2, marginBottom: 28, lineHeight: 1.5 }}>
+            Bienvenue ! Scannez le QR code de votre table pour découvrir le menu et passer commande directement depuis votre téléphone.
+          </p>
+          <div style={{ fontSize: 12, color: T.text3, letterSpacing: '0.06em' }}>
+            Le lien se trouve sur le sous-bock ou le présentoir de votre table.
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   if (error || !table) return (
     <div style={{ minHeight: '100vh', background: T.bg, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 32, fontFamily: T.sans }}>
       <div style={{ maxWidth: 340, textAlign: 'center' }}>
