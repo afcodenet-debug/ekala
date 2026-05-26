@@ -772,18 +772,27 @@ const PublicMenuPage = () => {
     };
   }, [token, pendingOrderId, orderClientValidated]);
 
-  // ─── Fetch menu (extracted so we can retry on transient network errors) ───
-  const loadMenu = async () => {
+  // ─── Fetch menu with silent retries for Render cold starts (no user-facing message) ───
+  const loadMenu = async (attempt: number = 1) => {
     if (!token) return;
 
+    const MAX_ATTEMPTS = 5;
+    const BASE_DELAY = 1500; // ms
+
     try {
-      setLoading(true);
-      setError(null);
+      if (attempt === 1) {
+        setLoading(true);
+        setError(null);
+      }
 
       const targetUrl = apiUrl(`/api/menu/table/${encodeURIComponent(token)}`);
-      console.log('[Frontend API URL]', targetUrl);
+      console.log(`[Frontend API URL] attempt ${attempt}`, targetUrl);
 
-      const res = await fetch(targetUrl);
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 25000); // 25s timeout for cold starts
+
+      const res = await fetch(targetUrl, { signal: controller.signal });
+      clearTimeout(timeoutId);
 
       if (!res.ok) {
         const text = await res.text().catch(() => '');
@@ -799,11 +808,24 @@ const PublicMenuPage = () => {
       }));
       setMenu(normalized);
       setActivecat(normalized[0]?.id ?? null);
-    } catch (err) {
-      console.error('[MENU FETCH ERROR]', err);
-      setError(err instanceof Error ? err.message : 'Failed to fetch');
-    } finally {
+      setError(null);
       setLoading(false);
+    } catch (err: any) {
+      console.error(`[MENU FETCH ERROR] attempt ${attempt}`, err);
+
+      const isNetworkError = err?.name === 'AbortError' ||
+                             /network|fetch|failed to fetch|timeout/i.test(err?.message || '');
+
+      if (isNetworkError && attempt < MAX_ATTEMPTS) {
+        // Silent retry with exponential backoff (good for Render cold starts)
+        const delay = BASE_DELAY * Math.pow(1.8, attempt - 1);
+        console.log(`[MENU] Retrying in ${Math.round(delay)}ms (attempt ${attempt + 1}/${MAX_ATTEMPTS})`);
+        setTimeout(() => loadMenu(attempt + 1), delay);
+      } else {
+        // Final failure after all retries
+        setError(err instanceof Error ? err.message : 'Failed to fetch');
+        setLoading(false);
+      }
     }
   };
 
@@ -849,30 +871,27 @@ const PublicMenuPage = () => {
   }
 
   if (error || !table) {
-    const isNetworkError = error && /network|fetch|failed to fetch/i.test(error);
-
+    // Simple error screen only — no special "cold start" message
     return (
       <div style={{ minHeight: '100vh', background: T.bg, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 32, fontFamily: T.sans }}>
-        <div style={{ maxWidth: 380, textAlign: 'center' }}>
+        <div style={{ maxWidth: 340, textAlign: 'center' }}>
           <div style={{ width: 60, height: 60, borderRadius: '50%', border: `1.5px solid ${T.goldBorder}`, background: T.bg2, display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 24px' }}>
             <UtensilsCrossed color={T.gold} size={26} />
           </div>
 
           <h1 style={{ fontFamily: T.serif, fontSize: 34, fontWeight: 700, color: T.text, marginBottom: 12, lineHeight: 1.1 }}>
-            {isNetworkError ? 'Serveur en cours de démarrage' : 'Menu indisponible'}
+            Menu indisponible
           </h1>
 
           <p style={{ color: T.text2, fontSize: 15, marginBottom: 20, lineHeight: 1.6, whiteSpace: 'pre-wrap' }}>
-            {isNetworkError
-              ? "Le backend du menu (Render gratuit) s'est endormi. Le premier appel après inactivité peut prendre 15-30 secondes."
-              : error}
+            {error || 'Impossible de charger le menu pour le moment.'}
           </p>
 
           <button
-            onClick={() => { if (isNetworkError) { loadMenu(); } else { window.location.reload(); } }}
+            onClick={() => window.location.reload()}
             style={{ ...btnGoldSolid, marginTop: 8 }}
           >
-            {isNetworkError ? 'Réessayer maintenant' : 'Recharger la page'}
+            Réessayer
           </button>
 
           <p style={{ color: T.text3, fontSize: 12, letterSpacing: '0.05em', lineHeight: 1.7, marginTop: 16 }}>
