@@ -67,9 +67,9 @@ function App() {
         <I18nProvider lang={language}>
           <Routes>
             <Route path="/login" element={<LoginPage />} />
-            {/* Public routes (work on static Vercel deploy too) */}
-            <Route path="/" element={<PublicMenuPage />} />
+            {/* Public QR menu - always accessible without auth */}
             <Route path="/menu" element={<PublicMenuPage />} />
+            {/* Protected staff area: Dashboard on root for authenticated users */}
             <Route
               path="/*"
               element={
@@ -120,25 +120,25 @@ function App() {
                            </ProtectedRoute>
                          } />
                         <Route path="/products" element={
-                          <ProtectedRoute roles={['admin', 'manager']}>
+<ProtectedRoute roles={['admin', 'manager']}>
                             <ProductsPage />
                           </ProtectedRoute>
                         } />
-                        <Route path="/products/:id" element={
+<Route path="/products/:id" element={
                           <ProtectedRoute roles={['admin', 'manager']}>
                             <ProductDetailsPage />
                           </ProtectedRoute>
                         } />
-<Route path="/reports" element={
-                           <ProtectedRoute roles={['admin', 'manager', 'cashier']}>
-                             <Reports />
-                           </ProtectedRoute>
-                         } />
-                         <Route path="/expenses" element={
-                           <ProtectedRoute roles={['admin', 'manager', 'cashier']}>
-                             <Expenses />
-                           </ProtectedRoute>
-                         } />
+                        <Route path="/reports" element={
+                          <ProtectedRoute roles={['admin', 'manager', 'cashier']}>
+                            <Reports />
+                          </ProtectedRoute>
+                        } />
+                        <Route path="/expenses" element={
+                          <ProtectedRoute roles={['admin', 'manager', 'cashier']}>
+                            <Expenses />
+                          </ProtectedRoute>
+                        } />
                         <Route path="/users" element={
                           <ProtectedRoute roles={['admin']}>
                             <UsersPage />

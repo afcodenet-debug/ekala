@@ -131,7 +131,8 @@ const Sidebar = () => {
 
             {group.items.map(item => {
               const Icon = item.icon;
-              const isActive = location.pathname === item.path;
+              // Dashboard menu item is at '/' but we also consider '/dashboard' as active
+              const isActive = location.pathname === item.path || (item.path === '/' && location.pathname === '/dashboard');
 
               return (
                 <Link
