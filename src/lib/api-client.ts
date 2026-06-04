@@ -50,9 +50,6 @@ const API_BASE: string = (() => {
   //    Point to the Render backend.
   //    Backend exposes admin endpoints under `/api/*` (tables/products/orders/expenses).
   //    Also support ekala-api.onrender.com as alternative deployment.
-  if (base.endsWith('.onrender.com') || base.includes('reat-olive-api.onrender.com') || base.includes('ekala-api.onrender.com')) {
-    return `${base}/api`;
-  }
   return 'https://ekala-api.onrender.com/api';
 })();
 
