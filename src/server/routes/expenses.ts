@@ -1,14 +1,37 @@
 import express from 'express';
 import db from '../db/database';
+import { env } from '../config/env';
+import { createClient } from '@supabase/supabase-js';
 
 const router = express.Router();
 
 // Get all expenses
-router.get('/', (req, res) => {
-  // Cloud mode guard: SQLite may be disabled (db === null)
+router.get('/', async (_req, res) => {
   if (!db) {
-    console.warn('[Expenses] SQLite disabled (db is null). Returning empty list for GET /expenses');
-    return res.status(200).json([]);
+    if (!env.SUPABASE_URL || !env.SUPABASE_SERVICE_ROLE_KEY) {
+      console.warn('[Expenses] SQLite disabled and Supabase not configured. Returning empty list for GET /expenses');
+      return res.status(200).json([]);
+    }
+
+    try {
+      const supabase = createClient(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, {
+        auth: { persistSession: false }
+      });
+      const { data, error } = await supabase
+        .from('expenses')
+        .select('id, description, amount, category, user_id, created_at')
+        .order('created_at', { ascending: false });
+
+      if (error) {
+        console.error('[Expenses Supabase] GET error:', error);
+        return res.status(500).json({ error: 'Failed to fetch expenses from Supabase' });
+      }
+
+      return res.json(data || []);
+    } catch (error: any) {
+      console.error('[Expenses Supabase] GET error:', error);
+      return res.status(500).json({ error: 'Failed to fetch expenses from Supabase' });
+    }
   }
 
   try {
@@ -26,11 +49,43 @@ router.get('/', (req, res) => {
 });
 
 // Create new expense
-router.post('/', (req, res) => {
+router.post('/', async (req, res) => {
   const { description, amount, category, user_id } = req.body;
 
   if (!description || !amount || !category || !user_id) {
     return res.status(400).json({ error: 'All fields are required' });
+  }
+
+  if (!db) {
+    if (!env.SUPABASE_URL || !env.SUPABASE_SERVICE_ROLE_KEY) {
+      console.warn('[Expenses] SQLite disabled and Supabase not configured. Cannot create expense.');
+      return res.status(500).json({ error: 'Supabase not configured' });
+    }
+
+    try {
+      const supabase = createClient(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, {
+        auth: { persistSession: false }
+      });
+      const { data, error } = await supabase.from('expenses').insert([
+        {
+          description,
+          amount,
+          category,
+          user_id,
+          created_at: new Date().toISOString()
+        }
+      ]).select('id');
+
+      if (error) {
+        console.error('[Expenses Supabase] POST error:', error);
+        return res.status(500).json({ error: 'Failed to create expense in Supabase' });
+      }
+
+      return res.json({ id: data?.[0]?.id || null });
+    } catch (error: any) {
+      console.error('[Expenses Supabase] POST error:', error);
+      return res.status(500).json({ error: 'Failed to create expense in Supabase' });
+    }
   }
 
   try {
@@ -47,8 +102,32 @@ router.post('/', (req, res) => {
 });
 
 // Delete expense (admin/manager only)
-router.delete('/:id', (req, res) => {
+router.delete('/:id', async (req, res) => {
   const { id } = req.params;
+
+  if (!db) {
+    if (!env.SUPABASE_URL || !env.SUPABASE_SERVICE_ROLE_KEY) {
+      console.warn('[Expenses] SQLite disabled and Supabase not configured. Cannot delete expense.');
+      return res.status(500).json({ error: 'Supabase not configured' });
+    }
+
+    try {
+      const supabase = createClient(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, {
+        auth: { persistSession: false }
+      });
+      const { error } = await supabase.from('expenses').delete().eq('id', Number(id));
+
+      if (error) {
+        console.error('[Expenses Supabase] DELETE error:', error);
+        return res.status(500).json({ error: 'Failed to delete expense in Supabase' });
+      }
+
+      return res.json({ success: true });
+    } catch (error: any) {
+      console.error('[Expenses Supabase] DELETE error:', error);
+      return res.status(500).json({ error: 'Failed to delete expense in Supabase' });
+    }
+  }
 
   try {
     const result = db.prepare('DELETE FROM expenses WHERE id = ?').run(id);

@@ -1,29 +1,84 @@
 import express from 'express';
 import db from '../db/database';
+import { createClient } from '@supabase/supabase-js';
+import { env } from '../config/env';
 
 const router = express.Router();
 
+const SUPABASE_ENABLED = Boolean(env.SUPABASE_URL && env.SUPABASE_SERVICE_ROLE_KEY);
+const useSupabaseReports = !db && SUPABASE_ENABLED;
+
+function formatDateKey(value: string | null | undefined): string {
+  if (!value) return '';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    const match = String(value).match(/^(\d{4}-\d{2}-\d{2})/);
+    return match ? match[1] : String(value).slice(0, 10);
+  }
+  return date.toISOString().split('T')[0];
+}
+
+function formatYearMonth(value: string | null | undefined): string {
+  const dateStr = formatDateKey(value);
+  return dateStr ? dateStr.slice(0, 7) : '';
+}
+
+async function getSupabaseClient() {
+  if (!env.SUPABASE_URL || !env.SUPABASE_SERVICE_ROLE_KEY) {
+    throw new Error('Supabase not configured');
+  }
+  return createClient(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, {
+    auth: { persistSession: false }
+  });
+}
+
 // GET /api/reports/daily-sales?date=YYYY-MM-DD
-router.get('/daily-sales', (req, res) => {
+router.get('/daily-sales', async (req, res) => {
+  const dateParam = typeof req.query.date === 'string' ? req.query.date : undefined;
+
+  if (!db && useSupabaseReports) {
+    try {
+      const supabase = await getSupabaseClient();
+      const { data, error } = await supabase
+        .from('sales')
+        .select('created_at, total_amount')
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+
+      const grouped = (data || []).reduce<Record<string, { total_amount: number; transaction_count: number }>>((acc, item) => {
+        const dateKey = formatDateKey((item as any).created_at);
+        if (!dateKey) return acc;
+        const total = Number((item as any).total_amount || 0);
+        acc[dateKey] = acc[dateKey] || { total_amount: 0, transaction_count: 0 };
+        acc[dateKey].total_amount += total;
+        acc[dateKey].transaction_count += 1;
+        return acc;
+      }, {});
+
+      const rows = Object.entries(grouped)
+        .map(([date, values]) => ({ date, ...values }))
+        .sort((a, b) => (a.date < b.date ? 1 : -1));
+
+      return res.json(dateParam ? rows.filter(row => row.date === dateParam) : rows.slice(0, 30));
+    } catch (error: any) {
+      console.error('[Reports Supabase] daily-sales error:', error);
+      return res.status(500).json({ error: 'Failed to fetch daily sales from Supabase' });
+    }
+  }
+
   if (!db) {
     console.warn('[Reports] SQLite disabled (db is null). Returning [] for daily-sales');
     return res.json([]);
   }
-  let dateParam: string | undefined;
+
   try {
-    const { date } = req.query;
-    dateParam = date as string | undefined;
     const query = dateParam
       ? "SELECT DATE(created_at) as date, SUM(total_amount) as total_amount, COUNT(*) as transaction_count FROM sales WHERE DATE(created_at) = ? GROUP BY DATE(created_at)"
       : "SELECT DATE(created_at) as date, SUM(total_amount) as total_amount, COUNT(*) as transaction_count FROM sales GROUP BY DATE(created_at) ORDER BY date DESC LIMIT 30";
 
-    if (dateParam) {
-      const rows = db.prepare(query).all(dateParam) as any[];
-      res.json(rows);
-    } else {
-      const rows = db.prepare(query).all() as any[];
-      res.json(rows);
-    }
+    const rows = dateParam ? db.prepare(query).all(dateParam) as any[] : db.prepare(query).all() as any[];
+    res.json(rows);
   } catch (error: any) {
     const sqliteErr = error?.code || error?.errno || 'unknown';
     console.error('[REPORTS API FORENSIC ERROR] /daily-sales', {
@@ -39,7 +94,42 @@ router.get('/daily-sales', (req, res) => {
 });
 
 // GET /api/reports/weekly-sales?start=YYYY-MM-DD&end=YYYY-MM-DD
-router.get('/weekly-sales', (req, res) => {
+router.get('/weekly-sales', async (req, res) => {
+  const start = typeof req.query.start === 'string' ? req.query.start : undefined;
+  const end = typeof req.query.end === 'string' ? req.query.end : undefined;
+
+  if (!db && useSupabaseReports) {
+    try {
+      const supabase = await getSupabaseClient();
+      let query = supabase.from('sales').select('created_at, total_amount').order('created_at', { ascending: false });
+
+      if (start) query = query.gte('created_at', `${start}T00:00:00Z`);
+      if (end) query = query.lte('created_at', `${end}T23:59:59Z`);
+
+      const { data, error } = await query;
+      if (error) throw error;
+
+      const grouped = (data || []).reduce<Record<string, { total_amount: number; transaction_count: number }>>((acc, item) => {
+        const dateKey = formatDateKey((item as any).created_at);
+        if (!dateKey) return acc;
+        const total = Number((item as any).total_amount || 0);
+        acc[dateKey] = acc[dateKey] || { total_amount: 0, transaction_count: 0 };
+        acc[dateKey].total_amount += total;
+        acc[dateKey].transaction_count += 1;
+        return acc;
+      }, {});
+
+      const rows = Object.entries(grouped)
+        .map(([date, values]) => ({ date, ...values }))
+        .sort((a, b) => (a.date < b.date ? 1 : -1));
+
+      return res.json(rows);
+    } catch (error: any) {
+      console.error('[Reports Supabase] weekly-sales error:', error);
+      return res.status(500).json({ error: 'Failed to fetch weekly sales from Supabase' });
+    }
+  }
+
   if (!db) {
     console.warn('[Reports] SQLite disabled (db is null). Returning [] for weekly-sales');
     return res.json([]);
@@ -72,14 +162,53 @@ router.get('/weekly-sales', (req, res) => {
 });
 
 // GET /api/reports/monthly-sales?month=MM&year=YYYY
-router.get('/monthly-sales', (req, res) => {
+router.get('/monthly-sales', async (req, res) => {
+  const month = typeof req.query.month === 'string' ? req.query.month.padStart(2, '0') : null;
+  const year = typeof req.query.year === 'string' ? req.query.year : null;
+
+  if (!db && useSupabaseReports) {
+    try {
+      const supabase = await getSupabaseClient();
+      const { data, error } = await supabase
+        .from('sales')
+        .select('created_at, total_amount')
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+
+      const grouped = (data || []).reduce<Record<string, { total_amount: number; transaction_count: number }>>((acc, item) => {
+        const monthKey = formatYearMonth((item as any).created_at);
+        if (!monthKey) return acc;
+        const total = Number((item as any).total_amount || 0);
+        acc[monthKey] = acc[monthKey] || { total_amount: 0, transaction_count: 0 };
+        acc[monthKey].total_amount += total;
+        acc[monthKey].transaction_count += 1;
+        return acc;
+      }, {});
+
+      let rows = Object.entries(grouped)
+        .map(([date, values]) => ({ date, ...values }))
+        .sort((a, b) => (a.date < b.date ? 1 : -1));
+
+      if (month || year) {
+        rows = rows.filter(row => {
+          const [rowYear, rowMonth] = row.date.split('-');
+          return (!year || rowYear === year) && (!month || rowMonth === month);
+        });
+      }
+
+      return res.json(rows);
+    } catch (error: any) {
+      console.error('[Reports Supabase] monthly-sales error:', error);
+      return res.status(500).json({ error: 'Failed to fetch monthly sales from Supabase' });
+    }
+  }
+
   if (!db) {
     console.warn('[Reports] SQLite disabled (db is null). Returning [] for monthly-sales');
     return res.json([]);
   }
   try {
-    const month = req.query.month ? String(req.query.month) : null;
-    const year = req.query.year ? String(req.query.year) : null;
     let query = `
       SELECT strftime('%Y-%m', created_at) as date, SUM(total_amount) as total_amount, COUNT(*) as transaction_count
       FROM sales
@@ -89,7 +218,7 @@ router.get('/monthly-sales', (req, res) => {
 
     if (month) {
       query += ` AND strftime('%m', created_at) = ?`;
-      params.push(month.padStart(2, '0'));
+      params.push(month);
     }
     if (year) {
       query += ` AND strftime('%Y', created_at) = ?`;
@@ -106,13 +235,52 @@ router.get('/monthly-sales', (req, res) => {
 });
 
 // GET /api/reports/top-products?limit=10
-router.get('/top-products', (req, res) => {
+router.get('/top-products', async (req, res) => {
+  const limit = Number(req.query.limit ?? 10);
+
+  if (!db && useSupabaseReports) {
+    try {
+      const supabase = await getSupabaseClient();
+      const [{ data: items, error: itemError }, { data: products, error: productsError }] = await Promise.all([
+        supabase.from('sale_items').select('product_id, quantity, total_price'),
+        supabase.from('products').select('id, name')
+      ]);
+
+      if (itemError) throw itemError;
+      if (productsError) throw productsError;
+
+      const productMap = new Map((products || []).map((p: any) => [p.id, p.name]));
+      const aggregation = (items || []).reduce<Record<string, { product_id: number; product_name: string; quantity_sold: number; revenue: number }>>((acc, item) => {
+        const productId = String((item as any).product_id);
+        if (!acc[productId]) {
+          acc[productId] = {
+            product_id: Number((item as any).product_id),
+            product_name: productMap.get((item as any).product_id) || 'Unknown',
+            quantity_sold: 0,
+            revenue: 0
+          };
+        }
+        acc[productId].quantity_sold += Number((item as any).quantity || 0);
+        acc[productId].revenue += Number((item as any).total_price || 0);
+        return acc;
+      }, {});
+
+      const rows = Object.values(aggregation)
+        .sort((a, b) => b.revenue - a.revenue)
+        .slice(0, limit);
+
+      return res.json(rows);
+    } catch (error: any) {
+      console.error('[Reports Supabase] top-products error:', error);
+      return res.status(500).json({ error: 'Failed to fetch top products from Supabase' });
+    }
+  }
+
   if (!db) {
     console.warn('[Reports] SQLite disabled (db is null). Returning [] for top-products');
     return res.json([]);
   }
   try {
-    const { limit = 10 } = req.query;
     const query = `
       SELECT p.id as product_id, p.name as product_name, SUM(si.quantity) as quantity_sold, SUM(si.total_price) as revenue
       FROM sale_items si
@@ -121,7 +289,7 @@ router.get('/top-products', (req, res) => {
       ORDER BY revenue DESC
       LIMIT ?
     `;
-    const rows = db.prepare(query).all(Number(limit)) as any[];
+    const rows = db.prepare(query).all(limit) as any[];
     res.json(rows);
   } catch (error) {
     console.error('[Reports] top-products error:', error);
@@ -130,7 +298,30 @@ router.get('/top-products', (req, res) => {
 });
 
 // GET /api/reports/low-stock
-router.get('/low-stock', (req, res) => {
+router.get('/low-stock', async (req, res) => {
+  if (!db && useSupabaseReports) {
+    try {
+      const supabase = await getSupabaseClient();
+      const { data, error } = await supabase
+        .from('products')
+        .select('id, name, stock_quantity, minimum_stock, is_available')
+        .order('stock_quantity', { ascending: true });
+
+      if (error) throw error;
+      return res.json((data || [])
+        .filter((product: any) => product.is_available && Number(product.stock_quantity) <= Number(product.minimum_stock))
+        .map((product: any) => ({
+          id: product.id,
+          name: product.name,
+          stock_quantity: product.stock_quantity,
+          minimum_stock: product.minimum_stock
+        })));
+    } catch (error: any) {
+      console.error('[Reports Supabase] low-stock error:', error);
+      return res.status(500).json({ error: 'Failed to fetch low stock from Supabase' });
+    }
+  }
+
   if (!db) {
     console.warn('[Reports] SQLite disabled (db is null). Returning [] for low-stock');
     return res.json([]);
@@ -151,7 +342,39 @@ router.get('/low-stock', (req, res) => {
 });
 
 // GET /api/reports/payment-methods - revenue breakdown by payment method
-router.get('/payment-methods', (req, res) => {
+router.get('/payment-methods', async (req, res) => {
+  const start = typeof req.query.start === 'string' ? req.query.start : undefined;
+  const end = typeof req.query.end === 'string' ? req.query.end : undefined;
+
+  if (!db && useSupabaseReports) {
+    try {
+      const supabase = await getSupabaseClient();
+      let query = supabase.from('sales').select('payment_method, total_amount, created_at');
+      if (start) query = query.gte('created_at', `${start}T00:00:00Z`);
+      if (end) query = query.lte('created_at', `${end}T23:59:59Z`);
+      const { data, error } = await query;
+      if (error) throw error;
+
+      const totals = (data || []).reduce<Record<string, { total: number; count: number }>>((acc, row) => {
+        const method = String((row as any).payment_method || 'unknown');
+        const amount = Number((row as any).total_amount || 0);
+        acc[method] = acc[method] || { total: 0, count: 0 };
+        acc[method].total += amount;
+        acc[method].count += 1;
+        return acc;
+      }, {});
+
+      const rows = Object.entries(totals)
+        .map(([payment_method, values]) => ({ payment_method, ...values }))
+        .sort((a, b) => b.total - a.total);
+
+      return res.json(rows);
+    } catch (error: any) {
+      console.error('[Reports Supabase] payment-methods error:', error);
+      return res.status(500).json({ error: 'Failed to fetch payment methods from Supabase' });
+    }
+  }
+
   if (!db) {
     console.warn('[Reports] SQLite disabled (db is null). Returning [] for payment-methods');
     return res.json([]);
@@ -176,7 +399,47 @@ router.get('/payment-methods', (req, res) => {
 });
 
 // GET /api/reports/categories-performance - revenue by category
-router.get('/categories-performance', (req, res) => {
+router.get('/categories-performance', async (req, res) => {
+  const start = typeof req.query.start === 'string' ? req.query.start : undefined;
+  const end = typeof req.query.end === 'string' ? req.query.end : undefined;
+
+  if (!db && useSupabaseReports) {
+    try {
+      const supabase = await getSupabaseClient();
+      const [{ data: items, error: itemError }, { data: products, error: productsError }, { data: categories, error: categoriesError }] = await Promise.all([
+        supabase.from('sale_items').select('product_id, total_price, sale_id'),
+        supabase.from('products').select('id, category_id'),
+        supabase.from('categories').select('id, name')
+      ]);
+
+      if (itemError) throw itemError;
+      if (productsError) throw productsError;
+      if (categoriesError) throw categoriesError;
+
+      const productMap = new Map((products || []).map((p: any) => [p.id, p.category_id]));
+      const categoryMap = new Map((categories || []).map((c: any) => [c.id, c.name]));
+
+      const aggregation = (items || []).reduce<Record<string, { category_name: string; revenue: number; items_sold: number }>>((acc, item) => {
+        const productId = (item as any).product_id;
+        const categoryId = productMap.get(productId);
+        if (!categoryId) return acc;
+        const categoryName = categoryMap.get(categoryId) || 'Unknown';
+        if (!acc[categoryName]) {
+          acc[categoryName] = { category_name: categoryName, revenue: 0, items_sold: 0 };
+        }
+        acc[categoryName].revenue += Number((item as any).total_price || 0);
+        acc[categoryName].items_sold += 1;
+        return acc;
+      }, {});
+
+      const rows = Object.values(aggregation).sort((a, b) => b.revenue - a.revenue);
+      return res.json(rows);
+    } catch (error: any) {
+      console.error('[Reports Supabase] categories-performance error:', error);
+      return res.status(500).json({ error: 'Failed to fetch categories performance from Supabase' });
+    }
+  }
+
   if (!db) {
     console.warn('[Reports] SQLite disabled (db is null). Returning [] for categories-performance');
     return res.json([]);
@@ -204,13 +467,47 @@ router.get('/categories-performance', (req, res) => {
 });
 
 // GET /api/reports/inventory-movements - stock movements history
-router.get('/inventory-movements', (req, res) => {
+router.get('/inventory-movements', async (req, res) => {
+  const start = typeof req.query.start === 'string' ? req.query.start : undefined;
+  const end = typeof req.query.end === 'string' ? req.query.end : undefined;
+  const product_id = typeof req.query.product_id === 'string' ? Number(req.query.product_id) : undefined;
+  const limit = Number(req.query.limit ?? 100);
+
+  if (!db && useSupabaseReports) {
+    try {
+      const supabase = await getSupabaseClient();
+      let query = supabase.from('inventory_movements').select('id, product_id, movement_type, quantity_changed, total_value, reason, created_by, reference_type, reference_id, created_at').order('created_at', { ascending: false }).limit(limit);
+      if (start) query = query.gte('created_at', `${start}T00:00:00Z`);
+      if (end) query = query.lte('created_at', `${end}T23:59:59Z`);
+      if (product_id) query = query.eq('product_id', product_id);
+
+      const { data, error } = await query;
+      if (error) throw error;
+      const movements = data || [];
+      const productIds = Array.from(new Set(movements.map((item: any) => item.product_id).filter(Boolean)));
+      let productMap = new Map<number, string>();
+      if (productIds.length > 0) {
+        const { data: products, error: productsError } = await supabase.from('products').select('id, name').in('id', productIds);
+        if (!productsError && products) {
+          productMap = new Map((products || []).map((p: any) => [p.id, p.name]));
+        }
+      }
+
+      return res.json((movements || []).map((movement: any) => ({
+        ...movement,
+        product_name: productMap.get(movement.product_id) || null
+      })));
+    } catch (error: any) {
+      console.error('[Reports Supabase] inventory-movements error:', error);
+      return res.status(500).json({ error: 'Failed to fetch inventory movements from Supabase' });
+    }
+  }
+
   if (!db) {
     console.warn('[Reports] SQLite disabled (db is null). Returning [] for inventory-movements');
     return res.json([]);
   }
   try {
-    const { start, end, product_id, limit = 100 } = req.query;
     let query = `
       SELECT im.*, p.name as product_name
       FROM inventory_movements im
@@ -222,7 +519,7 @@ router.get('/inventory-movements', (req, res) => {
     if (end) { query += ` AND DATE(im.created_at) <= ?`; params.push(end); }
     if (product_id) { query += ` AND im.product_id = ?`; params.push(product_id); }
     query += ` ORDER BY im.created_at DESC LIMIT ?`;
-    params.push(Number(limit));
+    params.push(limit);
     const rows = db.prepare(query).all(...params) as any[];
     res.json(rows);
   } catch (error) {
@@ -232,7 +529,72 @@ router.get('/inventory-movements', (req, res) => {
 });
 
 // GET /api/reports/summary - aggregated business metrics
-router.get('/summary', (req, res) => {
+router.get('/summary', async (req, res) => {
+  const startParam = typeof req.query.start === 'string' ? req.query.start : undefined;
+  const endParam = typeof req.query.end === 'string' ? req.query.end : undefined;
+
+  if (!db && useSupabaseReports) {
+    try {
+      const supabase = await getSupabaseClient();
+      const [{ data: sales, error: salesError }, { data: items, error: itemsError }, { data: products, error: productsError }] = await Promise.all([
+        supabase.from('sales').select('id, total_amount, created_at'),
+        supabase.from('sale_items').select('product_id, sale_id, quantity, total_price'),
+        supabase.from('products').select('id, name, stock_quantity, minimum_stock, is_available')
+      ]);
+
+      if (salesError) throw salesError;
+      if (itemsError) throw itemsError;
+      if (productsError) throw productsError;
+
+      const filteredSales = (sales || []).filter(s => {
+        const created = formatDateKey((s as any).created_at);
+        if (!created) return false;
+        if (startParam && created < startParam) return false;
+        if (endParam && created > endParam) return false;
+        return true;
+      });
+
+      const totalRevenue = filteredSales.reduce((sum, sale) => sum + Number((sale as any).total_amount || 0), 0);
+      const totalTransactions = filteredSales.length;
+      const avgTicket = totalTransactions > 0 ? totalRevenue / totalTransactions : 0;
+
+      const productSales = (items || []).reduce<Record<number, { product_id: number; product_name: string; revenue: number; quantity_sold: number }>>((acc, item) => {
+        const saleId = (item as any).sale_id;
+        if (startParam || endParam) {
+          const sale = filteredSales.find(s => (s as any).id === saleId);
+          if (!sale) return acc;
+        }
+        const productId = Number((item as any).product_id);
+        if (!acc[productId]) {
+          const product = (products || []).find((product: any) => product.id === productId);
+          acc[productId] = {
+            product_id: productId,
+            product_name: product?.name || 'Unknown',
+            revenue: 0,
+            quantity_sold: 0
+          };
+        }
+        acc[productId].revenue += Number((item as any).total_price || 0);
+        acc[productId].quantity_sold += 1;
+        return acc;
+      }, {});
+
+      const topProduct = Object.values(productSales).sort((a, b) => b.revenue - a.revenue)[0] || null;
+      const lowStockCount = (products || []).filter((product: any) => product.is_available && Number(product.stock_quantity) <= Number(product.minimum_stock)).length;
+
+      return res.status(200).json({
+        totalRevenue,
+        totalTransactions,
+        avgTicket,
+        topProduct,
+        lowStockCount
+      });
+    } catch (error: any) {
+      console.error('[Reports Supabase] summary error:', error);
+      return res.status(500).json({ error: 'Failed to fetch summary from Supabase' });
+    }
+  }
+
   if (!db) {
     return res.status(200).json({
       totalRevenue: 0,
@@ -244,20 +606,20 @@ router.get('/summary', (req, res) => {
   }
   try {
     const { start, end } = req.query;
-    const startParam = start ? String(start) : undefined;
-    const endParam = end ? String(end) : undefined;
+    const startDate = start ? String(start) : undefined;
+    const endDate = end ? String(end) : undefined;
 
     let salesDateFilter = '';
     const salesParams: any[] = [];
-    if (startParam && endParam) {
+    if (startDate && endDate) {
       salesDateFilter = ' WHERE DATE(created_at) BETWEEN ? AND ?';
-      salesParams.push(startParam, endParam);
-    } else if (startParam) {
+      salesParams.push(startDate, endDate);
+    } else if (startDate) {
       salesDateFilter = ' WHERE DATE(created_at) >= ?';
-      salesParams.push(startParam);
-    } else if (endParam) {
+      salesParams.push(startDate);
+    } else if (endDate) {
       salesDateFilter = ' WHERE DATE(created_at) <= ?';
-      salesParams.push(endParam);
+      salesParams.push(endDate);
     }
 
     const totalRow = db.prepare(`
@@ -267,15 +629,15 @@ router.get('/summary', (req, res) => {
 
     let topDateFilter = '';
     const topParams: any[] = [];
-    if (startParam && endParam) {
+    if (startDate && endDate) {
       topDateFilter = ' WHERE DATE(s.created_at) BETWEEN ? AND ?';
-      topParams.push(startParam, endParam);
-    } else if (startParam) {
+      topParams.push(startDate, endDate);
+    } else if (startDate) {
       topDateFilter = ' WHERE DATE(s.created_at) >= ?';
-      topParams.push(startParam);
-    } else if (endParam) {
+      topParams.push(startDate);
+    } else if (endDate) {
       topDateFilter = ' WHERE DATE(s.created_at) <= ?';
-      topParams.push(endParam);
+      topParams.push(endDate);
     }
 
     const topProductRow = db.prepare(`

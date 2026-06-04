@@ -3,6 +3,7 @@ import db from '../db/database';
 import { TableService } from '../services/table.service';
 import { requireAdminOrManager, requireAdmin } from '../middleware/auth';
 import { env } from '../config/env';
+import { createClient } from '@supabase/supabase-js';
 
 const router = express.Router();
 
@@ -10,10 +11,35 @@ const router = express.Router();
 router.get('/', async (req, res) => {
   const { waiter_id, role } = req.query;
 
-  // In cloud mode SQLite may be disabled (db === null) => avoid 500, return empty list.
   if (!db) {
-    console.warn('[Tables] SQLite disabled (db is null). Returning empty list for GET /tables');
-    return res.status(200).json([]);
+    if (!env.SUPABASE_URL || !env.SUPABASE_SERVICE_ROLE_KEY) {
+      console.warn('[Tables] SQLite disabled and Supabase not configured. Returning empty list for GET /tables');
+      return res.status(200).json([]);
+    }
+
+    try {
+      const supabase = createClient(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, {
+        auth: { persistSession: false }
+      });
+      let query = supabase.from('restaurant_tables').select('*').order('table_number', { ascending: true });
+
+      if (role === 'waiter' && waiter_id) {
+        query = query.eq('assigned_waiter_id', Number(waiter_id));
+      } else if (waiter_id) {
+        query = query.eq('assigned_waiter_id', Number(waiter_id));
+      }
+
+      const { data, error } = await query;
+      if (error) {
+        console.error('[Tables Supabase] GET error:', error);
+        return res.status(500).json({ error: 'Failed to fetch tables from Supabase' });
+      }
+
+      return res.json(data || []);
+    } catch (error: any) {
+      console.error('[Tables Supabase] GET critical error:', error);
+      return res.status(500).json({ error: 'Failed to fetch tables from Supabase' });
+    }
   }
 
   try {
@@ -34,9 +60,26 @@ router.get('/waiter/:waiterId', async (req, res) => {
   const { waiterId } = req.params;
 
   try {
-    if (env.RENDER_CLOUD_MODE || env.USE_SUPABASE_TABLES) {
-      // Cloud mode: use Supabase repository (stub for now)
-      return res.json([]);
+    if (!db) {
+      if (!env.SUPABASE_URL || !env.SUPABASE_SERVICE_ROLE_KEY) {
+        console.warn('[Tables] SQLite disabled and Supabase not configured. Returning empty waiter table list.');
+        return res.json([]);
+      }
+
+      const supabase = createClient(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, {
+        auth: { persistSession: false }
+      });
+      const { data, error } = await supabase
+        .from('restaurant_tables')
+        .select('*')
+        .eq('assigned_waiter_id', Number(waiterId))
+        .order('table_number', { ascending: true });
+
+      if (error) {
+        console.error('[Tables Supabase] GET by waiter error:', error);
+        return res.status(500).json({ error: 'Failed to fetch waiter tables from Supabase' });
+      }
+      return res.json(data || []);
     }
 
     // Local SQLite only - lazy load

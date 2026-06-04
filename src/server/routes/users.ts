@@ -1,6 +1,8 @@
 import express from 'express';
 import db from '../db/database';
 import { requireRole } from '../middleware/auth';
+import { env } from '../config/env';
+import { createClient } from '@supabase/supabase-js';
 
 const router = express.Router();
 
@@ -8,8 +10,30 @@ const router = express.Router();
  * Get all users
  * Includes `email` (nullable + unique, may be null for users without email).
  */
-router.get('/', (req, res) => {
+router.get('/', async (_req, res) => {
   try {
+    if (!db) {
+      if (!env.SUPABASE_URL || !env.SUPABASE_SERVICE_ROLE_KEY) {
+        console.warn('[Users] SQLite disabled and Supabase not configured. Returning empty users list.');
+        return res.json({ users: [] });
+      }
+
+      const supabase = createClient(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, {
+        auth: { persistSession: false }
+      });
+      const { data: users, error } = await supabase
+        .from('users')
+        .select('id, full_name, username, phone, role, email, pin_code, is_active, created_at')
+        .order('full_name', { ascending: true });
+
+      if (error) {
+        console.error('[Users Supabase] Failed to fetch users:', error);
+        return res.status(500).json({ error: 'Failed to fetch users from Supabase' });
+      }
+
+      return res.json({ users: users || [] });
+    }
+
     const users = db.prepare(`
       SELECT id, full_name, username, phone, role, email, pin_code, is_active, created_at
       FROM users
