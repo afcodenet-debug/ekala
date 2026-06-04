@@ -1,12 +1,37 @@
 import express from 'express';
 import db from '../db/database';
 import { notifyStockAdjustment } from '../services/notification.service';
+import { env } from '../config/env';
+import { createClient } from '@supabase/supabase-js';
 // import { syncService } from '../sync';
 
 const router = express.Router();
 
 // Get stock levels for dashboard
-router.get('/stock-levels', (req, res) => {
+router.get('/stock-levels', async (req, res) => {
+  // Cloud mode: read from Supabase
+  if (env.RENDER_CLOUD_MODE || env.USE_SUPABASE_PRODUCTS) {
+    if (!env.SUPABASE_URL || !env.SUPABASE_SERVICE_ROLE_KEY) {
+      return res.status(500).json({ error: 'Supabase not configured' });
+    }
+    const supabase = createClient(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false } });
+    const { data, error } = await supabase
+      .from('products')
+      .select('id, name, stock_quantity, minimum_stock')
+      .eq('is_available', true);
+    
+    if (error) return res.status(500).json({ error: error.message });
+    
+    const items = data || [];
+    const lowStock = items.filter((item: any) => item.stock_quantity <= item.minimum_stock);
+
+    return res.json({
+      totalItems: items.length,
+      lowStockItems: lowStock.length,
+      stockLevels: items
+    });
+  }
+
   try {
     const items = db.prepare(`
       SELECT id, name, stock_quantity, minimum_stock

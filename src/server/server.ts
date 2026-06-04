@@ -28,6 +28,10 @@ import reportsRoutes from './routes/reports';
 import authRoutes from './routes/auth';
 import settingsRoutes from './routes/settings';
 import logsRoutes from './routes/logs';
+import customersRoutes from './routes/customers';
+import notificationsRoutes from './routes/notifications';
+import notificationPreferencesRoutes from './routes/notification_preferences';
+import scheduledReportsLogRoutes from './routes/scheduled_reports_log';
 import db from './db/database';
 import { startSupabasePullWorker, getPullSyncStatus } from './services/supabase-pull-sync.service';
 import { startScheduledReports } from './services/scheduled-reports.service';
@@ -124,6 +128,10 @@ app.use('/api/reports', reportsRoutes);
 app.use('/api/auth', authRoutes);
 app.use('/api/settings', settingsRoutes);
 app.use('/api/logs', logsRoutes);
+app.use('/api/customers', customersRoutes);
+app.use('/api/notifications', notificationsRoutes);
+app.use('/api/notification_preferences', notificationPreferencesRoutes);
+app.use('/api/scheduled_reports_log', scheduledReportsLogRoutes);
 
 app.listen(PORT, () => {
   console.log(`[RENDER BOOT] Express listening on port ${PORT}`);
