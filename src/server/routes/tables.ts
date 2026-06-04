@@ -1,5 +1,4 @@
 import express from 'express';
-import db from '../db/database';
 import { TableService } from '../services/table.service';
 import { requireAdminOrManager, requireAdmin } from '../middleware/auth';
 import { env } from '../config/env';
@@ -10,10 +9,11 @@ const router = express.Router();
 // Get tables (Role-based filtering)
 router.get('/', async (req, res) => {
   const { waiter_id, role } = req.query;
+  const isSupabaseMode = env.RENDER_CLOUD_MODE || env.USE_SUPABASE_TABLES;
 
-  if (!db) {
+  if (isSupabaseMode) {
     if (!env.SUPABASE_URL || !env.SUPABASE_SERVICE_ROLE_KEY) {
-      console.warn('[Tables] SQLite disabled and Supabase not configured. Returning empty list for GET /tables');
+      console.warn('[Tables] Supabase mode enabled but Supabase not configured. Returning empty list for GET /tables');
       return res.status(200).json([]);
     }
 
@@ -58,11 +58,12 @@ router.get('/', async (req, res) => {
 // Get tables assigned to a specific waiter (for staff management)
 router.get('/waiter/:waiterId', async (req, res) => {
   const { waiterId } = req.params;
+  const isSupabaseMode = env.RENDER_CLOUD_MODE || env.USE_SUPABASE_TABLES;
 
   try {
-    if (!db) {
+    if (isSupabaseMode) {
       if (!env.SUPABASE_URL || !env.SUPABASE_SERVICE_ROLE_KEY) {
-        console.warn('[Tables] SQLite disabled and Supabase not configured. Returning empty waiter table list.');
+        console.warn('[Tables] Supabase mode enabled but Supabase not configured. Returning empty waiter table list.');
         return res.json([]);
       }
 
