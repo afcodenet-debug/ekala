@@ -14,8 +14,26 @@ router.get('/active', async (req, res) => {
 
   // Cloud mode guard: db might be null (SQLite disabled).
   if (!db) {
-    console.warn('[Orders] SQLite disabled (db is null). Returning [] for GET /orders/active');
-    return res.status(200).json([]);
+    console.log('[Orders] SQLite disabled (db is null). Falling back to Supabase for GET /orders/active');
+    try {
+      if (!env.SUPABASE_URL || !env.SUPABASE_SERVICE_ROLE_KEY) {
+        return res.status(500).json({ error: 'Supabase not configured' });
+      }
+      const supabase = createClient(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false } });
+
+      // Fetch recent active orders (not paid/cancelled)
+      let query = supabase.from('orders').select('id, table_id, waiter_id, status, total, items, created_at, updated_at');
+      query = query.or("status.eq.pending,status.eq.preparing,status.eq.ready,status.eq.served");
+      if (waiter_id) query = query.eq('waiter_id', Number(waiter_id));
+
+      const { data, error } = await query.order('created_at', { ascending: false }).limit(200);
+      if (error) throw error;
+
+      return res.json(Array.isArray(data) ? data : []);
+    } catch (err: any) {
+      console.error('[Orders] Supabase fallback failed for /active:', err?.message || err);
+      return res.status(500).json({ error: 'Failed to fetch orders from Supabase' });
+    }
   }
 
   try {
@@ -36,18 +54,49 @@ router.get('/active', async (req, res) => {
 });
 
 // Get all orders with filters (for management view)
-router.get('/', (req, res) => {
+router.get('/', async (req, res) => {
   // Cloud mode guard: db might be null (SQLite disabled).
   if (!db) {
-    console.warn('[Orders] SQLite disabled (db is null). Returning empty payload for GET /orders');
-    return res.status(200).json({ orders: [], stats: {
-      active_orders: 0,
-      preparing_orders: 0,
-      ready_orders: 0,
-      served_orders: 0,
-      paid_orders: 0,
-      revenue_today: 0
-    }, pagination: { limit: 50, offset: 0, hasMore: false } });
+    console.log('[Orders] SQLite disabled (db is null). Falling back to Supabase for GET /orders');
+    try {
+      if (!env.SUPABASE_URL || !env.SUPABASE_SERVICE_ROLE_KEY) {
+        return res.status(500).json({ error: 'Supabase not configured' });
+      }
+      const supabase = createClient(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false } });
+
+      const { waiter_id, role, status, payment_status, table_id, search } = req.query;
+      const limit = Number(req.query.limit || 50);
+      const offset = Number(req.query.offset || 0);
+
+      let q = supabase.from('orders').select('id, table_id, waiter_id, status, total, created_at, updated_at').order('created_at', { ascending: false }).range(offset, offset + limit - 1);
+
+      if (status) q = q.eq('status', status as string);
+      if (table_id) q = q.eq('table_id', Number(table_id));
+      if (waiter_id) q = q.eq('waiter_id', Number(waiter_id));
+      if (search) q = q.or(`id.ilike.%${search}%,table_id::text.ilike.%${search}%`);
+
+      const { data, error } = await q;
+      if (error) throw error;
+
+      // Compute simple stats client-side
+      const ordersArr = Array.isArray(data) ? data : [];
+      const stats = {
+        active_orders: ordersArr.filter((o: any) => o.status !== 'paid' && o.status !== 'cancelled').length,
+        preparing_orders: ordersArr.filter((o: any) => o.status === 'preparing').length,
+        ready_orders: ordersArr.filter((o: any) => o.status === 'ready').length,
+        served_orders: ordersArr.filter((o: any) => o.status === 'served').length,
+        paid_orders: ordersArr.filter((o: any) => o.status === 'paid').length,
+        revenue_today: ordersArr.reduce((sum: number, o: any) => {
+          const d = new Date(o.created_at);
+          return d.toDateString() === new Date().toDateString() ? sum + Number(o.total || 0) : sum;
+        }, 0)
+      };
+
+      return res.json({ orders: ordersArr, stats, pagination: { limit, offset, hasMore: ordersArr.length === limit } });
+    } catch (err: any) {
+      console.error('[Orders] Supabase fallback failed for /:', err?.message || err);
+      return res.status(500).json({ error: 'Failed to fetch orders from Supabase' });
+    }
   }
   const { waiter_id, role, status, payment_status, table_id, search, limit = 50, offset = 0 } = req.query;
 

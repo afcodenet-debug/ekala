@@ -3,12 +3,29 @@ import db from '../db/database';
 import { notifyOrderCheckout } from '../services/notification.service';
 import { requirePermission } from '../middleware/auth';
 import { getProductSyncService } from '../../sync';
+import { createClient } from '@supabase/supabase-js';
+import { env } from '../config/env';
 
 const router = express.Router();
 
 // Get all sales for reports and history
-router.get('/', (req, res) => {
+router.get('/', async (req, res) => {
   try {
+    if (!db) {
+      // Cloud fallback — read directly from Supabase so Render can show sales history
+      if (!env.SUPABASE_URL || !env.SUPABASE_SERVICE_ROLE_KEY) {
+        return res.status(500).json({ error: 'Supabase not configured' });
+      }
+      const supabase = createClient(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false } });
+      try {
+        const { data, error } = await supabase.from('sales').select('*').order('created_at', { ascending: false });
+        if (error) return res.status(500).json({ error: error.message });
+        return res.json(Array.isArray(data) ? data : []);
+      } catch (e: any) {
+        return res.status(500).json({ error: String(e) });
+      }
+    }
+
     const sales = db.prepare(`
       SELECT s.*, u.full_name as user_name 
       FROM sales s
