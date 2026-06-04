@@ -1,9 +1,10 @@
 import { Router } from 'express';
 import { requireAdminOrManager } from '../middleware/auth';
 import { db } from '../db/database';
+import { env } from '../config/env';
+import { createClient } from '@supabase/supabase-js';
 
 const router = Router();
-
 
 // Sensitive keys that must NEVER be sent to the frontend
 const SENSITIVE_KEYS = ['smtp_pass', 'smtp_user'];
@@ -14,6 +15,35 @@ const SENSITIVE_KEYS = ['smtp_pass', 'smtp_user'];
  */
 router.get('/', async (req, res) => {
   try {
+    // Cloud mode: read from Supabase
+    if (env.RENDER_CLOUD_MODE || env.USE_SUPABASE_PRODUCTS) {
+      if (!env.SUPABASE_URL || !env.SUPABASE_SERVICE_ROLE_KEY) {
+        return res.status(500).json({ error: 'Supabase not configured' });
+      }
+      const supabase = createClient(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false } });
+      const { data, error } = await supabase.from('settings').select('key, value');
+      if (error) return res.status(500).json({ error: error.message });
+      
+      const settings: Record<string, any> = {};
+      for (const row of data || []) {
+        let value: any = row.value;
+        if (['email_notifications_enabled', 'smtp_secure', 'notify_', 'auto_print', 'show_logo'].some(k => row.key.startsWith(k))) {
+          value = value === 'true' || value === '1';
+        }
+        if (['smtp_port', 'tax_rate', 'service_charge'].includes(row.key)) {
+          value = Number(value);
+        }
+        settings[row.key] = value;
+      }
+      SENSITIVE_KEYS.forEach(k => delete settings[k]);
+      return res.json(settings);
+    }
+
+    // Local mode: read from SQLite
+    if (!db) {
+      return res.status(500).json({ error: 'SQLite not available' });
+    }
+
     const columns = db
       .prepare(`PRAGMA table_info(settings)`)
       .all() as Array<{ name: string }>;

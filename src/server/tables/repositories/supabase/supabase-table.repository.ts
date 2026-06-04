@@ -32,7 +32,7 @@ export class SupabaseTableRepository implements ITableRepository {
     const { data: allRows, error: allError } = await this.supabase
       .from('restaurant_tables')
       .select('*')
-      .limit(50);   // forensic safety limit
+      .limit(50);
 
     if (allError) {
       console.error('[FORENSIC] ERROR reading restaurant_tables (no filter):', {
@@ -81,5 +81,26 @@ export class SupabaseTableRepository implements ITableRepository {
     console.log('══════════════════════════════════════════════════════════════');
 
     return null;
+  }
+
+  async findAll(): Promise<TableEntity[]> {
+    const { data, error } = await this.supabase
+      .from('restaurant_tables')
+      .select('*')
+      .order('table_number');
+
+    if (error) throw error;
+    return (data || []) as TableEntity[];
+  }
+
+  async findByWaiter(waiterId: number): Promise<TableEntity[]> {
+    const { data, error } = await this.supabase
+      .from('restaurant_tables')
+      .select('*')
+      .eq('assigned_waiter_id', waiterId)
+      .order('table_number');
+
+    if (error) throw error;
+    return (data || []) as TableEntity[];
   }
 }
