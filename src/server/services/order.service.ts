@@ -309,6 +309,53 @@ export class OrderService {
    * Update order items
    */
   static async updateItems(id: number, items: OrderItem[]): Promise<OrderData> {
+    // Cloud mode guard: db might be null (SQLite disabled on Render)
+    if (!db) {
+      console.log('[OrderService] SQLite disabled (db is null). Falling back to Supabase for updateItems');
+      try {
+        const env = require('../config/env').env;
+        if (!env.SUPABASE_URL || !env.SUPABASE_SERVICE_ROLE_KEY) {
+          throw new Error('Supabase not configured');
+        }
+
+        const supabase = createClient(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, {
+          auth: { persistSession: false }
+        });
+
+        const normalizedItems = items.map(item => ({
+          ...item,
+          name: item.name || '',
+          quantity: Number(item.quantity),
+          price: Number(item.price),
+          notes: item.notes ?? null
+        }));
+
+        const total = normalizedItems.reduce((sum, item) => sum + item.price * item.quantity, 0);
+
+        const { data, error } = await supabase
+          .from('orders')
+          .update({
+            items: normalizedItems,
+            total,
+            updated_at: new Date().toISOString()
+          })
+          .eq('id', id)
+          .select()
+          .single();
+
+        if (error) throw error;
+        if (!data) throw new Error('Order not found');
+
+        return {
+          ...data,
+          items: normalizedItems
+        };
+      } catch (err: any) {
+        console.error('[OrderService] Supabase updateItems failed:', err?.message || err);
+        throw new Error(err?.message || 'Failed to update order items via Supabase');
+      }
+    }
+
     const transaction = db.transaction(() => {
       try {
         const existingOrder = db.prepare('SELECT id FROM orders WHERE id = ?').get(id);

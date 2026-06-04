@@ -158,10 +158,10 @@ export const OrderSummary: React.FC<OrderSummaryProps> = ({
             </div>
             {/* Still show the items so user sees what they added */}
             <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-               {cart.map(item => {
-                 const prod = products.find(p => p.id === item.productId);
-                 return (
-                   <div key={item.productId} style={{
+            {cart.map((item, idx) => {
+               const prod = products.find(p => p.id === item.productId);
+               return (
+                   <div key={`draft-${item.productId}-${idx}`} style={{
                      display: 'flex', alignItems: 'center', gap: '10px',
                      padding: '8px 10px', background: colors.card, borderRadius: radius.md, border: `1px solid ${colors.border}`
                    }}>
@@ -198,11 +198,11 @@ export const OrderSummary: React.FC<OrderSummaryProps> = ({
           </div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-             {cart.map(item => {
+             {cart.map((item, idx) => {
                const prod = products.find(p => p.id === item.productId);
                return (
                  <div
-                   key={item.productId}
+                   key={`item-${item.productId}-${idx}`}
                    style={{
                      display: 'flex',
                      alignItems: 'center',

@@ -9,7 +9,7 @@ import { env } from '../config/env';
 const router = express.Router();
 
 // Get all sales for reports and history
-router.get('/', async (req, res) => {
+router.get('/', async (_req, res) => {
   try {
     if (!db) {
       // Cloud fallback — read directly from Supabase so Render can show sales history
@@ -39,8 +39,8 @@ router.get('/', async (req, res) => {
 });
 
 // Checkout logic: Convert Order to Sale
-router.post('/checkout', requirePermission('PROCESS_PAYMENTS'), (req, res) => {
-  const { order_id, payment_method: rawPaymentMethod, user_id, discount = 0, tax = 0, items: requestItems } = req.body;
+router.post('/checkout', requirePermission('PROCESS_PAYMENTS'), async (_req, res) => {
+  const { order_id, payment_method: rawPaymentMethod, user_id, discount = 0, tax = 0, items: requestItems } = _req.body;
 
   // Normalize to the exact values allowed by the DB CHECK constraint
   const allowed = ['cash', 'card', 'mobile_money'] as const;
@@ -50,6 +50,59 @@ router.post('/checkout', requirePermission('PROCESS_PAYMENTS'), (req, res) => {
   }
 
   console.log('[Sales] Checkout request:', { order_id, payment_method, user_id, discount, tax, items: Array.isArray(requestItems) ? requestItems.length : 'none' });
+
+  // Cloud mode guard: db might be null (SQLite disabled)
+  if (!db) {
+    console.log('[Sales] SQLite disabled (db is null) — falling back to Supabase for checkout');
+    try {
+      const supabaseUrl = env.SUPABASE_URL || process.env.SUPABASE_URL;
+      const supabaseKey = env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY;
+      if (!supabaseUrl || !supabaseKey) {
+        return res.status(500).json({ error: 'Supabase not configured' });
+      }
+      const supabase = createClient(supabaseUrl, supabaseKey, { auth: { persistSession: false } });
+      const { data: supaOrder, error: supaErr } = await supabase
+        .from('orders')
+        .select('id, status, table_id, waiter_id, items, total')
+        .eq('id', order_id)
+        .single();
+
+      if (supaErr || !supaOrder) {
+        return res.status(404).json({ error: 'Order not found in Supabase' });
+      }
+
+      const { data: saleData, error: saleErr } = await supabase
+        .from('sales')
+        .insert({
+          order_id,
+          user_id,
+          payment_method,
+          subtotal: Number((supaOrder as any).total || 0),
+          discount: Number(discount),
+          tax: Number(tax),
+          total_amount: Number((supaOrder as any).total || 0) - Number(discount) + Number(tax),
+          created_at: new Date().toISOString()
+        })
+        .select()
+        .single();
+
+      if (saleErr) throw saleErr;
+
+      await supabase.from('orders').update({ status: 'paid', updated_at: new Date().toISOString() }).eq('id', order_id);
+
+      return res.json({
+        saleId: saleData.id,
+        invoiceNumber: saleData.invoice_number || `INV-${saleData.id}`,
+        partial: false,
+        blockedItems: [],
+        soldItems: Array.isArray(supaOrder.items) ? supaOrder.items : [],
+        saleTotal: saleData.total_amount
+      });
+    } catch (err: any) {
+      console.error('[Sales] Supabase checkout failed:', err?.message || err);
+      return res.status(500).json({ error: err?.message || 'Failed to checkout via Supabase' });
+    }
+  }
 
   // ── Variables captured by the transaction closure ──────────────────
   let invoiceNumber = '';
@@ -284,12 +337,23 @@ router.post('/checkout', requirePermission('PROCESS_PAYMENTS'), (req, res) => {
     // ── Fire-and-forget order checkout notification (non-blocking) ──
     setImmediate(async () => {
       try {
-        const settingsRows = db.prepare(
-          "SELECT key, value FROM settings"
-        ).all() as { key: string; value: string }[];
-        const rawSettings = Object.fromEntries(
-          settingsRows.map(r => [r.key, r.value])
-        );
+        const supabaseUrl = process.env.SUPABASE_URL;
+        const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+        let rawSettings: Record<string, string> = { app_currency: 'USD' };
+        if (db) {
+          const settingsRows = db.prepare(
+            "SELECT key, value FROM settings"
+          ).all() as { key: string; value: string }[];
+          rawSettings = Object.fromEntries(
+            settingsRows.map(r => [r.key, r.value])
+          );
+        } else if (supabaseUrl && supabaseKey) {
+          const supabase = createClient(supabaseUrl, supabaseKey, { auth: { persistSession: false } });
+          const { data } = await supabase.from('settings').select('key, value').eq('key', 'app_currency');
+          if (data && data.length > 0) rawSettings = { app_currency: (data[0] as any).value };
+        }
+
         await notifyOrderCheckout(
           order_id,
           itemsForNotify.map((it: any) => ({
@@ -301,12 +365,12 @@ router.post('/checkout', requirePermission('PROCESS_PAYMENTS'), (req, res) => {
           result.saleTotal,
           payment_method,
           order.table_id
-            ? `Table ${(db.prepare('SELECT table_number FROM restaurant_tables WHERE id = ?').get(order.table_id) as any)?.table_number || order.table_id}`
+            ? `Table ${db ? (db.prepare('SELECT table_number FROM restaurant_tables WHERE id = ?').get(order.table_id) as any)?.table_number : order.table_id}`
             : 'Counter',
           order.waiter_id
-            ? (db.prepare('SELECT full_name FROM users WHERE id = ?').get(order.waiter_id) as any)?.full_name
+            ? (db ? (db.prepare('SELECT full_name FROM users WHERE id = ?').get(order.waiter_id) as any)?.full_name : undefined)
             : undefined,
-          (db.prepare('SELECT full_name FROM users WHERE id = ?').get(user_id) as any)?.full_name,
+          (db ? (db.prepare('SELECT full_name FROM users WHERE id = ?').get(user_id) as any)?.full_name : undefined),
           String(rawSettings.app_currency || 'USD'),
           rawSettings,
         );
@@ -322,10 +386,56 @@ router.post('/checkout', requirePermission('PROCESS_PAYMENTS'), (req, res) => {
 });
 
 // Generate receipt data
-router.get('/receipt/:saleId', (req, res) => {
+router.get('/receipt/:saleId', async (req, res) => {
   const { saleId } = req.params;
 
   try {
+    if (!db) {
+      // Cloud fallback
+      if (!env.SUPABASE_URL || !env.SUPABASE_SERVICE_ROLE_KEY) {
+        return res.status(500).json({ error: 'Supabase not configured' });
+      }
+      const supabase = createClient(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false } });
+      const { data, error } = await supabase
+        .from('sales')
+        .select('*, order:orders(table_id), waiter:users(full_name), table:restaurant_tables(table_number)')
+        .eq('id', saleId)
+        .single();
+
+      if (error || !data) {
+        return res.status(404).json({ error: 'Sale not found' });
+      }
+
+      const receipt = {
+        business: {
+          name: 'GREAT OLIVE',
+          address: '123 Restaurant Street, City, State 12345',
+          phone: '(555) 123-4567'
+        },
+        invoice: {
+          number: data.invoice_number,
+          date: new Date(data.created_at).toLocaleString(),
+          table: data.table?.table_number || 'Counter',
+          waiter: data.waiter?.full_name || 'N/A',
+          cashier: 'Cashier'
+        },
+        items: data.items || [],
+        totals: {
+          subtotal: data.subtotal,
+          discount: data.discount,
+          tax: data.tax,
+          total: data.total_amount
+        },
+        payment: {
+          method: data.payment_method,
+          amount: data.total_amount
+        },
+        footer: 'Thank you for dining with us!\nVisit again soon.'
+      };
+
+      return res.json(receipt);
+    }
+
     const sale = db.prepare(`
       SELECT
         s.*,

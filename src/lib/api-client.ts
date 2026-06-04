@@ -49,7 +49,11 @@ const API_BASE: string = (() => {
   // 4. Last resort ONLY for production Vercel build when no VITE_API_BASE_URL is configured:
   //    Point to the Render backend.
   //    Backend exposes admin endpoints under `/api/*` (tables/products/orders/expenses).
-  return 'https://reat-olive-api.onrender.com/api';
+  //    Also support ekala-api.onrender.com as alternative deployment.
+  if (base.endsWith('.onrender.com') || base.includes('reat-olive-api.onrender.com') || base.includes('ekala-api.onrender.com')) {
+    return `${base}/api`;
+  }
+  return 'https://ekala-api.onrender.com/api';
 })();
 
 export async function request<T>(
