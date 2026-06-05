@@ -1,5 +1,5 @@
 {
-  "name": "great_olive",
+  "name": "ekala",
   "version": "1.0.0",
   "description": "",
   "main": "dist/main/main.js",
@@ -25,8 +25,8 @@
   "license": "ISC",
   "type": "commonjs",
   "build": {
-    "appId": "com.greatolive.pos",
-    "productName": "Great Olive",
+    "appId": "com.ekala.pos",
+    "productName": "EKALA",
     "asar": true,
     "npmRebuild": false,
     "files": [
