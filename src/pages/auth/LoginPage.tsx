@@ -105,7 +105,7 @@ const LoginPage = () => {
             </div>
             <div style={{ textAlign: 'left' }}>
               <h1 style={{ fontSize: 30, fontWeight: 300, color: '#eeeef5', margin: 0, letterSpacing: '-0.04em', lineHeight: 1, fontFamily: "'DM Sans', sans-serif" }}>
-                GREAT <span style={{ fontWeight: 800, color: '#d4af37' }}>OLIVE</span>
+                EKALA <span style={{ fontWeight: 800, color: '#d4af37' }}>G</span>
               </h1>
               <p style={{ fontSize: 9.5, color: 'rgba(255,255,255,0.22)', margin: '3px 0 0', letterSpacing: '0.3em', textTransform: 'uppercase', fontWeight: 700 }}>
                 Enterprise Management
