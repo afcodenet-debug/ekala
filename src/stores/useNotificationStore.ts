@@ -16,6 +16,7 @@ export interface AppNotification {
 interface NotificationStore {
   notifications: AppNotification[];
   unreadCount: number;
+  isCenterOpen?: boolean;
 
   // Actions
   addNotification: (payload: Omit<AppNotification, 'id' | 'createdAt'>) => void;
@@ -31,6 +32,10 @@ interface NotificationStore {
 
   // Role-based filtering helper (simple)
   getVisibleNotifications: (role?: string) => AppNotification[];
+
+  // UI state for the NotificationCenter drawer
+  openCenter?: () => void;
+  closeCenter?: () => void;
 }
 
 const MAX_NOTIFICATIONS = 100;
@@ -123,7 +128,6 @@ export const useNotificationStore = create<NotificationStore>((set, get) => ({
   },
 
   // UI state for the NotificationCenter drawer
-  isCenterOpen: false,
   openCenter: () => set({ isCenterOpen: true }),
   closeCenter: () => set({ isCenterOpen: false }),
 }));
