@@ -15,7 +15,7 @@ export interface OrderData {
   id?: number;
   table_id: number | null;
   waiter_id: number;
-   status: 'pending' | 'confirmed' | 'preparing' | 'ready' | 'served' | 'paid' | 'cancelled' | 'rejected';
+  status: 'pending' | 'confirmed' | 'preparing' | 'ready' | 'served' | 'paid' | 'cancelled' | 'rejected';
   items: OrderItem[];
   total: number;
   discount?: number;
@@ -23,6 +23,7 @@ export interface OrderData {
   customer_name?: string;
   customer_phone?: string;
   customer_id?: number | null;
+  remote_id?: number;
   created_at?: string;
   updated_at?: string;
 }
@@ -50,6 +51,7 @@ export class OrderService {
           const prod = db.prepare('SELECT selling_price FROM products WHERE id = ?').get(it.product_id || it.productId) as any;
           const price = Number(prod?.selling_price ?? it.price ?? it.unit_price ?? 0);
           return {
+            id: it.id,
             productId: it.product_id || it.productId,
             name: it.name || '',
             price,
@@ -84,7 +86,11 @@ export class OrderService {
       }
 
       if (fallbackJson) {
-        return JSON.parse(fallbackJson || '[]') as OrderItem[];
+        try {
+          return JSON.parse(fallbackJson || '[]') as OrderItem[];
+        } catch {
+          return [];
+        }
       }
 
       const order = db.prepare('SELECT items FROM orders WHERE id = ?').get(orderId) as any;
@@ -96,6 +102,7 @@ export class OrderService {
   }
 
   private static insertOrderItems(orderId: number, items: OrderItem[]): void {
+    if (!db) return;
     const itemStmt = db.prepare(`
       INSERT INTO order_items (
         order_id, product_id, quantity, unit_price, total_price, notes
@@ -117,6 +124,7 @@ export class OrderService {
   }
 
   private static replaceOrderItems(orderId: number, items: OrderItem[]): void {
+    if (!db) return;
     // Queue deletions for sync
     try {
       const oldItems = db.prepare('SELECT id FROM order_items WHERE order_id = ?').all(orderId) as { id: number }[];
@@ -375,18 +383,20 @@ export class OrderService {
 
             const mergedItems = Array.from(itemMap.values());
             const mergedTotal = mergedItems.reduce((sum, item) => sum + item.price * item.quantity, 0);
-            const newVersion = (existingOrder.version || 1) + 1;
 
             db.prepare(`
               UPDATE orders
-              SET items = ?, total = ?, updated_at = CURRENT_TIMESTAMP, version = ?
+              SET items = ?, total = ?, updated_at = CURRENT_TIMESTAMP
               WHERE id = ?
-            `).run(JSON.stringify(mergedItems), mergedTotal, newVersion, existingOrder.id);
+            `).run(JSON.stringify(mergedItems), mergedTotal, existingOrder.id);
 
             this.replaceOrderItems(existingOrder.id, mergedItems);
 
             const updatedOrder = db.prepare(`
-              SELECT o.*, t.table_number, u.full_name as waiter_name
+              SELECT
+                o.*,
+                t.table_number,
+                u.full_name as waiter_name
               FROM orders o
               LEFT JOIN restaurant_tables t ON o.table_id = t.id
               LEFT JOIN users u ON o.waiter_id = u.id

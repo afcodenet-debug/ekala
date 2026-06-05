@@ -7,6 +7,7 @@ import type Database from 'better-sqlite3';
 
 let productSyncService: ProductSyncService | null = null;
 let orderSyncService: OrderSyncService | null = null;
+let database: Database.Database | null = null;
 
 function ensureOutboxTable(db: Database.Database) {
   db.exec(`
@@ -33,11 +34,11 @@ export function initializeProductSync(
   supabaseUrl: string, 
   supabaseAnonKey: string
 ): ProductSyncService {
+  database = db;
   if (!productSyncService) {
     ensureOutboxTable(db);
     productSyncService = new ProductSyncService(db, supabaseUrl, supabaseAnonKey);
-    orderSyncService = new OrderSyncService(productSyncService, db);
-    console.log('[Sync] SyncServices (Product & Order) initialized');
+    console.log('[Sync] ProductSyncService initialized (outbox table ensured)');
   }
   return productSyncService;
 }
@@ -51,7 +52,11 @@ export function getProductSyncService(): ProductSyncService {
 
 export function getOrderSyncService(): OrderSyncService {
   if (!orderSyncService) {
-    throw new Error('OrderSyncService not initialized. Call initializeProductSync first.');
+    const core = getProductSyncService();
+    if (!database) {
+      throw new Error('Database not initialized for sync. Call initializeProductSync first.');
+    }
+    orderSyncService = new OrderSyncService(core, database);
   }
   return orderSyncService;
 }

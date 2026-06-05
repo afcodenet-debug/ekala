@@ -40,7 +40,10 @@ router.get('/', async (_req, res) => {
 
 // Checkout logic: Convert Order to Sale
 router.post('/checkout', requirePermission('PROCESS_PAYMENTS'), async (_req, res) => {
-  const { order_id, payment_method: rawPaymentMethod, user_id, discount = 0, tax = 0, items: requestItems } = _req.body;
+  const { order_id, payment_method: rawPaymentMethod, user_id: bodyUserId, discount = 0, tax = 0, items: requestItems } = _req.body;
+
+  // Ensure user_id is present (not-null constraint)
+  const user_id = bodyUserId || (_req as any).user?.id || 1;
 
   // Normalize to the exact values allowed by the DB CHECK constraint
   const allowed = ['cash', 'card', 'mobile_money'] as const;
@@ -71,9 +74,13 @@ router.post('/checkout', requirePermission('PROCESS_PAYMENTS'), async (_req, res
         return res.status(404).json({ error: 'Order not found in Supabase' });
       }
 
+      // Generate invoice number
+      const invoiceNumber = `INV-${String(Date.now()).slice(-5)}${Math.floor(Math.random() * 10)}`;
+
       const { data: saleData, error: saleErr } = await supabase
         .from('sales')
         .insert({
+          invoice_number: invoiceNumber,
           order_id,
           user_id,
           payment_method,
@@ -88,14 +95,28 @@ router.post('/checkout', requirePermission('PROCESS_PAYMENTS'), async (_req, res
 
       if (saleErr) throw saleErr;
 
+      // Insert sale items
+      const items = Array.isArray(supaOrder.items) ? supaOrder.items : [];
+      if (items.length > 0) {
+        const saleItems = items.map((it: any) => ({
+          sale_id: saleData.id,
+          product_id: it.product_id || it.productId,
+          quantity: Number(it.quantity) || 0,
+          unit_price: Number(it.price || it.unit_price || 0),
+          total_price: (Number(it.quantity) || 0) * Number(it.price || it.unit_price || 0)
+        }));
+        
+        await supabase.from('sale_items').insert(saleItems);
+      }
+
       await supabase.from('orders').update({ status: 'paid', updated_at: new Date().toISOString() }).eq('id', order_id);
 
       return res.json({
         saleId: saleData.id,
-        invoiceNumber: saleData.invoice_number || `INV-${saleData.id}`,
+        invoiceNumber: saleData.invoice_number || invoiceNumber,
         partial: false,
         blockedItems: [],
-        soldItems: Array.isArray(supaOrder.items) ? supaOrder.items : [],
+        soldItems: items,
         saleTotal: saleData.total_amount
       });
     } catch (err: any) {
