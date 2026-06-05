@@ -30,7 +30,7 @@ import {
   AssignWaiterModal
 } from '../features/tables/components/floor-index';
 
-/* ─── Styles ─────────────────────────────────────────────────────────────── */
+/* ─── Responsive Styles ──────────────────────────────────────────────────── */
 const STYLES = `
   .tables-root {
     --bg:          #09090f;
@@ -60,6 +60,7 @@ const STYLES = `
     min-height: 100vh;
   }
 
+  /* ── KPI Cards ── */
   .kpi-card {
     background: var(--card);
     border: 1px solid var(--border);
@@ -73,6 +74,60 @@ const STYLES = `
     border-color: var(--border-hi);
     transform: translateY(-2px);
     box-shadow: 0 12px 32px rgba(0,0,0,0.3);
+  }
+
+  /* ── KPI Grid ── */
+  .kpi-strip {
+    display: grid;
+    grid-template-columns: repeat(6, 1fr);
+    gap: 14px;
+    margin-bottom: 40px;
+  }
+
+  /* ── Floor Grid ── */
+  .floor-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 30px;
+  }
+
+  /* ── Page Container ── */
+  .floor-container {
+    max-width: 1400px;
+    margin: 0 auto;
+    padding: 36px 24px 60px;
+  }
+
+  /* ── Header ── */
+  .floor-header {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    margin-bottom: 32px;
+    gap: 20px;
+    flex-wrap: wrap;
+  }
+
+  /* ── QR Modal ── */
+  .qr-modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.75);
+    z-index: 1000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+  }
+  .qr-modal-box {
+    background: var(--card);
+    border: 1px solid var(--border-hi);
+    border-radius: 24px;
+    width: 100%;
+    max-width: 420px;
+    padding: 32px;
+    color: var(--text-1);
+    box-shadow: 0 25px 60px rgba(0,0,0,0.6);
   }
 
   .mono { font-family: 'JetBrains Mono', monospace; }
@@ -97,8 +152,173 @@ const STYLES = `
     gap: 12px;
     box-shadow: 0 12px 32px rgba(0,0,0,0.4);
     animation: slide-in 0.3s ease;
+    max-width: calc(100vw - 48px);
   }
   @keyframes slide-in { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+
+  /* ── Add Table FAB (mobile) ── */
+  .add-table-fab {
+    display: none;
+    position: fixed;
+    bottom: 24px;
+    right: 24px;
+    z-index: 100;
+    width: 56px;
+    height: 56px;
+    border-radius: 50%;
+    background: var(--blue);
+    border: none;
+    color: #fff;
+    cursor: pointer;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 8px 24px rgba(59,130,246,0.45);
+  }
+
+  /* ══════════════════════════════
+     TABLET  (≤ 1024px)
+  ══════════════════════════════ */
+  @media (max-width: 1024px) {
+    .floor-container {
+      padding: 28px 20px 80px;
+    }
+
+    .kpi-strip {
+      grid-template-columns: repeat(3, 1fr);
+      gap: 12px;
+      margin-bottom: 32px;
+    }
+
+    .floor-grid {
+      grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+      gap: 20px;
+    }
+
+    .floor-header {
+      margin-bottom: 24px;
+    }
+  }
+
+  /* ══════════════════════════════
+     LARGE PHONE / SMALL TABLET  (≤ 768px)
+  ══════════════════════════════ */
+  @media (max-width: 768px) {
+    .floor-container {
+      padding: 20px 16px 100px;
+    }
+
+    .floor-header {
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 14px;
+      margin-bottom: 20px;
+    }
+
+    /* Header title smaller on mobile */
+    .floor-header h1 {
+      font-size: 22px !important;
+    }
+
+    /* Hide the inline "Add table" button — show FAB instead */
+    .add-table-btn {
+      display: none !important;
+    }
+    .add-table-fab {
+      display: flex;
+    }
+
+    .kpi-strip {
+      grid-template-columns: repeat(3, 1fr);
+      gap: 10px;
+      margin-bottom: 24px;
+    }
+
+    /* Compact KPI cards on mobile */
+    .kpi-card {
+      padding: 12px 14px;
+      border-radius: 12px;
+    }
+    .kpi-card .kpi-label {
+      font-size: 9px !important;
+    }
+    .kpi-card .kpi-value {
+      font-size: 18px !important;
+    }
+
+    .floor-grid {
+      grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+      gap: 14px;
+    }
+
+    /* QR modal full-width on mobile */
+    .qr-modal-box {
+      padding: 24px 20px;
+      border-radius: 20px;
+      max-height: 92vh;
+      overflow-y: auto;
+    }
+
+    /* Notification anchored bottom-left on small screens (avoids FAB overlap) */
+    .notification {
+      bottom: 90px;
+      right: 16px;
+      left: 16px;
+      font-size: 12px;
+    }
+
+    /* Live badge text truncation */
+    .live-badge-text {
+      display: none;
+    }
+  }
+
+  /* ══════════════════════════════
+     PHONE  (≤ 480px)
+  ══════════════════════════════ */
+  @media (max-width: 480px) {
+    .floor-container {
+      padding: 16px 12px 100px;
+    }
+
+    .kpi-strip {
+      grid-template-columns: repeat(2, 1fr);
+      gap: 8px;
+      margin-bottom: 20px;
+    }
+
+    .kpi-card {
+      padding: 10px 12px;
+    }
+    .kpi-card .kpi-label {
+      display: none; /* ultra-compact: icon + value only */
+    }
+    .kpi-card .kpi-icon-row {
+      margin-bottom: 4px !important;
+    }
+    .kpi-card .kpi-value {
+      font-size: 20px !important;
+    }
+
+    .floor-grid {
+      grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+      gap: 10px;
+    }
+
+    .floor-header h1 {
+      font-size: 20px !important;
+    }
+
+    .qr-modal-overlay {
+      padding: 12px;
+      align-items: flex-end;
+    }
+    .qr-modal-box {
+      border-radius: 20px 20px 16px 16px;
+      padding: 20px 16px;
+    }
+  }
+
+  @keyframes spin { to { transform: rotate(360deg); } }
 `;
 
 const FloorPlan = () => {
@@ -107,20 +327,13 @@ const FloorPlan = () => {
   const { t } = useI18n();
   const navigate = useNavigate();
 
-  // Modal states
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [editingTable, setEditingTable] = useState<Table | null>(null);
   const [deletingTableId, setDeletingTableId] = useState<number | null>(null);
   const [assigningTableId, setAssigningTableId] = useState<number | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
-
-  // Load state
   const [isInitialLoad, setIsInitialLoad] = useState(true);
-
-  // Notification state
   const [notification, setNotification] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
-
-  // QR modal state (ONLINE ONLY)
   const [qrModalTable, setQrModalTable] = useState<Table | null>(null);
   const qrCanvasRef = useRef<HTMLCanvasElement>(null);
 
@@ -168,42 +381,29 @@ const FloorPlan = () => {
     if (user?.id && user?.role) {
       setUserContext(user.id, user.role);
       fetchTables().finally(() => setIsInitialLoad(false));
-
       const interval = setInterval(() => fetchTables(), 10000);
       return () => clearInterval(interval);
     }
   }, [user?.id, user?.role, setUserContext, fetchTables]);
 
-  // Base URL PUBLIC (Vercel) pour générer des QR toujours "en ligne"
-  // Optionnel : définir VITE_PUBLIC_MENU_BASE_URL dans Vercel env vars pour forcer un domaine custom.
   const PUBLIC_MENU_BASE_URL =
     (typeof import.meta !== 'undefined' &&
       (import.meta as any).env &&
-      (import.meta as any).env.VITE_PUBLIC_MENU_BASE_URL) ||
-    '';
+      (import.meta as any).env.VITE_PUBLIC_MENU_BASE_URL) || '';
 
   const getPublicBaseUrl = () => {
     const explicit = String(PUBLIC_MENU_BASE_URL || '').trim();
     if (explicit) return explicit.replace(/\/$/, '');
-
     if (typeof window === 'undefined') return '';
-
     const { hostname, protocol } = window.location;
-
-    // Sur Vercel: on force https + hostname (évite localhost si la config env n’est pas prise)
-    const isVercelHost =
-      hostname.includes('vercel.app') || hostname.includes('vercel.');
-
+    const isVercelHost = hostname.includes('vercel.app') || hostname.includes('vercel.');
     if (isVercelHost) return `https://${hostname}`.replace(/\/$/, '');
-
-    // Local dev fallback
     return String(protocol + '//' + hostname).replace(/\/$/, '');
   };
 
   const getQrUrl = (table: Table) => {
     if (!table.qr_token) return '';
-    const base = getPublicBaseUrl();
-    return `${base}/menu?token=${table.qr_token}`;
+    return `${getPublicBaseUrl()}/menu?token=${table.qr_token}`;
   };
 
   const copyQrLink = async (table: Table) => {
@@ -231,10 +431,7 @@ const FloorPlan = () => {
 
   const downloadQrPng = (table: Table) => {
     const canvas = qrCanvasRef.current;
-    if (!canvas) {
-      showError('Téléchargement non prêt, veuillez réessayer');
-      return;
-    }
+    if (!canvas) { showError('Téléchargement non prêt, veuillez réessayer'); return; }
     const link = document.createElement('a');
     link.download = `table-${table.table_number}-menu-qr.png`;
     link.href = canvas.toDataURL('image/png');
@@ -244,11 +441,7 @@ const FloorPlan = () => {
   const handleTableClick = useCallback(
     async (table: Table) => {
       const canAccess = canModify || (isWaiter && (table.assigned_waiter_id === user?.id || !table.assigned_waiter_id));
-      if (!canAccess) {
-        alert(t('tables.noAccess'));
-        return;
-      }
-
+      if (!canAccess) { alert(t('tables.noAccess')); return; }
       if (table.status === 'available' || table.status === 'active' || canModify) {
         navigate(`/pos?tableId=${table.id}`);
       } else {
@@ -266,17 +459,10 @@ const FloorPlan = () => {
     setIsDeleting(true);
     try {
       const success = await deleteTable(deletingTableId);
-      if (success) {
-        showSuccess(t('tables.deleteSuccess'));
-        setDeletingTableId(null);
-      } else {
-        showError(t('tables.deleteFail'));
-      }
-    } catch {
-      showError(t('tables.genericError'));
-    } finally {
-      setIsDeleting(false);
-    }
+      if (success) { showSuccess(t('tables.deleteSuccess')); setDeletingTableId(null); }
+      else showError(t('tables.deleteFail'));
+    } catch { showError(t('tables.genericError')); }
+    finally { setIsDeleting(false); }
   }, [deletingTableId, deleteTable, showSuccess, showError, t]);
 
   const handleAssignWaiter = useCallback((tableId: number) => setAssigningTableId(tableId), []);
@@ -286,9 +472,7 @@ const FloorPlan = () => {
       try {
         await updateTableStatus(tableId, status as any);
         showSuccess(`Statut mis à jour : ${status}`);
-      } catch {
-        showError(t('tables.updateFail'));
-      }
+      } catch { showError(t('tables.updateFail')); }
     },
     [updateTableStatus, showSuccess, showError, t]
   );
@@ -297,17 +481,7 @@ const FloorPlan = () => {
     return (
       <div className="tables-root" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
         <div style={{ textAlign: 'center' }}>
-          <div
-            style={{
-              width: 40,
-              height: 40,
-              border: '3px solid var(--border)',
-              borderTopColor: 'var(--blue)',
-              borderRadius: '50%',
-              animation: 'spin 0.8s linear infinite',
-              margin: '0 auto 20px'
-            }}
-          />
+          <div style={{ width: 40, height: 40, border: '3px solid var(--border)', borderTopColor: 'var(--blue)', borderRadius: '50%', animation: 'spin 0.8s linear infinite', margin: '0 auto 20px' }} />
           <p style={{ color: 'var(--text-3)', fontSize: 13, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.1em' }}>
             {t('tables.loadingFloorPlan')}
           </p>
@@ -318,19 +492,20 @@ const FloorPlan = () => {
   }
 
   const statsList = [
-    { label: t('tables.totalTables'), value: accessibleTables.length, icon: <Layout size={14} />, color: 'var(--blue)' },
-    { label: t('tables.available'), value: accessibleTables.filter(x => x.status === 'available').length, icon: <CheckCircle2 size={14} />, color: 'var(--green)' },
-    { label: t('tables.occupied'), value: accessibleTables.filter(x => x.status === 'active').length, icon: <Play size={14} />, color: 'var(--red)' },
-    { label: t('tables.reserved'), value: accessibleTables.filter(x => x.status === 'reserved').length, icon: <Clock size={14} />, color: 'var(--amber)' },
-    { label: t('tables.cleaning'), value: accessibleTables.filter(x => x.status === 'cleaning').length, icon: <Settings size={14} />, color: 'var(--purple)' },
-    { label: t('tables.outOfService'), value: accessibleTables.filter(x => x.status === 'out_of_service').length, icon: <Ban size={14} />, color: 'var(--text-3)' }
+    { label: t('tables.totalTables'),   value: accessibleTables.length,                                              icon: <Layout size={14} />,      color: 'var(--blue)'   },
+    { label: t('tables.available'),      value: accessibleTables.filter(x => x.status === 'available').length,       icon: <CheckCircle2 size={14} />, color: 'var(--green)'  },
+    { label: t('tables.occupied'),       value: accessibleTables.filter(x => x.status === 'active').length,          icon: <Play size={14} />,         color: 'var(--red)'    },
+    { label: t('tables.reserved'),       value: accessibleTables.filter(x => x.status === 'reserved').length,        icon: <Clock size={14} />,        color: 'var(--amber)'  },
+    { label: t('tables.cleaning'),       value: accessibleTables.filter(x => x.status === 'cleaning').length,        icon: <Settings size={14} />,     color: 'var(--purple)' },
+    { label: t('tables.outOfService'),   value: accessibleTables.filter(x => x.status === 'out_of_service').length,  icon: <Ban size={14} />,          color: 'var(--text-3)' }
   ];
 
   return (
     <div className="tables-root">
-      <div style={{ maxWidth: 1400, margin: '0 auto', padding: '36px 24px 60px' }}>
-        {/* Header */}
-        <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', marginBottom: 32, gap: 20, flexWrap: 'wrap' }}>
+      <div className="floor-container">
+
+        {/* ── Header ── */}
+        <div className="floor-header">
           <div>
             <p style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.12em', marginBottom: 6 }}>
               {t('tables.floorPlan')}
@@ -338,9 +513,10 @@ const FloorPlan = () => {
             <h1 style={{ fontSize: 28, fontWeight: 300, color: 'var(--text-1)', margin: '0 0 4px', letterSpacing: '-0.01em' }}>
               {t('tables.title')}
             </h1>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 10, color: 'var(--green)', background: 'var(--green-dim)', padding: '2px 8px', borderRadius: 20, border: '1px solid rgba(16,185,129,0.2)' }}>
-                <span className="live-dot" /> {t('tables.liveFloor')}
+                <span className="live-dot" />
+                <span className="live-badge-text">{t('tables.liveFloor')}</span>
               </div>
               <span style={{ fontSize: 12, color: 'var(--text-3)' }}>•</span>
               <span style={{ fontSize: 12, color: 'var(--text-2)' }}>
@@ -349,8 +525,10 @@ const FloorPlan = () => {
             </div>
           </div>
 
+          {/* Inline button — hidden on mobile, replaced by FAB */}
           {canCreate && (
             <button
+              className="add-table-btn"
               onClick={() => setShowCreateModal(true)}
               style={{ padding: '10px 20px', borderRadius: 12, background: 'var(--blue)', border: 'none', color: '#fff', fontSize: 13, fontWeight: 700, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8, boxShadow: '0 4px 12px rgba(59,130,246,0.3)' }}
             >
@@ -359,25 +537,25 @@ const FloorPlan = () => {
           )}
         </div>
 
-        {/* KPI Strip */}
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: 14, marginBottom: 40 }}>
+        {/* ── KPI Strip ── */}
+        <div className="kpi-strip">
           {statsList.map((k, i) => (
             <div key={i} className="kpi-card">
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+              <div className="kpi-icon-row" style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
                 <div style={{ color: k.color }}>{k.icon}</div>
-                <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                <span className="kpi-label" style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
                   {k.label}
                 </span>
               </div>
-              <div className="mono" style={{ fontSize: 22, fontWeight: 300, color: 'var(--text-1)' }}>
+              <div className="mono kpi-value" style={{ fontSize: 22, fontWeight: 300, color: 'var(--text-1)' }}>
                 {k.value}
               </div>
             </div>
           ))}
         </div>
 
-        {/* Floor Grid */}
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: 30 }}>
+        {/* ── Floor Grid ── */}
+        <div className="floor-grid">
           {accessibleTables.map(table => (
             <div key={table.id} onClick={() => handleTableClick(table)}>
               <FloorTableCard
@@ -392,7 +570,7 @@ const FloorPlan = () => {
           ))}
         </div>
 
-        {/* Empty State */}
+        {/* ── Empty State ── */}
         {accessibleTables.length === 0 && (
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '100px 0', color: 'var(--text-3)' }}>
             <Grid size={48} strokeWidth={1} style={{ marginBottom: 20, opacity: 0.3 }} />
@@ -402,26 +580,30 @@ const FloorPlan = () => {
         )}
       </div>
 
-      {/* Modals */}
+      {/* ── FAB (mobile only) ── */}
+      {canCreate && (
+        <button
+          className="add-table-fab"
+          onClick={() => setShowCreateModal(true)}
+          aria-label={t('tables.addTable')}
+          title={t('tables.addTable')}
+        >
+          <Plus size={24} />
+        </button>
+      )}
+
+      {/* ── Modals ── */}
       <FloorCreateTableModal
         isOpen={showCreateModal}
         onClose={() => setShowCreateModal(false)}
-        onSuccess={(table) => {
-          setShowCreateModal(false);
-          showSuccess(`${t('tables.table')} ${table.table_number} ${t('tables.createdSuccess')}`);
-        }}
+        onSuccess={(table) => { setShowCreateModal(false); showSuccess(`${t('tables.table')} ${table.table_number} ${t('tables.createdSuccess')}`); }}
       />
-
       <FloorEditTableModal
         table={editingTable}
         isOpen={!!editingTable}
         onClose={() => setEditingTable(null)}
-        onSuccess={(table) => {
-          setEditingTable(null);
-          showSuccess(`${t('tables.table')} ${table.table_number} ${t('tables.updatedSuccess')}`);
-        }}
+        onSuccess={(table) => { setEditingTable(null); showSuccess(`${t('tables.table')} ${table.table_number} ${t('tables.updatedSuccess')}`); }}
       />
-
       <DeleteTableModal
         table={accessibleTables.find(t => t.id === deletingTableId) || null}
         isOpen={!!deletingTableId}
@@ -429,115 +611,67 @@ const FloorPlan = () => {
         onConfirm={confirmDelete}
         isLoading={isDeleting}
       />
-
       <AssignWaiterModal
         tableId={assigningTableId}
         isOpen={!!assigningTableId}
         onClose={() => setAssigningTableId(null)}
-        onSuccess={() => {
-          setAssigningTableId(null);
-          showSuccess(t('tables.waiterAssignedSuccess'));
-        }}
+        onSuccess={() => { setAssigningTableId(null); showSuccess(t('tables.waiterAssignedSuccess')); }}
       />
 
-      {/* QR Modal — ONLINE ONLY */}
+      {/* ── QR Modal ── */}
       {qrModalTable && qrModalTable.qr_token && (
-        <div
-          onClick={() => setQrModalTable(null)}
-          style={{
-            position: 'fixed',
-            inset: 0,
-            background: 'rgba(0,0,0,0.75)',
-            zIndex: 1000,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            padding: 20
-          }}
-        >
-          <div
-            onClick={e => e.stopPropagation()}
-            style={{
-              background: 'var(--card)',
-              border: '1px solid var(--border-hi)',
-              borderRadius: 24,
-              width: '100%',
-              maxWidth: 420,
-              padding: 32,
-              color: 'var(--text-1)',
-              boxShadow: '0 25px 60px rgba(0,0,0,0.6)'
-            }}
-          >
+        <div className="qr-modal-overlay" onClick={() => setQrModalTable(null)}>
+          <div className="qr-modal-box" onClick={e => e.stopPropagation()}>
+            {/* Modal header */}
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                <div style={{ width: 44, height: 44, background: 'var(--gold-dim)', borderRadius: 14, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <div style={{ width: 44, height: 44, background: 'var(--gold-dim)', borderRadius: 14, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                   <QrCode size={22} color="var(--gold)" />
                 </div>
                 <div>
                   <div style={{ fontSize: 22, fontWeight: 800, letterSpacing: '-0.02em' }}>Table {qrModalTable.table_number}</div>
-                  <div style={{ fontSize: 10, color: 'var(--text-3)', letterSpacing: '2.5px', textTransform: 'uppercase' }}>
-                    MENU • EN LIGNE
-                  </div>
+                  <div style={{ fontSize: 10, color: 'var(--text-3)', letterSpacing: '2.5px', textTransform: 'uppercase' }}>MENU • EN LIGNE</div>
                 </div>
               </div>
-
               <button
                 aria-label="Fermer"
-                title="Fermer"
                 onClick={() => setQrModalTable(null)}
-                style={{ width: 36, height: 36, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, color: 'var(--text-2)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}
+                style={{ width: 36, height: 36, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, color: 'var(--text-2)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', flexShrink: 0 }}
               >
                 <X size={18} />
               </button>
             </div>
 
+            {/* QR code */}
             <div style={{ background: '#fff', borderRadius: 20, padding: 28, display: 'flex', justifyContent: 'center', marginBottom: 16 }}>
-              <QRCodeSVG
-                value={getQrUrl(qrModalTable)}
-                size={240}
-                level="M"
-                includeMargin
-                fgColor="#0a2f1f"
-                bgColor="#ffffff"
-              />
+              <QRCodeSVG value={getQrUrl(qrModalTable)} size={240} level="M" includeMargin fgColor="#0a2f1f" bgColor="#ffffff" />
             </div>
 
+            {/* Hidden high-res canvas for PNG export */}
             <div style={{ position: 'absolute', width: 0, height: 0, overflow: 'hidden' }}>
-              <QRCodeCanvas
-                ref={qrCanvasRef as any}
-                value={getQrUrl(qrModalTable)}
-                size={1024}
-                level="H"
-                includeMargin
-                fgColor="#0a2f1f"
-                bgColor="#ffffff"
-              />
+              <QRCodeCanvas ref={qrCanvasRef as any} value={getQrUrl(qrModalTable)} size={1024} level="H" includeMargin fgColor="#0a2f1f" bgColor="#ffffff" />
             </div>
 
+            {/* Token */}
             <div style={{ textAlign: 'center', marginBottom: 18, fontSize: 11, color: 'var(--text-3)' }}>
               TOKEN
-              <div style={{ fontFamily: 'JetBrains Mono, monospace', color: 'var(--gold)', fontSize: 13, letterSpacing: '1px', userSelect: 'all', marginTop: 6 }}>
+              <div style={{ fontFamily: 'JetBrains Mono, monospace', color: 'var(--gold)', fontSize: 13, letterSpacing: '1px', userSelect: 'all', marginTop: 6, wordBreak: 'break-all' }}>
                 {qrModalTable.qr_token}
               </div>
             </div>
 
+            {/* Actions */}
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
               <button onClick={() => copyQrLink(qrModalTable)} style={{ padding: '12px 16px', borderRadius: 14, background: 'var(--surface)', border: '1px solid var(--border)', color: 'var(--text-1)', fontWeight: 700, fontSize: 13, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
                 <Copy size={16} /> COPIER
               </button>
-
               <button onClick={() => regenerateQrForTable(qrModalTable)} style={{ padding: '12px 16px', borderRadius: 14, background: 'rgba(245,158,11,0.12)', border: '1px solid #f59e0b55', color: '#f59e0b', fontWeight: 700, fontSize: 13, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
                 <RefreshCw size={16} /> RÉGÉNÉRER
               </button>
-
               <button onClick={() => downloadQrPng(qrModalTable)} style={{ gridColumn: 'span 2', padding: '12px 16px', borderRadius: 14, background: 'var(--surface)', border: '1px solid var(--border)', color: 'var(--text-1)', fontWeight: 700, fontSize: 13, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
                 <Download size={16} /> TÉLÉCHARGER PNG
               </button>
-
-              <button
-                onClick={() => window.open(getQrUrl(qrModalTable), '_blank')}
-                style={{ gridColumn: 'span 2', padding: '12px 16px', borderRadius: 14, background: 'var(--gold)', color: '#0a2f1f', fontWeight: 800, fontSize: 13, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}
-              >
+              <button onClick={() => window.open(getQrUrl(qrModalTable), '_blank')} style={{ gridColumn: 'span 2', padding: '12px 16px', borderRadius: 14, background: 'var(--gold)', color: '#0a2f1f', fontWeight: 800, fontSize: 13, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
                 OUVRIR MENU
               </button>
             </div>
@@ -549,7 +683,7 @@ const FloorPlan = () => {
         </div>
       )}
 
-      {/* Notifications */}
+      {/* ── Notifications ── */}
       {notification && (
         <div
           className="notification"

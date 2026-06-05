@@ -1,10 +1,10 @@
 import { Navigate, Route, Routes } from 'react-router-dom';
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { useSettingsStore } from './stores/useSettingsStore';
 import { useAuthStore } from './stores/useAuthStore';
+import { useUIStore } from './stores/useUIStore';
 import { I18nProvider } from './lib/i18n';
-import { SettingsSelector } from './components/SettingsSelector';
 import Sidebar from './components/Sidebar';
 import SettingsPage from './pages/SettingsPage';
 import ErrorBoundary from './components/ErrorBoundary';
@@ -29,6 +29,7 @@ import GlobalQrOrderNotifier from './components/GlobalQrOrderNotifier';
 import { GlobalNotificationToast } from './components/GlobalNotificationToast';
 import { NotificationCenter } from './components/NotificationCenter';
 import { useNotificationStore } from './stores/useNotificationStore';
+import { Menu } from 'lucide-react';
 
 const ProtectedRoute = ({ children, roles }: { children: React.ReactNode, roles?: string[] }) => {
   const { isAuthenticated, user } = useAuthStore();
@@ -49,7 +50,15 @@ const queryClient = new QueryClient({
 });
 
 function App() {
-  const { language, currency } = useSettingsStore();
+  const { language } = useSettingsStore();
+  const { isSidebarCollapsed, setSidebarCollapsed, isSidebarOpen, setSidebarOpen } = useUIStore();
+  const [windowWidth, setWindowWidth] = useState(window.innerWidth);
+
+  useEffect(() => {
+    const handleResize = () => setWindowWidth(window.innerWidth);
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
 
   useEffect(() => {
     const id = 'global-app-styles';
@@ -60,6 +69,8 @@ function App() {
       document.head.appendChild(s);
     }
   }, []);
+
+  const isMobile = windowWidth <= 1024;
 
   return (
     <ErrorBoundary>
@@ -75,24 +86,67 @@ function App() {
               element={
                 <ProtectedRoute>
                   <div style={{ display: 'flex', height: '100vh', overflow: 'hidden', background: '#09090f' }}>
+                    
+                    {/* Floating Mobile/Collapse Toggle */}
+                    {(isSidebarCollapsed || (isMobile && !isSidebarOpen)) && (
+                      <button
+                        onClick={() => {
+                          if (isMobile) setSidebarOpen(true);
+                          else setSidebarCollapsed(false);
+                        }}
+                        style={{
+                          position: 'fixed',
+                          top: '20px',
+                          right: '20px',
+                          zIndex: 90,
+                          background: '#16161f',
+                          border: '1px solid #1e1e2e',
+                          color: '#eeeef5',
+                          width: '40px',
+                          height: '40px',
+                          borderRadius: '10px',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          cursor: 'pointer',
+                          boxShadow: '0 4px 12px rgba(0,0,0,0.5)',
+                          transition: 'all 0.2s'
+                        }}
+                        className="hover-bright"
+                      >
+                        <Menu size={20} />
+                      </button>
+                    )}
+
                     <Sidebar />
+                    
+                    {/* Mobile Overlay */}
+                    {isSidebarOpen && isMobile && (
+                      <div 
+                        onClick={() => setSidebarOpen(false)}
+                        style={{
+                          position: 'fixed',
+                          inset: 0,
+                          background: 'rgba(0,0,0,0.5)',
+                          backdropFilter: 'blur(4px)',
+                          zIndex: 95
+                        }}
+                      />
+                    )}
+
                     <GlobalQrOrderNotifier />
                     <GlobalNotificationToast />
                     <NotificationCenter 
                       isOpen={useNotificationStore.getState().isCenterOpen} 
                       onClose={() => useNotificationStore.getState().closeCenter()} 
                     />
-                    {/* SettingsSelector sits in the fixed sidebar column — footer area */}
-                    <div style={{
-                      position: 'fixed', left: 0, bottom: 0,
-                      width: '260px', zIndex: 50,
-                      pointerEvents: 'none',      // let clicks pass through empty areas
-                    }}>
-                      <div style={{ pointerEvents: 'auto' }}>
-                        <SettingsSelector />
-                      </div>
-                    </div>
-                    <main style={{ flex: 1, overflowY: 'auto', position: 'relative' }} className="custom-scroll">
+
+                    <main style={{ 
+                      flex: 1, 
+                      overflowY: 'auto', 
+                      position: 'relative',
+                      transition: 'all 240ms cubic-bezier(0.4, 0, 0.2, 1)'
+                    }} className="custom-scroll">
                       <Routes>
                         <Route path="/" element={<Dashboard />} />
                         <Route path="/dashboard" element={<Dashboard />} />
@@ -120,11 +174,11 @@ function App() {
                            </ProtectedRoute>
                          } />
                         <Route path="/products" element={
-<ProtectedRoute roles={['admin', 'manager']}>
+                          <ProtectedRoute roles={['admin', 'manager']}>
                             <ProductsPage />
                           </ProtectedRoute>
                         } />
-<Route path="/products/:id" element={
+                        <Route path="/products/:id" element={
                           <ProtectedRoute roles={['admin', 'manager']}>
                             <ProductDetailsPage />
                           </ProtectedRoute>
