@@ -35,7 +35,7 @@ import scheduledReportsLogRoutes from './routes/scheduled_reports_log';
 import db from './db/database';
 import { startSupabasePullWorker, getPullSyncStatus } from './services/supabase-pull-sync.service';
 import { startScheduledReports } from './services/scheduled-reports.service';
-import { initializeProductSync, SyncOrchestrator } from '../sync';
+import { initializeProductSync, getOrderSyncService, SyncOrchestrator } from '../sync';
 import { env } from './config/env';
 
 const app = express();
@@ -173,8 +173,8 @@ app.listen(PORT, () => {
     if (supabaseUrl && supabaseKey) {
       try {
         const syncService = initializeProductSync(db, supabaseUrl, supabaseKey);
-        const orchestrator = new SyncOrchestrator(syncService, db, businessId);
-
+        const orderService = getOrderSyncService();
+        const orchestrator = new SyncOrchestrator(syncService, orderService, db, businessId);
         orchestrator.startScheduler(30000);           // PUSH + PULL every 30s
         orchestrator.triggerSync().catch(() => {});   // kick off immediately
 

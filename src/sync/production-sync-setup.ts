@@ -3,7 +3,7 @@
 // This file is meant to be imported from src/main/main.js
 
 import { app } from 'electron';
-import { initializeProductSync, getProductSyncService } from './index';
+import { initializeProductSync, getOrderSyncService } from './index';
 import { SyncOrchestrator } from './sync-orchestrator';
 import type Database from 'better-sqlite3';
 import path from 'path';
@@ -50,9 +50,10 @@ export function initializeProductionSync(options: SyncSetupOptions) {
 
   // 1. Initialize the core sync service (with the correct db)
   const syncService = initializeProductSync(db, supabaseUrl, supabaseAnonKey);
+  const orderService = getOrderSyncService();
 
   // 2. Create the production orchestrator
-  orchestrator = new SyncOrchestrator(syncService, db, businessId);
+  orchestrator = new SyncOrchestrator(syncService, orderService, db, businessId);
 
   // 3. Start the scheduler
   orchestrator.startScheduler(syncIntervalMs);

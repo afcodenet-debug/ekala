@@ -99,7 +99,7 @@ export class ProductSyncService {
   /**
    * Lance le cycle de synchronisation complet (PUSH + PULL)
    */
-  async syncNow(businessId: string): Promise<{ pushed: number; pulled: number; errors: number }> {
+  async syncNow(_businessId: string): Promise<{ pushed: number; pulled: number; errors: number }> {
     if (this.isRunning) {
       console.log('[Sync] Sync already in progress');
       return { pushed: 0, pulled: 0, errors: 0 };
@@ -110,10 +110,10 @@ export class ProductSyncService {
 
     try {
       // 1. PUSH (SQLite → Supabase)
-      pushed = await this.pushPendingProducts(businessId);
+      pushed = await this.pushPendingProducts(_businessId);
 
       // 2. PULL (Supabase → SQLite)
-      pulled = await this.pullProductsFromSupabase(businessId);
+      pulled = await this.pullProductsFromSupabase(_businessId);
 
     } catch (err: any) {
       console.error('[Sync] Sync cycle failed:', err);
@@ -128,7 +128,7 @@ export class ProductSyncService {
   /**
    * Generic PUSH for any entity using outbox + version-safe upsert
    */
-  async pushPendingByEntity(entity: string, businessId: string): Promise<number> {
+  async pushPendingByEntity(entity: string, _businessId: string): Promise<number> {
     const table = this.ENTITY_TABLE[entity] || `${entity}s`;
     const items: OutboxItem[] = this.db
       .prepare(
@@ -157,37 +157,72 @@ export class ProductSyncService {
         }
 
         if (item.operation === 'insert' || item.operation === 'update') {
-          // --- Tolerant push for legacy schemas (no business_id, no version, no sync_status) ---
-          // Primary goal right now: keep stock_quantity in sync.
-          // We only send fields that are very likely to exist in the remote table.
+          // --- Tolerant push for legacy schemas ---
+          // We include fields for products, orders, and order_items to handle multiple entities
           const safeUpdate: Record<string, any> = {
+            id: recordId,
             updated_at: new Date().toISOString()
           };
 
-          // Only copy safe, commonly present fields from the queued payload
+          // Product fields
           if (payload.stock_quantity !== undefined) safeUpdate.stock_quantity = payload.stock_quantity;
           if (payload.name !== undefined)            safeUpdate.name = payload.name;
           if (payload.price !== undefined)           safeUpdate.price = payload.price;
           if (payload.selling_price !== undefined)   safeUpdate.selling_price = payload.selling_price;
           if (payload.buying_price !== undefined)    safeUpdate.buying_price = payload.buying_price;
           if (payload.is_available !== undefined)    safeUpdate.is_available = payload.is_available;
+          if (payload.category_id !== undefined)     safeUpdate.category_id = payload.category_id;
+          if (payload.barcode !== undefined)         safeUpdate.barcode = payload.barcode;
 
-          // Use plain update + eq('id') — works on almost any schema without extra columns
+          // Order fields
+          if (payload.table_id !== undefined)        safeUpdate.table_id = payload.table_id;
+          if (payload.waiter_id !== undefined)       safeUpdate.waiter_id = payload.waiter_id;
+          if (payload.customer_id !== undefined)     safeUpdate.customer_id = payload.customer_id;
+          if (payload.status !== undefined)          safeUpdate.status = payload.status;
+          if (payload.total !== undefined)           safeUpdate.total = payload.total;
+          if (payload.items !== undefined)           safeUpdate.items = payload.items;
+          if (payload.version !== undefined)         safeUpdate.version = payload.version;
+          if (payload.created_at !== undefined)      safeUpdate.created_at = payload.created_at;
+
+          // Order Item fields
+          if (payload.order_id !== undefined)        safeUpdate.order_id = payload.order_id;
+          if (payload.product_id !== undefined)      safeUpdate.product_id = payload.product_id;
+          if (payload.quantity !== undefined)        safeUpdate.quantity = payload.quantity;
+          if (payload.unit_price !== undefined)      safeUpdate.unit_price = payload.unit_price;
+          if (payload.total_price !== undefined)     safeUpdate.total_price = payload.total_price;
+          if (payload.notes !== undefined)           safeUpdate.notes = payload.notes;
+
+          // Use upsert to handle both insert and update
           const { error } = await this.supabase
             .from(table)
-            .update(safeUpdate)
-            .eq('id', recordId);
+            .upsert(safeUpdate);
 
           if (error) throw error;
 
         } else if (item.operation === 'delete') {
-          // Soft-delete tolerant version
-          const { error } = await this.supabase
-            .from(table)
-            .update({ is_available: 0, updated_at: new Date().toISOString() })
-            .eq('id', recordId);
+          if (entity === 'order_item') {
+            // Actual deletion for order items (normalized items)
+            const { error } = await this.supabase
+              .from(table)
+              .delete()
+              .eq('id', recordId);
 
-          if (error) throw error;
+            if (error) throw error;
+          } else {
+            // Soft-delete for products and orders
+            const safeDelete: Record<string, any> = { 
+              updated_at: new Date().toISOString() 
+            };
+            if (entity === 'product') safeDelete.is_available = 0;
+            if (entity === 'order')   safeDelete.status = 'cancelled';
+
+            const { error } = await this.supabase
+              .from(table)
+              .update(safeDelete)
+              .eq('id', recordId);
+
+            if (error) throw error;
+          }
         }
 
         // Mark as successfully pushed
@@ -211,14 +246,14 @@ export class ProductSyncService {
    * PUSH : Envoie les changements en attente vers Supabase (Products)
    * Delegates to the generic implementation for DRY + future entities
    */
-  private async pushPendingProducts(businessId: string): Promise<number> {
-    return this.pushPendingByEntity('product', businessId);
+  private async pushPendingProducts(_businessId: string): Promise<number> {
+    return this.pushPendingByEntity('product', _businessId);
   }
 
   /**
    * PULL : Récupère les changements depuis Supabase et les applique en local
    */
-  private async pullProductsFromSupabase(businessId: string): Promise<number> {
+  private async pullProductsFromSupabase(_businessId: string): Promise<number> {
     const since = this.lastPullTimestamp || new Date(0).toISOString();
 
     const { data, error } = await this.supabase
@@ -320,9 +355,9 @@ if (data && data.length > 0) {
   /**
    * Méthode utilitaire pour forcer un pull complet (utile après reconnexion longue)
    */
-  async forceFullPull(businessId: string): Promise<number> {
+  async forceFullPull(_businessId: string): Promise<number> {
     this.lastPullTimestamp = null;
-    return this.pullProductsFromSupabase(businessId);
+    return this.pullProductsFromSupabase(_businessId);
   }
 
   /** Reset the in-memory pull cursor so the next sync cycle will pull everything */

@@ -2,7 +2,7 @@ import express from 'express';
 import db from '../db/database';
 import { notifyOrderCheckout } from '../services/notification.service';
 import { requirePermission } from '../middleware/auth';
-import { getProductSyncService } from '../../sync';
+import { getProductSyncService, getOrderSyncService } from '../../sync';
 import { createClient } from '@supabase/supabase-js';
 import { env } from '../config/env';
 
@@ -292,6 +292,17 @@ router.post('/checkout', requirePermission('PROCESS_PAYMENTS'), async (_req, res
           WHERE id = ?
         `).run(JSON.stringify(blockedItems), remainingTotal, order_id);
 
+        // Queue old items for deletion in sync
+        try {
+          const oldItems = db.prepare('SELECT id FROM order_items WHERE order_id = ?').all(order_id) as { id: number }[];
+          const sync = getProductSyncService();
+          for (const item of oldItems) {
+            sync.queueChangeInsideTransaction('order_item', 'delete', { id: item.id });
+          }
+        } catch (e) {
+          console.warn('[Sales] Failed to queue item deletions for sync:', e);
+        }
+
         db.prepare('DELETE FROM order_items WHERE order_id = ?').run(order_id);
         const orderItemStmt = db.prepare(`
           INSERT INTO order_items (order_id, product_id, quantity, unit_price, total_price, notes)
@@ -312,8 +323,28 @@ router.post('/checkout', requirePermission('PROCESS_PAYMENTS'), async (_req, res
           discount: order.discount,
           tax: order.tax
         };
+
+        // Queue order update for sync
+        try {
+          // We need the items with their new IDs for proper sync
+          const itemsWithIds = db.prepare(`
+            SELECT id, product_id as productId, quantity, unit_price as price, notes 
+            FROM order_items WHERE order_id = ?
+          `).all(order_id);
+          getOrderSyncService().queueOrderChange('update', { ...remainingOrder, items: itemsWithIds }, 'default-business');
+        } catch (e) {
+          console.warn('[Sales] Failed to queue partial order update for sync:', e);
+        }
       } else {
         db.prepare("UPDATE orders SET status = 'paid', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(order_id);
+        
+        // Queue sync
+        try {
+          const updatedOrder = db.prepare('SELECT * FROM orders WHERE id = ?').get(order_id);
+          getOrderSyncService().queueOrderChange('update', updatedOrder, 'default-business');
+        } catch (e) {
+          console.warn('[Sales] Failed to queue order paid status for sync:', e);
+        }
       }
 
       return {

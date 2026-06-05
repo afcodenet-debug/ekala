@@ -1,16 +1,14 @@
 // src/sync/sync-orchestrator.ts
-// Production-grade orchestration layer for the Product Sync Engine
+// Production-grade orchestration layer for the Product & Order Sync Engine
 // Handles scheduling, mutex, offline detection, crash recovery, and lastSync persistence
 
 import { ProductSyncService } from './product-sync.service';
+import { OrderSyncService } from './order-sync.service';
 import type Database from 'better-sqlite3';
-
-interface SyncState {
-  lastPullTimestamp: string | null;
-}
 
 export class SyncOrchestrator {
   private syncService: ProductSyncService;
+  private orderService: OrderSyncService;
   private db: Database.Database;
   private businessId: string;
   private isSyncing = false;
@@ -19,10 +17,12 @@ export class SyncOrchestrator {
 
   constructor(
     syncService: ProductSyncService,
+    orderService: OrderSyncService,
     db: Database.Database,
     businessId: string
   ) {
     this.syncService = syncService;
+    this.orderService = orderService;
     this.db = db;
     this.businessId = businessId;
 
@@ -41,20 +41,22 @@ export class SyncOrchestrator {
     `);
   }
 
-  private getLastPullTimestamp(): string | null {
-    const row = this.db.prepare("SELECT value FROM sync_state WHERE key = 'last_pull_timestamp'").get() as { value: string } | undefined;
+  private getLastPullTimestamp(entity: string): string | null {
+    const key = `last_pull_timestamp_${entity}`;
+    const row = this.db.prepare("SELECT value FROM sync_state WHERE key = ?").get(key) as { value: string } | undefined;
     return row?.value || null;
   }
 
-  private setLastPullTimestamp(timestamp: string | null) {
+  private setLastPullTimestamp(entity: string, timestamp: string | null) {
+    const key = `last_pull_timestamp_${entity}`;
     if (timestamp === null) {
-      this.db.prepare(`DELETE FROM sync_state WHERE key = 'last_pull_timestamp'`).run();
+      this.db.prepare(`DELETE FROM sync_state WHERE key = ?`).run(key);
       return;
     }
     this.db.prepare(`
       INSERT OR REPLACE INTO sync_state (key, value) 
-      VALUES ('last_pull_timestamp', ?)
-    `).run(timestamp);
+      VALUES (?, ?)
+    `).run(key, timestamp);
   }
 
   /**
@@ -150,20 +152,24 @@ export class SyncOrchestrator {
     this.isSyncing = true;
 
     try {
-      const lastSync = this.getLastPullTimestamp();
-      const result = await this.syncService.syncNow(this.businessId);
+      // 1. Sync Products (Push + Pull)
+      const productResult = await this.syncService.syncNow(this.businessId);
+      
+      // 2. Sync Orders (Push + Pull)
+      const ordersPushed = await this.orderService.pushPendingOrders(this.businessId);
+      const lastOrderPull = this.getLastPullTimestamp('order') || '1970-01-01T00:00:00Z';
+      const ordersPulled = await this.orderService.pullOrderUpdates(this.businessId, lastOrderPull);
 
-      // Also push any pending orders (orders use the same generic engine)
-      const ordersPushed = await this.syncService.pushPendingByEntity('order', this.businessId);
-      const orderItemsPushed = await this.syncService.pushPendingByEntity('order_item', this.businessId);
-
-      if (result.pulled > 0) {
-        const now = new Date().toISOString();
-        this.setLastPullTimestamp(now);
+      if (ordersPulled > 0) {
+        this.setLastPullTimestamp('order', new Date().toISOString());
       }
 
-      const totalPushed = result.pushed + ordersPushed + orderItemsPushed;
-      console.log(`[SyncOrchestrator] Sync completed - Pushed: ${totalPushed} (products: ${result.pushed}, orders: ${ordersPushed + orderItemsPushed}), Pulled: ${result.pulled}`);
+      const totalPushed = productResult.pushed + ordersPushed;
+      const totalPulled = productResult.pulled + ordersPulled;
+
+      if (totalPushed > 0 || totalPulled > 0) {
+        console.log(`[SyncOrchestrator] Sync completed - Pushed: ${totalPushed}, Pulled: ${totalPulled}`);
+      }
 
     } catch (error) {
       console.error('[SyncOrchestrator] Sync failed:', error);
@@ -176,8 +182,9 @@ export class SyncOrchestrator {
    * Force a full pull (useful after long offline period)
    */
   async forceFullResync(): Promise<void> {
-    this.setLastPullTimestamp(null);
-    this.syncService.resetPullCursor(); // also clear in-memory cursor on the service
+    this.setLastPullTimestamp('product', null);
+    this.setLastPullTimestamp('order', null);
+    this.syncService.resetPullCursor();
     await this.triggerSync();
   }
 }
