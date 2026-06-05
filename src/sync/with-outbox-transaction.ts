@@ -28,7 +28,7 @@ export function withOutboxTransaction<T>(
   _businessId: string,
   callback: TxCallback<T>
 ): T {
-  if (!db) {
+  if (!db || typeof db.transaction !== 'function') {
     // Renderer or no local DB context yet — run non-transactionally.
     // The queue calls inside will be ignored or forwarded via IPC later.
     return callback();

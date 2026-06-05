@@ -16,6 +16,33 @@ export interface Table {
 
 export class TableService {
   static async getAll(params?: { waiter_id?: number; role?: string }): Promise<Table[]> {
+    if (!db) {
+      console.log('[TableService] SQLite disabled (db is null). Falling back to Supabase for getAll');
+      try {
+        const { getSupabaseClient } = require('../database/supabase.client');
+        const supabase = getSupabaseClient();
+
+        let query = supabase
+          .from('restaurant_tables')
+          .select('*, waiter:users(full_name)');
+
+        if (params?.role === 'waiter' && params.waiter_id) {
+          query = query.eq('assigned_waiter_id', params.waiter_id);
+        }
+
+        const { data, error } = await query.order('table_number');
+        if (error) throw error;
+
+        return (data || []).map((t: any) => ({
+          ...t,
+          waiter_name: t.waiter?.full_name
+        }));
+      } catch (err: any) {
+        console.error('[TableService] Supabase getAll failed:', err?.message || err);
+        throw new Error('Failed to fetch tables via Supabase');
+      }
+    }
+
     try {
       let query = `
         SELECT
@@ -49,6 +76,33 @@ export class TableService {
   }
 
   static async getById(id: number): Promise<Table | null> {
+    if (!db) {
+      console.log(`[TableService] SQLite disabled (db is null). Falling back to Supabase for getById (id=${id})`);
+      try {
+        const { getSupabaseClient } = require('../database/supabase.client');
+        const supabase = getSupabaseClient();
+
+        const { data, error } = await supabase
+          .from('restaurant_tables')
+          .select('*, waiter:users(full_name)')
+          .eq('id', id)
+          .single();
+
+        if (error) {
+          if (error.code === 'PGRST116') return null;
+          throw error;
+        }
+
+        return {
+          ...data,
+          waiter_name: data.waiter?.full_name
+        };
+      } catch (err: any) {
+        console.error('[TableService] Supabase getById failed:', err?.message || err);
+        throw new Error('Failed to fetch table via Supabase');
+      }
+    }
+
     try {
       const table = db.prepare(`
         SELECT
@@ -67,6 +121,35 @@ export class TableService {
   }
 
   static async create(tableData: Omit<Table, 'id' | 'created_at' | 'updated_at'>): Promise<Table> {
+    if (!db) {
+      console.log('[TableService] SQLite disabled (db is null). Falling back to Supabase for create');
+      try {
+        const { getSupabaseClient } = require('../database/supabase.client');
+        const supabase = getSupabaseClient();
+        const qrToken = crypto.randomUUID().replace(/-/g, '');
+
+        const { data, error } = await supabase
+          .from('restaurant_tables')
+          .insert([{
+            table_number: String(tableData.table_number),
+            capacity: tableData.capacity,
+            status: tableData.status,
+            assigned_waiter_id: tableData.assigned_waiter_id,
+            qr_token: qrToken,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString()
+          }])
+          .select()
+          .single();
+
+        if (error) throw error;
+        return data;
+      } catch (err: any) {
+        console.error('[TableService] Supabase create failed:', err?.message || err);
+        throw new Error('Failed to create table via Supabase');
+      }
+    }
+
     try {
       // Check if table number already exists
       const existing = db.prepare('SELECT id FROM restaurant_tables WHERE table_number = ?').get(tableData.table_number);
@@ -106,6 +189,32 @@ export class TableService {
   }
 
   static async update(id: number, updates: Partial<Omit<Table, 'id' | 'created_at' | 'updated_at'>>): Promise<Table> {
+    if (!db) {
+      console.log(`[TableService] SQLite disabled (db is null). Falling back to Supabase for update (id=${id})`);
+      try {
+        const { getSupabaseClient } = require('../database/supabase.client');
+        const supabase = getSupabaseClient();
+
+        const { data, error } = await supabase
+          .from('restaurant_tables')
+          .update({
+            ...updates,
+            updated_at: new Date().toISOString()
+          })
+          .eq('id', id)
+          .select()
+          .single();
+
+        if (error) throw error;
+        if (!data) throw new Error('Table not found');
+
+        return data;
+      } catch (err: any) {
+        console.error('[TableService] Supabase update failed:', err?.message || err);
+        throw new Error('Failed to update table via Supabase');
+      }
+    }
+
     try {
       const table = await this.getById(id);
       if (!table) {
@@ -216,6 +325,37 @@ export class TableService {
   }
 
   static async delete(id: number): Promise<boolean> {
+    if (!db) {
+      console.log(`[TableService] SQLite disabled (db is null). Falling back to Supabase for delete (id=${id})`);
+      try {
+        const { getSupabaseClient } = require('../database/supabase.client');
+        const supabase = getSupabaseClient();
+
+        // Check if table has active orders
+        const { count, error: countErr } = await supabase
+          .from('orders')
+          .select('*', { count: 'exact', head: true })
+          .eq('table_id', id)
+          .in('status', ['pending', 'confirmed', 'preparing', 'ready']);
+
+        if (countErr) throw countErr;
+        if (count && count > 0) {
+          throw new Error('Cannot delete table with active orders');
+        }
+
+        const { error } = await supabase
+          .from('restaurant_tables')
+          .delete()
+          .eq('id', id);
+
+        if (error) throw error;
+        return true;
+      } catch (err: any) {
+        console.error('[TableService] Supabase delete failed:', err?.message || err);
+        throw new Error(err?.message || 'Failed to delete table via Supabase');
+      }
+    }
+
     try {
       const table = await this.getById(id);
       if (!table) {

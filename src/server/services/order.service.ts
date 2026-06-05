@@ -30,6 +30,18 @@ export interface OrderData {
 export class OrderService {
   private static getItemsForOrder(orderId: number, fallbackJson?: string, isRemote: boolean = false): OrderItem[] {
     try {
+      // Cloud mode guard: if db is null, we can only rely on fallbackJson (JSON snapshot in orders.items)
+      if (!db) {
+        if (fallbackJson) {
+          try {
+            return JSON.parse(fallbackJson || '[]') as OrderItem[];
+          } catch {
+            return [];
+          }
+        }
+        return [];
+      }
+
       // For remote QR orders (pulled from Supabase), the pulled JSON snapshot is the source of truth.
       // The public menu only sends {product_id, quantity, name} — we enrich with current local price.
       if (isRemote && fallbackJson) {
@@ -131,6 +143,44 @@ export class OrderService {
   } = {}): Promise<OrderData[]> {
     const { waiter_id, role, table_id, status } = params;
 
+    // Cloud mode guard: db might be null (SQLite disabled on Render)
+    if (!db) {
+      console.log('[OrderService] SQLite disabled (db is null). Falling back to Supabase for getAll');
+      try {
+        const { getSupabaseClient } = require('../database/supabase.client');
+        const supabase = getSupabaseClient();
+
+        let query = supabase
+          .from('orders')
+          .select('*, table:restaurant_tables(table_number), waiter:users(full_name, role)');
+
+        if (role === 'waiter' && waiter_id) {
+          query = query.eq('waiter_id', waiter_id);
+        }
+        if (table_id) {
+          query = query.eq('table_id', table_id);
+        }
+        if (status) {
+          query = query.eq('status', status);
+        }
+
+        const { data, error } = await query.order('created_at', { ascending: false });
+
+        if (error) throw error;
+
+        return (data || []).map((order: any) => ({
+          ...order,
+          table_number: order.table?.table_number,
+          waiter_name: order.waiter?.full_name,
+          waiter_role: order.waiter?.role,
+          items: typeof order.items === 'string' ? JSON.parse(order.items) : (order.items || [])
+        }));
+      } catch (err: any) {
+        console.error('[OrderService] Supabase getAll failed:', err?.message || err);
+        throw new Error('Failed to fetch orders via Supabase');
+      }
+    }
+
     let query = `
       SELECT
         o.*,
@@ -179,6 +229,36 @@ export class OrderService {
    * Get order by ID
    */
   static async getById(id: number): Promise<OrderData | null> {
+    // Cloud mode guard: db might be null (SQLite disabled on Render)
+    if (!db) {
+      console.log(`[OrderService] SQLite disabled (db is null). Falling back to Supabase for getById (id=${id})`);
+      try {
+        const { getSupabaseClient } = require('../database/supabase.client');
+        const supabase = getSupabaseClient();
+
+        const { data, error } = await supabase
+          .from('orders')
+          .select('*, table:restaurant_tables(table_number), waiter:users(full_name)')
+          .eq('id', id)
+          .single();
+
+        if (error) {
+          if (error.code === 'PGRST116') return null; // Not found
+          throw error;
+        }
+
+        return {
+          ...data,
+          table_number: data.table?.table_number,
+          waiter_name: data.waiter?.full_name,
+          items: typeof data.items === 'string' ? JSON.parse(data.items) : (data.items || [])
+        };
+      } catch (err: any) {
+        console.error('[OrderService] Supabase getById failed:', err?.message || err);
+        throw new Error('Failed to fetch order via Supabase');
+      }
+    }
+
     try {
       const order = db.prepare(`
         SELECT
@@ -209,6 +289,52 @@ export class OrderService {
    */
   static async create(orderData: Omit<OrderData, 'id' | 'created_at' | 'updated_at'>): Promise<OrderData> {
     const businessId = process.env.SYNC_BUSINESS_ID || 'default-business';
+
+    // Cloud mode guard: db might be null (SQLite disabled on Render)
+    if (!db) {
+      console.log('[OrderService] SQLite disabled (db is null). Falling back to Supabase for create');
+      try {
+        const { getSupabaseClient } = require('../database/supabase.client');
+        const supabase = getSupabaseClient();
+        const { table_id, waiter_id, items, status, customer_id } = orderData;
+
+        const normalizedItems = items.map((item: any) => ({
+          ...item,
+          productId: item.productId ?? item.product_id,
+          name: item.name || '',
+          quantity: Number(item.quantity),
+          price: Number(item.price),
+          notes: item.notes ?? null
+        }));
+
+        const total = normalizedItems.reduce((sum, item) => sum + item.price * item.quantity, 0);
+
+        const { data, error } = await supabase
+          .from('orders')
+          .insert([{
+            table_id,
+            waiter_id,
+            customer_id,
+            items: normalizedItems,
+            status: status || 'pending',
+            total,
+            version: 1,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString()
+          }])
+          .select()
+          .single();
+
+        if (error) throw error;
+        return {
+          ...data,
+          items: normalizedItems
+        };
+      } catch (err: any) {
+        console.error('[OrderService] Supabase create failed:', err?.message || err);
+        throw new Error(err?.message || 'Failed to create order via Supabase');
+      }
+    }
 
     return withOutboxTransaction(db, businessId, () => {
       try {
@@ -316,6 +442,47 @@ export class OrderService {
   static async updateItems(id: number, items: OrderItem[]): Promise<OrderData> {
     const businessId = process.env.SYNC_BUSINESS_ID || 'default-business';
 
+    // Cloud mode guard: db might be null (SQLite disabled on Render)
+    if (!db) {
+      console.log('[OrderService] SQLite disabled (db is null). Falling back to Supabase for updateItems');
+      try {
+        const { getSupabaseClient } = require('../database/supabase.client');
+        const supabase = getSupabaseClient();
+
+        const normalizedItems = items.map(item => ({
+          ...item,
+          name: item.name || '',
+          quantity: Number(item.quantity),
+          price: Number(item.price),
+          notes: item.notes ?? null
+        }));
+
+        const total = normalizedItems.reduce((sum, item) => sum + item.price * item.quantity, 0);
+
+        const { data, error } = await supabase
+          .from('orders')
+          .update({
+            items: normalizedItems,
+            total,
+            updated_at: new Date().toISOString()
+          })
+          .eq('id', id)
+          .select()
+          .single();
+
+        if (error) throw error;
+        if (!data) throw new Error('Order not found');
+
+        return {
+          ...data,
+          items: normalizedItems
+        };
+      } catch (err: any) {
+        console.error('[OrderService] Supabase updateItems failed:', err?.message || err);
+        throw new Error(err?.message || 'Failed to update order items via Supabase');
+      }
+    }
+
     return withOutboxTransaction(db, businessId, () => {
       try {
         const existingOrder = db.prepare('SELECT id FROM orders WHERE id = ?').get(id);
@@ -371,6 +538,59 @@ export class OrderService {
    */
   static async updateStatus(id: number, status: OrderData['status']): Promise<OrderData> {
     const businessId = process.env.SYNC_BUSINESS_ID || 'default-business';
+
+    // Cloud mode guard: db might be null (SQLite disabled on Render)
+    if (!db) {
+      console.log(`[OrderService] SQLite disabled (db is null). Falling back to Supabase for updateStatus (id=${id}, status=${status})`);
+      try {
+        const { getSupabaseClient } = require('../database/supabase.client');
+        const supabase = getSupabaseClient();
+
+        // 1. Update the order
+        const { data, error } = await supabase
+          .from('orders')
+          .update({ 
+            status, 
+            updated_at: new Date().toISOString() 
+          })
+          .eq('id', id)
+          .select()
+          .single();
+
+        if (error) throw error;
+        if (!data) throw new Error('Order not found');
+
+        // 2. Handle table status side-effects (matching local behavior)
+        if (status === 'paid' && data.table_id) {
+          await supabase
+            .from('restaurant_tables')
+            .update({ status: 'cleaning' })
+            .eq('id', data.table_id);
+        } else if (status === 'cancelled' && data.table_id) {
+          // Check if there are other active orders for this table
+          const { count } = await supabase
+            .from('orders')
+            .select('*', { count: 'exact', head: true })
+            .eq('table_id', data.table_id)
+            .not('status', 'in', '("paid","cancelled")');
+          
+          if (count === 0) {
+            await supabase
+              .from('restaurant_tables')
+              .update({ status: 'available' })
+              .eq('id', data.table_id);
+          }
+        }
+
+        return {
+          ...data,
+          items: typeof data.items === 'string' ? JSON.parse(data.items) : (data.items || [])
+        };
+      } catch (err: any) {
+        console.error('[OrderService] Supabase updateStatus failed:', err?.message || err);
+        throw new Error(err?.message || 'Failed to update order status via Supabase');
+      }
+    }
 
     return withOutboxTransaction(db, businessId, () => {
       try {
@@ -490,6 +710,27 @@ export class OrderService {
    */
   static async deleteOrder(id: number): Promise<void> {
     const businessId = process.env.SYNC_BUSINESS_ID || 'default-business';
+
+    // Cloud mode guard: db might be null (SQLite disabled on Render)
+    if (!db) {
+      console.log(`[OrderService] SQLite disabled (db is null). Falling back to Supabase for deleteOrder (id=${id})`);
+      try {
+        const { getSupabaseClient } = require('../database/supabase.client');
+        const supabase = getSupabaseClient();
+
+        // Supabase has ON DELETE CASCADE on order_items, but let's be safe if needed
+        const { error } = await supabase
+          .from('orders')
+          .delete()
+          .eq('id', id);
+
+        if (error) throw error;
+        return;
+      } catch (err: any) {
+        console.error('[OrderService] Supabase deleteOrder failed:', err?.message || err);
+        throw new Error(err?.message || 'Failed to delete order via Supabase');
+      }
+    }
 
     return withOutboxTransaction(db, businessId, () => {
       try {

@@ -1084,7 +1084,33 @@ export async function notifyStockAdjustment(
   );
 }
 
+export async function loadRawSettingsAsync(): Promise<SettingsReader> {
+  if (!db) {
+    try {
+      const { getSupabaseClient } = require('../database/supabase.client');
+      const supabase = getSupabaseClient();
+      const { data, error } = await supabase.from('settings').select('key, value');
+      if (error) throw error;
+      return (data || []).reduce((acc: any, row: any) => {
+        acc[row.key] = row.value;
+        return acc;
+      }, {} as SettingsReader);
+    } catch (e) {
+      console.warn('[Notification] Failed to load settings from Supabase, using defaults', e);
+      return {};
+    }
+  }
+  const rows = db.prepare('SELECT key, value FROM settings').all() as Array<{ key: string; value: string }>;
+  return rows.reduce((acc, row) => {
+    acc[row.key] = row.value;
+    return acc;
+  }, {} as SettingsReader);
+}
+
 export function loadRawSettings(): SettingsReader {
+  if (!db) {
+    return {}; // Synchronous version returns empty in cloud mode; callers should use loadRawSettingsAsync if possible
+  }
   const rows = db.prepare('SELECT key, value FROM settings').all() as Array<{ key: string; value: string }>;
   return rows.reduce((acc, row) => {
     acc[row.key] = row.value;
