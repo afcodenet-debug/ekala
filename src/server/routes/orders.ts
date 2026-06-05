@@ -278,40 +278,6 @@ router.get('/:id', async (req, res) => {
   const orderId = Number(id);
 
   try {
-    // Cloud / Supabase mode: fetch directly from Supabase (orders created by public QR menu live here)
-    const isCloud = !db || env.USE_SUPABASE_TABLES;
-    if (isCloud) {
-      if (!env.SUPABASE_URL || !env.SUPABASE_SERVICE_ROLE_KEY) {
-        return res.status(500).json({ error: 'Supabase not configured for order lookup' });
-      }
-
-      const supabase = createClient(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, {
-        auth: { persistSession: false },
-      });
-
-      const { data: supaOrder, error: supaErr } = await supabase
-        .from('orders')
-        .select('id, status, total, items, created_at, updated_at, table_id, waiter_id, customer_id')
-        .eq('id', orderId)
-        .single();
-
-      if (supaErr || !supaOrder) {
-        return res.status(404).json({ error: 'Order not found' });
-      }
-
-      // Normalize for the public polling client (only needs status + total + items array)
-      const normalized = {
-        id: supaOrder.id,
-        status: supaOrder.status || 'pending',
-        total: Number(supaOrder.total || 0),
-        items: Array.isArray(supaOrder.items) ? supaOrder.items : [],
-        created_at: supaOrder.created_at,
-      };
-
-      return res.json(normalized);
-    }
-
-    // Legacy SQLite path (POS)
     const order = await OrderService.getById(orderId);
     if (order) {
       res.json(order);

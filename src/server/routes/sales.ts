@@ -52,7 +52,7 @@ router.post('/checkout', requirePermission('PROCESS_PAYMENTS'), async (_req, res
     payment_method = 'cash';
   }
 
-  console.log('[Sales] Checkout request:', { order_id, payment_method, user_id, discount, tax, items: Array.isArray(requestItems) ? requestItems.length : 'none' });
+  console.log('[Sales] Checkout request:', { order_id, payment_method, user_id, discount, tax, itemsCount: Array.isArray(requestItems) ? requestItems.length : 'none' });
 
   // Cloud mode guard: db might be null (SQLite disabled)
   if (!db) {
@@ -61,9 +61,13 @@ router.post('/checkout', requirePermission('PROCESS_PAYMENTS'), async (_req, res
       const supabaseUrl = env.SUPABASE_URL || process.env.SUPABASE_URL;
       const supabaseKey = env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY;
       if (!supabaseUrl || !supabaseKey) {
+        console.error('[Sales] Supabase config missing for cloud checkout');
         return res.status(500).json({ error: 'Supabase not configured' });
       }
+      
       const supabase = createClient(supabaseUrl, supabaseKey, { auth: { persistSession: false } });
+      
+      // 1. Fetch order details from Supabase
       const { data: supaOrder, error: supaErr } = await supabase
         .from('orders')
         .select('id, status, table_id, waiter_id, items, total')
@@ -71,12 +75,18 @@ router.post('/checkout', requirePermission('PROCESS_PAYMENTS'), async (_req, res
         .single();
 
       if (supaErr || !supaOrder) {
+        console.error(`[Sales] Order ${order_id} not found in Supabase`, supaErr);
         return res.status(404).json({ error: 'Order not found in Supabase' });
       }
 
-      // Generate invoice number
-      const invoiceNumber = `INV-${String(Date.now()).slice(-5)}${Math.floor(Math.random() * 10)}`;
+      // 2. Generate a unique invoice number (NOT NULL constraint)
+      const invoiceNumber = `INV-${String(Date.now()).slice(-6)}${Math.floor(Math.random() * 100)}`;
+      console.log(`[Sales] Generated invoice number: ${invoiceNumber} for order ${order_id}`);
 
+      const subtotal = Number((supaOrder as any).total || 0);
+      const total_amount = subtotal - Number(discount) + Number(tax);
+
+      // 3. Create the sale record
       const { data: saleData, error: saleErr } = await supabase
         .from('sales')
         .insert({
@@ -84,18 +94,23 @@ router.post('/checkout', requirePermission('PROCESS_PAYMENTS'), async (_req, res
           order_id,
           user_id,
           payment_method,
-          subtotal: Number((supaOrder as any).total || 0),
+          subtotal,
           discount: Number(discount),
           tax: Number(tax),
-          total_amount: Number((supaOrder as any).total || 0) - Number(discount) + Number(tax),
+          total_amount,
           created_at: new Date().toISOString()
         })
         .select()
         .single();
 
-      if (saleErr) throw saleErr;
+      if (saleErr) {
+        console.error('[Sales] Supabase sale insert failed:', saleErr);
+        throw saleErr;
+      }
 
-      // Insert sale items
+      console.log(`[Sales] Sale ${saleData.id} created successfully in Supabase`);
+
+      // 4. Insert sale items
       const items = Array.isArray(supaOrder.items) ? supaOrder.items : [];
       if (items.length > 0) {
         const saleItems = items.map((it: any) => ({
@@ -106,9 +121,11 @@ router.post('/checkout', requirePermission('PROCESS_PAYMENTS'), async (_req, res
           total_price: (Number(it.quantity) || 0) * Number(it.price || it.unit_price || 0)
         }));
         
-        await supabase.from('sale_items').insert(saleItems);
+        const { error: itemsErr } = await supabase.from('sale_items').insert(saleItems);
+        if (itemsErr) console.warn('[Sales] Failed to insert sale items in Supabase:', itemsErr);
       }
 
+      // 5. Update order status to paid
       await supabase.from('orders').update({ status: 'paid', updated_at: new Date().toISOString() }).eq('id', order_id);
 
       return res.json({
@@ -125,7 +142,7 @@ router.post('/checkout', requirePermission('PROCESS_PAYMENTS'), async (_req, res
     }
   }
 
-  // ── Variables captured by the transaction closure ──────────────────
+  // ── Variables captured by the transaction closure (SQLite path) ──────────────────
   let invoiceNumber = '';
   let subtotal      = 0;
   let saleId: number = 0;
@@ -146,7 +163,6 @@ router.post('/checkout', requirePermission('PROCESS_PAYMENTS'), async (_req, res
       if (items.length === 0) {
         if (isRemoteQrOrder) {
           // For remote QR orders, lock to the exact snapshot that was pulled from Supabase.
-          // Public menu only sends {product_id, quantity, name} — normalize to what the rest of the code expects.
           const raw = JSON.parse(order.items || '[]');
           items = raw.map((it: any) => {
             const pid = it.product_id || it.productId;
@@ -170,35 +186,24 @@ router.post('/checkout', requirePermission('PROCESS_PAYMENTS'), async (_req, res
               oi.notes,
               p.buying_price
             FROM order_items oi
-            JOIN products p ON oi.product_id = p.id
+            LEFT JOIN products p ON oi.product_id = p.id
             WHERE oi.order_id = ?
           `).all(order_id) as any[];
-
-          if (items.length === 0) {
-            items = JSON.parse(order.items || '[]');
-          }
         }
       }
 
-      subtotal = items.reduce((sum, item) => sum + Number(item.price) * Number(item.quantity), 0);
-      console.log('[Sales] Resolved order items:', items, 'subtotal:', subtotal);
+      if (!items || items.length === 0) throw new Error('No items in order');
 
+      subtotal = items.reduce((sum, item) => sum + Number(item.price) * Number(item.quantity), 0);
+
+      // Verify stock
       const fulfilledItems: any[] = [];
-      const blockedItems: any[] = [];
+      const blockedItems: any[]   = [];
 
       for (const item of items) {
-        console.log('[Sales] Evaluating item stock:', item);
         const product = db.prepare('SELECT stock_quantity, buying_price FROM products WHERE id = ?').get(item.productId) as any;
-
-        if (!product) throw new Error(`Product ${item.productId} not found`);
-
-        const available = Number(product.stock_quantity ?? 0);
         const requested = Number(item.quantity);
-
-        if (available <= 0) {
-          blockedItems.push({ ...item, quantity: requested });
-          continue;
-        }
+        const available = Number(product?.stock_quantity || 0);
 
         if (available >= requested) {
           fulfilledItems.push({ ...item, quantity: requested, product });
@@ -226,7 +231,7 @@ router.post('/checkout', requirePermission('PROCESS_PAYMENTS'), async (_req, res
         totalPrice: Number(item.price) * Number(item.quantity),
       }));
 
-      // Short invoice number (max 6 digits after INV-)
+      // Short invoice number
       invoiceNumber = `INV-${String(Date.now()).slice(-5)}${Math.floor(Math.random() * 10)}`;
 
       const saleStmt = db.prepare(`
@@ -260,7 +265,6 @@ router.post('/checkout', requirePermission('PROCESS_PAYMENTS'), async (_req, res
       `);
 
       for (const item of fulfilledItems) {
-        console.log('[Sales] Processing fulfilled item:', item);
         const quantityBefore = Number(item.product.stock_quantity ?? 0);
         const quantityChanged = -Number(item.quantity);
         const quantityAfter = quantityBefore + quantityChanged;
@@ -268,39 +272,28 @@ router.post('/checkout', requirePermission('PROCESS_PAYMENTS'), async (_req, res
         const totalValue = Number(item.quantity) * unitCost;
 
         itemStmt.run(saleId, item.productId, item.quantity, item.price, item.price * item.quantity);
+        
+        movementStmt.run(
+          item.productId,
+          'sale',
+          quantityBefore,
+          quantityChanged,
+          quantityAfter,
+          unitCost,
+          totalValue,
+          `Sale #${saleId}`,
+          user_id,
+          'sale',
+          saleId
+        );
 
-        // Always decrement stock and record movement for all fulfilled orders (including QR menu orders)
-        db.prepare('UPDATE products SET stock_quantity = stock_quantity - ? WHERE id = ?').run(item.quantity, item.productId);
-
-        try {
-          movementStmt.run(
-            item.productId,
-            'sale',
-            quantityBefore,
-            quantityChanged,
-            quantityAfter,
-            unitCost,
-            totalValue,
-            `Sale ${invoiceNumber}`,
-            user_id || null,
-            'sale',
-            saleId
-          );
-        } catch (movementError) {
-          console.error('[Sales] Failed to record inventory movement:', movementError);
-        }
-
-        // Queue product stock change for Supabase (outbox)
-        try {
-          const sync = getProductSyncService();
-          sync.queueChange('product', 'update', {
-            id: item.productId,
-            stock_quantity: quantityAfter,
-            updated_at: new Date().toISOString(),
-          });
-        } catch (syncErr) {
-          console.warn('[Sync] ProductSyncService not initialized — stock change for product', item.productId, 'will be retried later');
-        }
+        db.prepare('UPDATE products SET stock_quantity = ? WHERE id = ?').run(quantityAfter, item.productId);
+        
+        // Sync product stock
+        getProductSyncService().queueChangeInsideTransaction('product', 'update', {
+          id: item.productId,
+          stock_quantity: quantityAfter
+        });
       }
 
       let remainingOrder: any = null;
@@ -347,7 +340,6 @@ router.post('/checkout', requirePermission('PROCESS_PAYMENTS'), async (_req, res
 
         // Queue order update for sync
         try {
-          // We need the items with their new IDs for proper sync
           const itemsWithIds = db.prepare(`
             SELECT id, product_id as productId, quantity, unit_price as price, notes 
             FROM order_items WHERE order_id = ?
@@ -372,10 +364,9 @@ router.post('/checkout', requirePermission('PROCESS_PAYMENTS'), async (_req, res
         saleId,
         invoiceNumber,
         partial: blockedItems.length > 0,
-        blockedItems: blockedItems.map(item => ({ name: item.name, quantity: item.quantity })),
-        soldItems: fulfilledItems.map(item => ({ name: item.name, quantity: item.quantity, price: item.price, totalPrice: item.price * item.quantity })),
-        saleTotal,
-        remainingOrder
+        blockedItems,
+        soldItems: fulfilledItems,
+        saleTotal
       };
     } catch (error) {
       throw error;
@@ -384,172 +375,37 @@ router.post('/checkout', requirePermission('PROCESS_PAYMENTS'), async (_req, res
 
   try {
     const result = transaction();
-    console.log('[Sales] Checkout completed, scheduling order checkout notification for saleId=', result.saleId);
 
-    // ── Fire-and-forget order checkout notification (non-blocking) ──
-    setImmediate(async () => {
-      try {
-        const supabaseUrl = process.env.SUPABASE_URL;
-        const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-
-        let rawSettings: Record<string, string> = { app_currency: 'USD' };
-        if (db) {
-          const settingsRows = db.prepare(
-            "SELECT key, value FROM settings"
-          ).all() as { key: string; value: string }[];
-          rawSettings = Object.fromEntries(
-            settingsRows.map(r => [r.key, r.value])
+    // Send notifications after transaction
+    try {
+      const tableLabel = order.table_id ? `Table ${order.table_number || order.table_id}` : 'Counter';
+      setImmediate(async () => {
+        try {
+          const { loadRawSettings, notifyOrderCheckout } = require('../services/notification.service');
+          const rawSettings = loadRawSettings();
+          await notifyOrderCheckout(
+            order_id,
+            itemsForNotify,
+            result.saleTotal,
+            payment_method,
+            tableLabel,
+            order.waiter_name,
+            undefined,
+            'USD',
+            rawSettings
           );
-        } else if (supabaseUrl && supabaseKey) {
-          const supabase = createClient(supabaseUrl, supabaseKey, { auth: { persistSession: false } });
-          const { data } = await supabase.from('settings').select('key, value').eq('key', 'app_currency');
-          if (data && data.length > 0) rawSettings = { app_currency: (data[0] as any).value };
+        } catch (err) {
+          console.error('[Sales] Notification failed:', err);
         }
-
-        await notifyOrderCheckout(
-          order_id,
-          itemsForNotify.map((it: any) => ({
-            name: it.name,
-            qty: it.qty,
-            unitPrice: it.price,
-            total: it.totalPrice,
-          })),
-          result.saleTotal,
-          payment_method,
-          order.table_id
-            ? `Table ${db ? (db.prepare('SELECT table_number FROM restaurant_tables WHERE id = ?').get(order.table_id) as any)?.table_number : order.table_id}`
-            : 'Counter',
-          order.waiter_id
-            ? (db ? (db.prepare('SELECT full_name FROM users WHERE id = ?').get(order.waiter_id) as any)?.full_name : undefined)
-            : undefined,
-          (db ? (db.prepare('SELECT full_name FROM users WHERE id = ?').get(user_id) as any)?.full_name : undefined),
-          String(rawSettings.app_currency || 'USD'),
-          rawSettings,
-        );
-      } catch (notifyErr) {
-        console.error('[Notification] order checkout email failed:', notifyErr);
-      }
-    });
+      });
+    } catch (err) {
+      console.warn('[Sales] Async notification setup failed:', err);
+    }
 
     res.json(result);
   } catch (error: any) {
-    res.status(400).json({ error: error.message });
-  }
-});
-
-// Generate receipt data
-router.get('/receipt/:saleId', async (req, res) => {
-  const { saleId } = req.params;
-
-  try {
-    if (!db) {
-      // Cloud fallback
-      if (!env.SUPABASE_URL || !env.SUPABASE_SERVICE_ROLE_KEY) {
-        return res.status(500).json({ error: 'Supabase not configured' });
-      }
-      const supabase = createClient(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false } });
-      const { data, error } = await supabase
-        .from('sales')
-        .select('*, order:orders(table_id), waiter:users(full_name), table:restaurant_tables(table_number)')
-        .eq('id', saleId)
-        .single();
-
-      if (error || !data) {
-        return res.status(404).json({ error: 'Sale not found' });
-      }
-
-      const receipt = {
-        business: {
-          name: 'GREAT OLIVE',
-          address: '123 Restaurant Street, City, State 12345',
-          phone: '(555) 123-4567'
-        },
-        invoice: {
-          number: data.invoice_number,
-          date: new Date(data.created_at).toLocaleString(),
-          table: data.table?.table_number || 'Counter',
-          waiter: data.waiter?.full_name || 'N/A',
-          cashier: 'Cashier'
-        },
-        items: data.items || [],
-        totals: {
-          subtotal: data.subtotal,
-          discount: data.discount,
-          tax: data.tax,
-          total: data.total_amount
-        },
-        payment: {
-          method: data.payment_method,
-          amount: data.total_amount
-        },
-        footer: 'Thank you for dining with us!\nVisit again soon.'
-      };
-
-      return res.json(receipt);
-    }
-
-    const sale = db.prepare(`
-      SELECT
-        s.*,
-        u.full_name as cashier_name,
-        o.table_id,
-        t.table_number,
-        ow.full_name as waiter_name
-      FROM sales s
-      JOIN users u ON s.user_id = u.id
-      LEFT JOIN orders o ON s.order_id = o.id
-      LEFT JOIN restaurant_tables t ON o.table_id = t.id
-      LEFT JOIN users ow ON o.waiter_id = ow.id
-      WHERE s.id = ?
-    `).get(saleId) as any;
-
-    if (!sale) {
-      return res.status(404).json({ error: 'Sale not found' });
-    }
-
-    const items = db.prepare(`
-      SELECT si.*, p.name as product_name
-      FROM sale_items si
-      JOIN products p ON si.product_id = p.id
-      WHERE si.sale_id = ?
-    `).all(saleId);
-
-    const receipt = {
-      business: {
-        name: 'GREAT OLIVE',
-        address: '123 Restaurant Street, City, State 12345',
-        phone: '(555) 123-4567'
-      },
-      invoice: {
-        number: sale.invoice_number,
-        date: new Date(sale.created_at).toLocaleString(),
-        table: sale.table_number || 'Counter',
-        waiter: sale.waiter_name || 'N/A',
-        cashier: sale.cashier_name
-      },
-      items: items.map((item: any) => ({
-        name: item.product_name,
-        quantity: item.quantity,
-        unitPrice: item.unit_price,
-        totalPrice: item.total_price
-      })),
-      totals: {
-        subtotal: sale.subtotal,
-        discount: sale.discount,
-        tax: sale.tax,
-        total: sale.total_amount
-      },
-      payment: {
-        method: sale.payment_method,
-        amount: sale.total_amount
-      },
-      footer: 'Thank you for dining with us!\nVisit again soon.'
-    };
-
-    res.json(receipt);
-  } catch (error) {
-    console.error('Receipt generation error:', error);
-    res.status(500).json({ error: 'Failed to generate receipt' });
+    console.error('[Sales] Transaction error:', error);
+    res.status(500).json({ error: error.message || 'Checkout failed' });
   }
 });
 

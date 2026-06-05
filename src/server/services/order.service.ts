@@ -255,11 +255,42 @@ export class OrderService {
           throw error;
         }
 
+        const rawItems = typeof data.items === 'string' ? JSON.parse(data.items) : (data.items || []);
+        
+        // Enrich items with prices and names if they are missing (common for QR orders)
+        // We do a bulk fetch of products to be efficient
+        const productIds = rawItems.map((it: any) => it.product_id || it.productId).filter(Boolean);
+        let productsMap = new Map();
+        
+        if (productIds.length > 0) {
+          const { data: products } = await supabase
+            .from('products')
+            .select('id, name, selling_price')
+            .in('id', productIds);
+          
+          if (products) {
+            products.forEach((p: any) => productsMap.set(p.id, p));
+          }
+        }
+
+        const enrichedItems = rawItems.map((it: any) => {
+          const pid = it.product_id || it.productId;
+          const product = productsMap.get(pid);
+          return {
+            id: it.id,
+            productId: pid,
+            name: it.name || product?.name || 'Unknown Product',
+            price: Number(it.price || it.unit_price || product?.selling_price || 0),
+            quantity: Number(it.quantity) || 0,
+            notes: it.notes ?? undefined
+          };
+        });
+
         return {
           ...data,
           table_number: data.table?.table_number,
           waiter_name: data.waiter?.full_name,
-          items: typeof data.items === 'string' ? JSON.parse(data.items) : (data.items || [])
+          items: enrichedItems
         };
       } catch (err: any) {
         console.error('[OrderService] Supabase getById failed:', err?.message || err);
