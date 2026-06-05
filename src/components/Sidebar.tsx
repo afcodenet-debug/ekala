@@ -6,7 +6,7 @@ import { APP_NAME } from '../lib/app-config';
 import { useOrderStore } from '../stores/useOrderStore';
 import { useNotificationStore } from '../stores/useNotificationStore';
 import { useUIStore } from '../stores/useUIStore';
-import { Bell, X, Menu, ChevronLeft } from 'lucide-react';
+import { Bell, X, ChevronLeft } from 'lucide-react';
 import {
   LayoutDashboard,
   UtensilsCrossed,
