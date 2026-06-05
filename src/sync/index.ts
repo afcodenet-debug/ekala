@@ -2,9 +2,11 @@
 // Point d'entrée du module Sync Engine
 
 import { ProductSyncService } from './product-sync.service';
+import { OrderSyncService } from './order-sync.service';
 import type Database from 'better-sqlite3';
 
 let productSyncService: ProductSyncService | null = null;
+let orderSyncService: OrderSyncService | null = null;
 
 function ensureOutboxTable(db: Database.Database) {
   db.exec(`
@@ -46,6 +48,14 @@ export function getProductSyncService(): ProductSyncService {
   return productSyncService;
 }
 
+export function getOrderSyncService(): OrderSyncService {
+  if (!orderSyncService) {
+    const core = getProductSyncService();
+    orderSyncService = new OrderSyncService(core);
+  }
+  return orderSyncService;
+}
+
 // Helper pour lancer la sync périodiquement (à appeler depuis le main process)
 export function startPeriodicSync(businessId: string, intervalMs = 30000) {
   const service = getProductSyncService();
@@ -65,3 +75,4 @@ export function startPeriodicSync(businessId: string, intervalMs = 30000) {
 }
 
 export { SyncOrchestrator } from './sync-orchestrator';
+export { withOutboxTransaction } from './with-outbox-transaction';

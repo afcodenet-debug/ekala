@@ -1,8 +1,10 @@
 import db from '../db/database';
 import { notifyOrderCheckout, loadRawSettings } from '../services/notification.service';
 import { createClient } from '@supabase/supabase-js';
+import { getOrderSyncService, getProductSyncService, withOutboxTransaction } from '../../sync';
 
 export interface OrderItem {
+  id?: number;
   productId: number;
   name: string;
   price: number;
@@ -14,7 +16,7 @@ export interface OrderData {
   id?: number;
   table_id: number | null;
   waiter_id: number;
-   status: 'pending' | 'confirmed' | 'preparing' | 'ready' | 'served' | 'paid' | 'cancelled' | 'rejected';
+  status: 'pending' | 'confirmed' | 'preparing' | 'ready' | 'served' | 'paid' | 'cancelled' | 'rejected';
   items: OrderItem[];
   total: number;
   discount?: number;
@@ -22,6 +24,7 @@ export interface OrderData {
   customer_name?: string;
   customer_phone?: string;
   customer_id?: number | null;
+  remote_id?: number;
   created_at?: string;
   updated_at?: string;
 }
@@ -29,6 +32,18 @@ export interface OrderData {
 export class OrderService {
   private static getItemsForOrder(orderId: number, fallbackJson?: string, isRemote: boolean = false): OrderItem[] {
     try {
+      // Cloud mode guard: if db is null, we can only rely on fallbackJson (JSON snapshot in orders.items)
+      if (!db) {
+        if (fallbackJson) {
+          try {
+            return JSON.parse(fallbackJson || '[]') as OrderItem[];
+          } catch {
+            return [];
+          }
+        }
+        return [];
+      }
+
       // For remote QR orders (pulled from Supabase), the pulled JSON snapshot is the source of truth.
       // The public menu only sends {product_id, quantity, name} — we enrich with current local price.
       if (isRemote && fallbackJson) {
@@ -37,6 +52,7 @@ export class OrderService {
           const prod = db.prepare('SELECT selling_price FROM products WHERE id = ?').get(it.product_id || it.productId) as any;
           const price = Number(prod?.selling_price ?? it.price ?? it.unit_price ?? 0);
           return {
+            id: it.id,
             productId: it.product_id || it.productId,
             name: it.name || '',
             price,
@@ -48,6 +64,7 @@ export class OrderService {
 
       const items = db.prepare(`
         SELECT
+          oi.id,
           oi.product_id AS productId,
           p.name,
           oi.unit_price AS price,
@@ -60,6 +77,7 @@ export class OrderService {
 
       if (items.length > 0) {
         return items.map(item => ({
+          id: item.id,
           productId: item.productId,
           name: item.name || '',
           price: item.price,
@@ -69,7 +87,11 @@ export class OrderService {
       }
 
       if (fallbackJson) {
-        return JSON.parse(fallbackJson || '[]') as OrderItem[];
+        try {
+          return JSON.parse(fallbackJson || '[]') as OrderItem[];
+        } catch {
+          return [];
+        }
       }
 
       const order = db.prepare('SELECT items FROM orders WHERE id = ?').get(orderId) as any;
@@ -81,6 +103,7 @@ export class OrderService {
   }
 
   private static insertOrderItems(orderId: number, items: OrderItem[]): void {
+    if (!db) return;
     const itemStmt = db.prepare(`
       INSERT INTO order_items (
         order_id, product_id, quantity, unit_price, total_price, notes
@@ -102,6 +125,18 @@ export class OrderService {
   }
 
   private static replaceOrderItems(orderId: number, items: OrderItem[]): void {
+    if (!db) return;
+    // Queue deletions for sync
+    try {
+      const oldItems = db.prepare('SELECT id FROM order_items WHERE order_id = ?').all(orderId) as { id: number }[];
+      const sync = getProductSyncService();
+      for (const item of oldItems) {
+        sync.queueChangeInsideTransaction('order_item', 'delete', { id: item.id });
+      }
+    } catch (e) {
+      console.warn('[OrderService] Failed to queue item deletions for sync:', e);
+    }
+
     db.prepare('DELETE FROM order_items WHERE order_id = ?').run(orderId);
     this.insertOrderItems(orderId, items);
   }
@@ -116,6 +151,44 @@ export class OrderService {
     status?: string;
   } = {}): Promise<OrderData[]> {
     const { waiter_id, role, table_id, status } = params;
+
+    // Cloud mode guard: db might be null (SQLite disabled on Render)
+    if (!db) {
+      console.log('[OrderService] SQLite disabled (db is null). Falling back to Supabase for getAll');
+      try {
+        const { getSupabaseClient } = require('../database/supabase.client');
+        const supabase = getSupabaseClient();
+
+        let query = supabase
+          .from('orders')
+          .select('*, table:restaurant_tables(table_number), waiter:users(full_name, role)');
+
+        if (role === 'waiter' && waiter_id) {
+          query = query.eq('waiter_id', waiter_id);
+        }
+        if (table_id) {
+          query = query.eq('table_id', table_id);
+        }
+        if (status) {
+          query = query.eq('status', status);
+        }
+
+        const { data, error } = await query.order('created_at', { ascending: false });
+
+        if (error) throw error;
+
+        return (data || []).map((order: any) => ({
+          ...order,
+          table_number: order.table?.table_number,
+          waiter_name: order.waiter?.full_name,
+          waiter_role: order.waiter?.role,
+          items: typeof order.items === 'string' ? JSON.parse(order.items) : (order.items || [])
+        }));
+      } catch (err: any) {
+        console.error('[OrderService] Supabase getAll failed:', err?.message || err);
+        throw new Error('Failed to fetch orders via Supabase');
+      }
+    }
 
     let query = `
       SELECT
@@ -165,6 +238,36 @@ export class OrderService {
    * Get order by ID
    */
   static async getById(id: number): Promise<OrderData | null> {
+    // Cloud mode guard: db might be null (SQLite disabled on Render)
+    if (!db) {
+      console.log(`[OrderService] SQLite disabled (db is null). Falling back to Supabase for getById (id=${id})`);
+      try {
+        const { getSupabaseClient } = require('../database/supabase.client');
+        const supabase = getSupabaseClient();
+
+        const { data, error } = await supabase
+          .from('orders')
+          .select('*, table:restaurant_tables(table_number), waiter:users(full_name)')
+          .eq('id', id)
+          .single();
+
+        if (error) {
+          if (error.code === 'PGRST116') return null; // Not found
+          throw error;
+        }
+
+        return {
+          ...data,
+          table_number: data.table?.table_number,
+          waiter_name: data.waiter?.full_name,
+          items: typeof data.items === 'string' ? JSON.parse(data.items) : (data.items || [])
+        };
+      } catch (err: any) {
+        console.error('[OrderService] Supabase getById failed:', err?.message || err);
+        throw new Error('Failed to fetch order via Supabase');
+      }
+    }
+
     try {
       const order = db.prepare(`
         SELECT
@@ -194,13 +297,18 @@ export class OrderService {
    * Create new order with item merging logic
    */
   static async create(orderData: Omit<OrderData, 'id' | 'created_at' | 'updated_at'>): Promise<OrderData> {
-    const transaction = db.transaction(() => {
+    const businessId = process.env.SYNC_BUSINESS_ID || 'default-business';
+
+    // Cloud mode guard: db might be null (SQLite disabled on Render)
+    if (!db) {
+      console.log('[OrderService] SQLite disabled (db is null). Falling back to Supabase for create');
       try {
-        const { table_id, waiter_id, items, status } = orderData;
+        const { getSupabaseClient } = require('../database/supabase.client');
+        const supabase = getSupabaseClient();
+        const { table_id, waiter_id, items, status, customer_id } = orderData;
 
         const normalizedItems = items.map((item: any) => ({
           ...item,
-          // Support payload snake_case from frontend: product_id
           productId: item.productId ?? item.product_id,
           name: item.name || '',
           quantity: Number(item.quantity),
@@ -210,10 +318,51 @@ export class OrderService {
 
         const total = normalizedItems.reduce((sum, item) => sum + item.price * item.quantity, 0);
 
-        // If table order, check for existing active order
+        const { data, error } = await supabase
+          .from('orders')
+          .insert([{
+            table_id,
+            waiter_id,
+            customer_id,
+            items: normalizedItems,
+            status: status || 'pending',
+            total,
+            version: 1,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString()
+          }])
+          .select()
+          .single();
+
+        if (error) throw error;
+        return {
+          ...data,
+          items: normalizedItems
+        };
+      } catch (err: any) {
+        console.error('[OrderService] Supabase create failed:', err?.message || err);
+        throw new Error(err?.message || 'Failed to create order via Supabase');
+      }
+    }
+
+    return withOutboxTransaction(db, businessId, () => {
+      try {
+        const { table_id, waiter_id, items, status } = orderData;
+
+        const normalizedItems = items.map((item: any) => ({
+          ...item,
+          productId: item.productId ?? item.product_id,
+          name: item.name || '',
+          quantity: Number(item.quantity),
+          price: Number(item.price),
+          notes: item.notes ?? null
+        }));
+
+        const total = normalizedItems.reduce((sum, item) => sum + item.price * item.quantity, 0);
+
         if (table_id) {
           const existingOrder = db.prepare(`
-            SELECT id, items FROM orders
+            SELECT id, items, version FROM orders
             WHERE table_id = ? AND status NOT IN ('paid', 'cancelled')
             ORDER BY created_at DESC LIMIT 1
           `).get(table_id) as any;
@@ -255,17 +404,16 @@ export class OrderService {
               WHERE o.id = ?
             `).get(existingOrder.id) as any;
 
-            return {
-              ...updatedOrder,
-              items: mergedItems
-            };
+            const finalOrder = { ...updatedOrder, items: mergedItems };
+            getOrderSyncService().queueOrderChange('update', finalOrder, businessId);
+
+            return finalOrder;
           }
         }
 
-        console.log('[OrderService] Creating order WITHOUT customer_id column');
         const result = db.prepare(`
-          INSERT INTO orders (table_id, waiter_id, items, status, total, created_at, updated_at)
-          VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+          INSERT INTO orders (table_id, waiter_id, items, status, total, created_at, updated_at, version)
+          VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 1)
         `).run(
           table_id,
           waiter_id,
@@ -278,49 +426,39 @@ export class OrderService {
         this.insertOrderItems(orderId, normalizedItems);
 
         const newOrder = db.prepare(`
-          SELECT
-            o.*,
-            t.table_number,
-            u.full_name as waiter_name
+          SELECT o.*, t.table_number, u.full_name as waiter_name
           FROM orders o
           LEFT JOIN restaurant_tables t ON o.table_id = t.id
           LEFT JOIN users u ON o.waiter_id = u.id
           WHERE o.id = ?
         `).get(orderId) as any;
 
-        return {
+        const finalOrder = {
           ...newOrder,
           items: this.getItemsForOrder(orderId, JSON.stringify(normalizedItems))
         };
+        
+        getOrderSyncService().queueOrderChange('insert', finalOrder, businessId);
+
+        return finalOrder;
       } catch (error) {
         throw error;
       }
     });
-
-    try {
-      return transaction();
-    } catch (error: any) {
-      console.error('[OrderService] Error creating order:', error);
-      throw new Error(error.message || 'Failed to create order');
-    }
   }
 
   /**
    * Update order items
    */
   static async updateItems(id: number, items: OrderItem[]): Promise<OrderData> {
+    const businessId = process.env.SYNC_BUSINESS_ID || 'default-business';
+
     // Cloud mode guard: db might be null (SQLite disabled on Render)
     if (!db) {
       console.log('[OrderService] SQLite disabled (db is null). Falling back to Supabase for updateItems');
       try {
-        const env = require('../config/env').env;
-        if (!env.SUPABASE_URL || !env.SUPABASE_SERVICE_ROLE_KEY) {
-          throw new Error('Supabase not configured');
-        }
-
-        const supabase = createClient(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, {
-          auth: { persistSession: false }
-        });
+        const { getSupabaseClient } = require('../database/supabase.client');
+        const supabase = getSupabaseClient();
 
         const normalizedItems = items.map(item => ({
           ...item,
@@ -356,7 +494,7 @@ export class OrderService {
       }
     }
 
-    const transaction = db.transaction(() => {
+    return withOutboxTransaction(db, businessId, () => {
       try {
         const existingOrder = db.prepare('SELECT id FROM orders WHERE id = ?').get(id);
         if (!existingOrder) {
@@ -392,28 +530,80 @@ export class OrderService {
           WHERE o.id = ?
         `).get(id) as any;
 
-        return {
+        const result = {
           ...updatedOrder,
           items: normalizedItems
         };
+
+        getOrderSyncService().queueOrderChange('update', result, businessId);
+
+        return result;
       } catch (error) {
         throw error;
       }
     });
-
-    try {
-      return transaction();
-    } catch (error: any) {
-      console.error('[OrderService] Error updating order items:', error);
-      throw new Error(error.message || 'Failed to update order items');
-    }
   }
 
   /**
    * Update order status
    */
   static async updateStatus(id: number, status: OrderData['status']): Promise<OrderData> {
-    const transaction = db.transaction(() => {
+    const businessId = process.env.SYNC_BUSINESS_ID || 'default-business';
+
+    // Cloud mode guard: db might be null (SQLite disabled on Render)
+    if (!db) {
+      console.log(`[OrderService] SQLite disabled (db is null). Falling back to Supabase for updateStatus (id=${id}, status=${status})`);
+      try {
+        const { getSupabaseClient } = require('../database/supabase.client');
+        const supabase = getSupabaseClient();
+
+        // 1. Update the order
+        const { data, error } = await supabase
+          .from('orders')
+          .update({ 
+            status, 
+            updated_at: new Date().toISOString() 
+          })
+          .eq('id', id)
+          .select()
+          .single();
+
+        if (error) throw error;
+        if (!data) throw new Error('Order not found');
+
+        // 2. Handle table status side-effects (matching local behavior)
+        if (status === 'paid' && data.table_id) {
+          await supabase
+            .from('restaurant_tables')
+            .update({ status: 'cleaning' })
+            .eq('id', data.table_id);
+        } else if (status === 'cancelled' && data.table_id) {
+          // Check if there are other active orders for this table
+          const { count } = await supabase
+            .from('orders')
+            .select('*', { count: 'exact', head: true })
+            .eq('table_id', data.table_id)
+            .not('status', 'in', '("paid","cancelled")');
+          
+          if (count === 0) {
+            await supabase
+              .from('restaurant_tables')
+              .update({ status: 'available' })
+              .eq('id', data.table_id);
+          }
+        }
+
+        return {
+          ...data,
+          items: typeof data.items === 'string' ? JSON.parse(data.items) : (data.items || [])
+        };
+      } catch (err: any) {
+        console.error('[OrderService] Supabase updateStatus failed:', err?.message || err);
+        throw new Error(err?.message || 'Failed to update order status via Supabase');
+      }
+    }
+
+    return withOutboxTransaction(db, businessId, () => {
       try {
         const wasPaid = (db.prepare('SELECT status FROM orders WHERE id = ?').get(id) as any)?.status === 'paid';
         
@@ -448,54 +638,13 @@ export class OrderService {
           WHERE o.id = ?
         `).get(id) as any;
 
-        // === Push status update back to Supabase for remote QR orders ===
-        // This allows the customer (on the public QR menu) to see the order evolution
-        // (pending → confirmed → preparing → ready → served, etc.)
-        // === Push status back to Supabase for remote QR orders ===
-        if (updatedOrder && updatedOrder.remote_id) {
-          const remoteId = updatedOrder.remote_id;
-          console.log(`[Sync] Attempting to push status "${status}" for local order #${id} (remote_id=${remoteId})`);
-
-          setImmediate(async () => {
-            try {
-              const supabaseUrl = process.env.SUPABASE_URL;
-              const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-
-              if (!supabaseUrl || !supabaseKey) {
-                console.error('[Sync] Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY — cannot push status');
-                return;
-              }
-
-              const supabase = createClient(supabaseUrl, supabaseKey, {
-                auth: { persistSession: false }
-              });
-
-              const { error, data } = await supabase
-                .from('orders')
-                .update({ 
-                  status, 
-                  updated_at: new Date().toISOString() 
-                })
-                .eq('id', remoteId)
-                .select();
-
-              if (error) {
-                console.error(`[Sync] FAILED to push status to Supabase for remote_id=${remoteId}:`, error.message);
-              } else {
-                console.log(`[Sync] ✓ SUCCESS — Pushed status "${status}" to Supabase for remote_id=${remoteId}`, data);
-              }
-            } catch (e: any) {
-              console.error(`[Sync] Exception while pushing status for remote_id=${remoteId}:`, e?.message || e);
-            }
-          });
-        } else {
-          console.log(`[Sync] Order #${id} has no remote_id — skipping Supabase push (local order only)`);
-        }
-
         const result = {
           ...updatedOrder,
           items: this.getItemsForOrder(id, updatedOrder.items)
         };
+
+        // Queue for sync
+        getOrderSyncService().queueOrderChange('update', result, businessId);
 
         if (!wasPaid && status === 'paid') {
           const saleExists = db.prepare('SELECT 1 FROM sales WHERE order_id = ? LIMIT 1').get(id);
@@ -537,13 +686,6 @@ export class OrderService {
         throw error;
       }
     });
-
-    try {
-      return transaction();
-    } catch (error: any) {
-      console.error('[OrderService] Error updating order status:', error);
-      throw new Error(error.message || 'Failed to update order status');
-    }
   }
 
   /**
@@ -578,7 +720,30 @@ export class OrderService {
    * Hard delete order + its items (used for rejecting pending QR orders)
    */
   static async deleteOrder(id: number): Promise<void> {
-    const transaction = db.transaction(() => {
+    const businessId = process.env.SYNC_BUSINESS_ID || 'default-business';
+
+    // Cloud mode guard: db might be null (SQLite disabled on Render)
+    if (!db) {
+      console.log(`[OrderService] SQLite disabled (db is null). Falling back to Supabase for deleteOrder (id=${id})`);
+      try {
+        const { getSupabaseClient } = require('../database/supabase.client');
+        const supabase = getSupabaseClient();
+
+        // Supabase has ON DELETE CASCADE on order_items, but let's be safe if needed
+        const { error } = await supabase
+          .from('orders')
+          .delete()
+          .eq('id', id);
+
+        if (error) throw error;
+        return;
+      } catch (err: any) {
+        console.error('[OrderService] Supabase deleteOrder failed:', err?.message || err);
+        throw new Error(err?.message || 'Failed to delete order via Supabase');
+      }
+    }
+
+    return withOutboxTransaction(db, businessId, () => {
       try {
         // delete items first (FK safety)
         db.prepare('DELETE FROM order_items WHERE order_id = ?').run(id);
@@ -586,16 +751,11 @@ export class OrderService {
         if (result.changes === 0) {
           throw new Error('Order not found');
         }
+
+        getOrderSyncService().queueOrderChange('delete', { id } as any, businessId);
       } catch (error) {
         throw error;
       }
     });
-
-    try {
-      transaction();
-    } catch (error: any) {
-      console.error('[OrderService] Error deleting order:', error);
-      throw new Error(error.message || 'Failed to delete order');
-    }
   }
 }
