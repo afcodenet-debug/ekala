@@ -282,7 +282,7 @@ const { colors, typography } = EnterpriseTokens;
           <ProductsGrid onProductClick={() => {}} />
         </div>
 
-        <div style={{ flexShrink: 0, width: '360px', minHeight: 0, overflow: 'hidden', position: 'relative' }}>
+        <div style={{ flexShrink: 0, width: '100%', maxWidth: '360px', minHeight: 0, overflow: 'hidden', position: 'relative' }}>
           <OrderSummary
             onCheckout={handleCheckout}
             onSaveOrder={handleSaveOrder}
