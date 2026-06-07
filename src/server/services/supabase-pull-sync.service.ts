@@ -120,8 +120,15 @@ function ensureRemoteSyncSchema() {
     if (!itemColNames.includes('remote_id'))        db.exec(`ALTER TABLE order_items ADD COLUMN remote_id INTEGER`);
     if (!itemColNames.includes('remote_order_id'))  db.exec(`ALTER TABLE order_items ADD COLUMN remote_order_id INTEGER`);
 
-    // Idempotency guard
+    // restaurant_tables
+    const tableCols = db.prepare("PRAGMA table_info(restaurant_tables)").all() as Array<{ name: string }>;
+    const tableColNames = tableCols.map(c => c.name);
+    if (!tableColNames.includes('remote_id'))   db.exec(`ALTER TABLE restaurant_tables ADD COLUMN remote_id INTEGER`);
+    if (!tableColNames.includes('business_id')) db.exec(`ALTER TABLE restaurant_tables ADD COLUMN business_id TEXT`);
+
+    // Idempotency guards
     db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_remote_id ON orders(remote_id) WHERE remote_id IS NOT NULL`);
+    db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_tables_remote_id ON restaurant_tables(remote_id) WHERE remote_id IS NOT NULL`);
   } catch (err: any) {
     console.warn('[PullSync] Schema ensure warning (non-fatal):', err.message);
   }

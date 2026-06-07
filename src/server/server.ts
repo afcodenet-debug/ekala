@@ -32,13 +32,24 @@ import customersRoutes from './routes/customers';
 import notificationsRoutes from './routes/notifications';
 import notificationPreferencesRoutes from './routes/notification_preferences';
 import scheduledReportsLogRoutes from './routes/scheduled_reports_log';
-import db from './db/database';
+import db, { initializeDatabase } from './db/database';
 import { startSupabasePullWorker, getPullSyncStatus } from './services/supabase-pull-sync.service';
 import { startScheduledReports } from './services/scheduled-reports.service';
 import { initializeProductSync, getOrderSyncService, SyncOrchestrator } from '../sync';
 import { env } from './config/env';
 
 const app = express();
+
+// Initialize the local database schema (Forward migrations + safety net columns + seeding)
+// This is critical to ensure columns like remote_id exist before sync workers start.
+if (db) {
+  try {
+    initializeDatabase();
+    console.log('[RENDER BOOT] Database schema initialized/verified.');
+  } catch (err: any) {
+    console.error('[RENDER BOOT] CRITICAL: Database initialization failed:', err?.message || err);
+  }
+}
 
 const PORT = process.env.PORT || 3001;
 
