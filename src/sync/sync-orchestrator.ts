@@ -242,7 +242,7 @@ export class SyncOrchestrator {
             // Check for table_number conflict before insert
             const conflict = this.db.prepare('SELECT id FROM restaurant_tables WHERE table_number = ?').get(fields.table_number) as { id: number } | undefined;
             if (conflict) {
-              // Update existing local record with remote_id
+              // Update existing local record with remote_id and other fields
               this.db.prepare(`UPDATE restaurant_tables SET ${setClauses} WHERE id = ?`).run(...params, conflict.id);
             } else {
               this.db.prepare(`INSERT INTO restaurant_tables (${cols.map(c => `"${c}"`).join(', ')}) VALUES (${cols.map(() => '?').join(', ')})`).run(...params);

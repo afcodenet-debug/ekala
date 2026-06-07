@@ -194,7 +194,7 @@ export class ProductSyncService {
             const cols = ['order_id', 'product_id', 'quantity', 'unit_price', 'total_price', 'notes', 'created_at'];
             cols.forEach(c => { if (payload[c] !== undefined) safeUpdate[c] = payload[c]; });
           }
-          else if (entity === 'restaurant_table') {
+else if (entity === 'restaurant_table') {
             const cols = ['table_number', 'capacity', 'status', 'assigned_waiter_id', 'qr_token', 'created_at'];
             cols.forEach(c => { if (payload[c] !== undefined) safeUpdate[c] = payload[c]; });
             
@@ -209,10 +209,12 @@ export class ProductSyncService {
                 .select('id, remote_id')
                 .single();
 
-              if (error) throw error;
-
-              // Save remote_id locally
-              if (data?.id) {
+              if (error) {
+                // If it's a duplicate key error, that's fine - the table exists remotely
+                if (error.code !== '23505') throw error;
+                console.log(`[Sync] Table "${safeUpdate.table_number}" already exists in Supabase, skipping push`);
+              } else if (data?.id) {
+                // Save remote_id locally
                 this.db.prepare(`UPDATE ${table} SET remote_id = ? WHERE id = ?`).run(data.id, recordId);
               }
               continue; // Skip the generic upsert below

@@ -76,7 +76,7 @@ export const useTableStore = create<TableStore>((set, get) => ({
     } catch (err: any) {
       console.error('Failed to create table', err);
       set({ error: err.message });
-      return null;
+      throw err;
     }
   },
 

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useNotificationStore, AppNotification } from '../stores/useNotificationStore';
 import { useSettingsStore } from '../stores/useSettingsStore';
@@ -10,46 +10,45 @@ import { X } from 'lucide-react';
  * Visible from any page. Clickable to navigate to linked page.
  */
 export const GlobalNotificationToast: React.FC = () => {
-  const { notifications, markAsRead } = useNotificationStore();
+  const store = useNotificationStore();
+  const { notifications, markAsRead } = store;
   const { language } = useSettingsStore();
   const navigate = useNavigate();
 
   const [visibleToast, setVisibleToast] = useState<AppNotification | null>(null);
-  const [dismissedIds] = useState<Set<string>>(new Set());
+  const [dismissedIds, setDismissedIds] = useState<Set<string>>(new Set());
+  const lastShownIdRef = useRef<string | null>(null);
 
   useEffect(() => {
-    // Find the most recent high-priority unread notification that we haven't shown yet
     const candidate = notifications.find(
       (n) => !n.readAt && !dismissedIds.has(n.id) && ['critical', 'high'].includes(n.priority)
     );
 
-    if (candidate && !visibleToast) {
+    if (candidate && candidate.id !== lastShownIdRef.current) {
       setVisibleToast(candidate);
+      lastShownIdRef.current = candidate.id;
     }
-  }, [notifications, visibleToast]);
+  }, [notifications, dismissedIds]);
 
   const dismiss = (id?: string) => {
     const toastId = id || visibleToast?.id;
     if (toastId) {
-      dismissedIds.add(toastId);
+      setDismissedIds(prev => {
+        prev.add(toastId);
+        return prev;
+      });
       markAsRead(toastId);
     }
     setVisibleToast(null);
-
-    // Auto-show next one after a short delay if multiple
-    setTimeout(() => {
-      const next = notifications.find(
-        (n) => !n.readAt && !dismissedIds.has(n.id)
-      );
-      if (next) setVisibleToast(next);
-    }, 800);
+    if (toastId) {
+      lastShownIdRef.current = null;
+    }
   };
 
   const handleClick = () => {
     if (visibleToast?.link) {
       navigate(visibleToast.link);
     } else {
-      // Default to orders page for most notifications
       navigate('/orders');
     }
     dismiss();
