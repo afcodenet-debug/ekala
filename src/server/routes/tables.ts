@@ -205,18 +205,19 @@ router.post('/', requireAdminOrManager, async (req, res) => {
   const { table_number, capacity, status, assigned_waiter_id } = req.body;
 
   try {
+    // CRITICAL: table_number must be a string to avoid NaN in local/remote DBs
     const tableData = {
-      table_number: Number(table_number),
+      table_number: String(table_number),
       capacity: Number(capacity) || 4,
       status: (status as any) || 'available',
       assigned_waiter_id: assigned_waiter_id ? Number(assigned_waiter_id) : null
     };
 
-    const newTable = await TableService.create(tableData);
+    const newTable = await TableService.create(tableData as any);
     res.status(201).json(newTable);
   } catch (error: any) {
     console.error('[Tables] POST error:', error);
-    res.status(400).json({ error: error.message });
+    res.status(400).json({ error: error.message || 'Failed to create table' });
   }
 });
 

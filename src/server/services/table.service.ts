@@ -5,7 +5,7 @@ export type TableStatus = 'available' | 'active' | 'reserved' | 'cleaning' | 'ou
 
 export interface Table {
   id: number;
-  table_number: number;
+  table_number: string;
   capacity: number;
   status: TableStatus;
   assigned_waiter_id: number | null;
@@ -30,7 +30,7 @@ export class TableService {
           query = query.eq('assigned_waiter_id', params.waiter_id);
         }
 
-        const { data, error } = await query.order('table_number');
+        const { data, error } = await query.order('table_number', { ascending: true });
         if (error) throw error;
 
         return (data || []).map((t: any) => ({
@@ -65,9 +65,9 @@ export class TableService {
         query += ' WHERE ' + conditions.join(' AND ');
       }
 
-      query += ' ORDER BY t.table_number';
+      query += ' ORDER BY CAST(t.table_number AS UNSIGNED), t.table_number';
 
-      const tables = db.prepare(query).all(...values) as Table[];
+      const tables = db.prepare(query).all(...values) as any[];
       return tables;
     } catch (error) {
       console.error('[TableService] Error fetching tables:', error);
