@@ -177,7 +177,17 @@ export class OrderService {
     const { waiter_id, role, table_id, status } = params;
 
     // Cloud mode guard: db might be null (SQLite disabled on Render)
+    // CRITICAL FIX: If Supabase pull sync is enabled, we MUST use SQLite as source of truth
+    // to avoid double-counting (Supabase may have stale QR orders that haven't been pulled yet)
+    const pullEnabled = process.env.ENABLE_SUPABASE_PULL === 'true' || process.env.ENABLE_SUPABASE_PULL === '1';
+    
     if (!db) {
+      // If pull sync is enabled but db is null, this is a misconfiguration
+      if (pullEnabled) {
+        console.error('[OrderService] CRITICAL: ENABLE_SUPABASE_PULL=true but db is null. Cannot serve orders.');
+        throw new Error('Database misconfiguration: Pull sync requires SQLite');
+      }
+      
       console.log('[OrderService] SQLite disabled (db is null). Falling back to Supabase for getAll');
       try {
         const { getSupabaseClient } = require('../database/supabase.client');
@@ -212,6 +222,12 @@ export class OrderService {
         console.error('[OrderService] Supabase getAll failed:', err?.message || err);
         throw new Error('Failed to fetch orders via Supabase');
       }
+    }
+    
+    // CRITICAL: If pull sync is enabled, ensure we're using SQLite (source of truth)
+    // This prevents the frontend from seeing stale/duplicate orders from Supabase
+    if (pullEnabled && db) {
+      console.log('[OrderService] Using SQLite as source of truth (pull sync enabled)');
     }
 
     let query = `

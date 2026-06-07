@@ -222,18 +222,71 @@ export const useOrderStore = create<OrderStore>((set, get) => ({
 // Robust ID-based tracking to avoid duplicate notifications during polling/sync
 import { useNotificationStore } from './useNotificationStore';
 
-const notifiedOrderIds = new Set<number>();
+// Use sessionStorage to persist notified IDs across page refreshes
+const NOTIFIED_ORDERS_KEY = 'ekala_notified_order_ids';
+
+function loadNotifiedOrderIds(): Set<number> {
+  try {
+    const saved = sessionStorage.getItem(NOTIFIED_ORDERS_KEY);
+    return saved ? new Set(JSON.parse(saved) as number[]) : new Set();
+  } catch {
+    return new Set();
+  }
+}
+
+function saveNotifiedOrderIds(ids: Set<number>) {
+  try {
+    sessionStorage.setItem(NOTIFIED_ORDERS_KEY, JSON.stringify(Array.from(ids)));
+  } catch {
+    // Silent fail if sessionStorage is unavailable
+  }
+}
+
+const notifiedOrderIds = loadNotifiedOrderIds();
+
+// Also track recently notified orders to prevent rapid re-notification
+// during polling (orders that were just notified in the last 30 seconds)
+const recentlyNotified = new Map<number, number>();
+
+function shouldNotify(orderId: number): boolean {
+  // Check if we've notified about this order in the current session
+  if (notifiedOrderIds.has(orderId)) {
+    return false;
+  }
+  
+  // Check if we've notified about this order recently (within last 30 seconds)
+  const lastNotified = recentlyNotified.get(orderId);
+  if (lastNotified && Date.now() - lastNotified < 30000) {
+    return false;
+  }
+  
+  return true;
+}
+
+function markAsNotified(orderId: number) {
+  notifiedOrderIds.add(orderId);
+  recentlyNotified.set(orderId, Date.now());
+  saveNotifiedOrderIds(notifiedOrderIds);
+  
+  // Cleanup recent notifications older than 30 seconds
+  const now = Date.now();
+  for (const [id, timestamp] of recentlyNotified.entries()) {
+    if (now - timestamp > 30000) {
+      recentlyNotified.delete(id);
+    }
+  }
+}
 
 useOrderStore.subscribe((state) => {
   const pendingOrders = state.allOrders.filter(o => o.status === 'pending');
   
   // Find truly new pending orders that we haven't notified about yet
-  const newPendingOrders = pendingOrders.filter(o => !notifiedOrderIds.has(o.id));
+  const newPendingOrders = pendingOrders.filter(o => shouldNotify(o.id));
   
   if (newPendingOrders.length > 0) {
     newPendingOrders.forEach(order => {
       // Mark as notified immediately to prevent re-triggering
-      notifiedOrderIds.add(order.id);
+      markAsNotified(order.id);
       
       useNotificationStore.getState().addNotification({
         type: 'newQrOrder' as any,
@@ -247,16 +300,18 @@ useOrderStore.subscribe((state) => {
           tableNumber: order.table_number
         },
       });
+      
+      console.log('[OrderStore] Notification sent for order:', order.id, 'Table:', order.table_number || order.table_id);
     });
   }
 
   // Cleanup: remove IDs from the set if they are no longer in 'pending' status
   // so that if they were to somehow become pending again (rare), they could re-notify
-  // Or just keep the set manageable.
   const allOrderIds = new Set(state.allOrders.map(o => o.id));
   notifiedOrderIds.forEach(id => {
     if (!allOrderIds.has(id)) {
       notifiedOrderIds.delete(id);
     }
   });
+  saveNotifiedOrderIds(notifiedOrderIds);
 });

@@ -23,25 +23,32 @@ services:
       - key: NODE_ENV
         value: production
       - key: CORS_ORIGINS
-        value: https://great-olive.vercel.app
+        value: https://ekala.vercel.app
       - key: ENABLE_SUPABASE_SYNC
         value: "false"
-      # === Supabase as source of truth for QR menu / products (set these + flip the flag) ===
-      # - key: SUPABASE_URL
-      #   value: https://your-project.supabase.co
-      # - key: SUPABASE_SERVICE_ROLE_KEY
-      #   value: eyJ... (service_role key, not anon)
-      # - key: USE_SUPABASE_PRODUCTS
-      #   value: "true"
-      # - key: USE_SUPABASE_CATEGORIES
-      #   value: "false"   # migrate later
-      # - key: USE_SUPABASE_TABLES
-      #   value: "false"
-      # - key: USE_SUPABASE_ORDERS
-      #   value: "false"
+      # === Supabase Pull Sync Configuration (CRITICAL for QR orders) ===
+      - key: ENABLE_SUPABASE_PULL
+        value: "true"
+      - key: SUPABASE_URL
+        value: https://pwxlnshtotpagsyqegiz.supabase.co
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        value: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InB3eGxuc2h0b3RwYWdzeXFlZ2l6Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3ODY4NzcwNywiZXhwIjoyMDk0MjYzNzA3fQ.PqQv8AcjNKiMHZHnCDTZMQEhoXAcSs8faE2IaI2SLjI
+      - key: SUPABASE_PULL_INTERVAL_MS
+        value: "8000"
+      - key: SUPABASE_PULL_LOOKBACK_MIN
+        value: "120"
+      # === Supabase as source of truth for QR menu / products ===
+      - key: USE_SUPABASE_PRODUCTS
+        value: "false"
+      - key: USE_SUPABASE_CATEGORIES
+        value: "false"
+      - key: USE_SUPABASE_TABLES
+        value: "false"
+      - key: USE_SUPABASE_ORDERS
+        value: "false"
       # Persistent disk still needed for uploads + any legacy tables not yet migrated
-      # - key: DATA_DIR
-      #   value: /opt/render/project/src/data
+      - key: DATA_DIR
+        value: /opt/render/project/src/data
 
     # Persistent disk for SQLite + uploads (CRITICAL for SQLite)
     disk:

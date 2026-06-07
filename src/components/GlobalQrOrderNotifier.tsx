@@ -13,13 +13,16 @@ import { useSettingsStore } from '../stores/useSettingsStore';
  * - Works from ANY page (Dashboard, POS, Tables, Reports, etc.)
  */
 const GlobalQrOrderNotifier = () => {
-  const { pendingQrCount } = useOrderStore();
+  const { pendingQrCount, allOrders } = useOrderStore();
   const { language } = useSettingsStore();
   const navigate = useNavigate();
 
-  const [toast, setToast] = useState<{ newCount: number; total: number } | null>(null);
+  const [toast, setToast] = useState<{ newCount: number; total: number; orderId?: number } | null>(null);
   const prevCountRef = useRef(pendingQrCount);
   const dismissTimeout = useRef<NodeJS.Timeout | null>(null);
+  
+  // Track which orders we've already shown toasts for (using both id and remote_id)
+  const notifiedOrderIdsRef = useRef<Set<string>>(new Set());
 
   // Subtle "ding" using Web Audio (no asset needed)
   const playDing = () => {
@@ -70,20 +73,41 @@ const GlobalQrOrderNotifier = () => {
     const current = pendingQrCount;
 
     if (current > prev) {
-      const newOnes = current - prev;
+      // Get the actual new pending orders to avoid showing toast for old orders
+      const pendingOrders = allOrders.filter(o => o.status === 'pending');
+      const newPendingOrders = pendingOrders.slice(0, current);
+      
+      // Filter out orders we've already shown toasts for
+      const trulyNewOrders = newPendingOrders.filter(order => {
+        const orderKey = order.remote_id ? `remote_${order.remote_id}` : `local_${order.id}`;
+        return !notifiedOrderIdsRef.current.has(orderKey);
+      });
+      
+      if (trulyNewOrders.length > 0) {
+        // Mark these orders as notified
+        trulyNewOrders.forEach(order => {
+          const orderKey = order.remote_id ? `remote_${order.remote_id}` : `local_${order.id}`;
+          notifiedOrderIdsRef.current.add(orderKey);
+        });
+        
+        const newOnes = trulyNewOrders.length;
+        const latestOrder = trulyNewOrders[0];
 
-      playDing();
-      setToast({ newCount: newOnes, total: current });
+        playDing();
+        setToast({ newCount: newOnes, total: current, orderId: latestOrder.id });
 
-      // Auto-dismiss after 7s
-      if (dismissTimeout.current) clearTimeout(dismissTimeout.current);
-      dismissTimeout.current = setTimeout(() => {
-        setToast(null);
-      }, 7000);
+        // Auto-dismiss after 7s
+        if (dismissTimeout.current) clearTimeout(dismissTimeout.current);
+        dismissTimeout.current = setTimeout(() => {
+          setToast(null);
+        }, 7000);
+        
+        console.log(`[GlobalQrOrderNotifier] Showing toast for ${newOnes} new order(s)`);
+      }
     }
 
     prevCountRef.current = current;
-  }, [pendingQrCount]);
+  }, [pendingQrCount, allOrders]);
 
   // Cleanup on unmount
   useEffect(() => {

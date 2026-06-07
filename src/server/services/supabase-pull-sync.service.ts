@@ -192,14 +192,10 @@ async function pullOrders(supabase: SupabaseClient, sinceIso: string) {
     console.log(`[PullSync] status=${o.status || 'pending'}`);
 
     try {
-      // Professional light-sync strategy for remote QR orders:
-      // - We respect local business rules (the "active order per table" trigger).
-      // - For orders that already exist locally by remote_id, we do a *targeted UPDATE*
-      //   on status/items/total/updated_at. This bypasses the BEFORE INSERT trigger.
-      // - Only brand-new remote orders go through full INSERT (which may be rejected
-      //   by the trigger if the table already has an active order — this is intentional).
+      // CRITICAL: Check if this remote order already exists locally
+      // We use remote_id as the primary key for Supabase → SQLite sync
       const existing = db.prepare(`
-        SELECT id, status, total, items, updated_at 
+        SELECT id, status, total, items, updated_at, source 
         FROM orders 
         WHERE remote_id = ? 
         LIMIT 1
