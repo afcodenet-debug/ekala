@@ -197,7 +197,6 @@ export class SyncOrchestrator {
     const { data, error } = await supabase
       .from('restaurant_tables')
       .select('*')
-      // .eq('business_id', this.businessId) // Disabled until schema confirmed
       .gt('updated_at', since)
       .order('updated_at', { ascending: true });
 
@@ -211,6 +210,10 @@ export class SyncOrchestrator {
     let applied = 0;
     const transaction = this.db.transaction((tables: any[]) => {
       for (const remote of tables) {
+        // Business filter (manual if column wasn't in SQL query)
+        if (remote.business_id && remote.business_id !== this.businessId) continue;
+
+        // CRITICAL: Look up by remote_id OR local ID to prevent duplicates
         const local = this.db.prepare('SELECT id, updated_at FROM restaurant_tables WHERE remote_id = ? OR id = ?')
           .get(remote.id, remote.id) as { id: number, updated_at: string } | undefined;
 
@@ -219,6 +222,7 @@ export class SyncOrchestrator {
         if (shouldApply) {
           const fields: Record<string, any> = {
             remote_id: remote.id,
+            business_id: remote.business_id,
             updated_at: remote.updated_at,
             created_at: remote.created_at,
             table_number: String(remote.table_number),
@@ -235,7 +239,13 @@ export class SyncOrchestrator {
           if (local) {
             this.db.prepare(`UPDATE restaurant_tables SET ${setClauses} WHERE id = ?`).run(...params, local.id);
           } else {
-            this.db.prepare(`INSERT INTO restaurant_tables (${cols.map(c => `"${c}"`).join(', ')}) VALUES (${cols.map(() => '?').join(', ')})`).run(...params);
+            // Check for table_number conflict before insert
+            const conflict = this.db.prepare('SELECT id FROM restaurant_tables WHERE table_number = ?').get(fields.table_number) as { id: number } | undefined;
+            if (conflict) {
+              this.db.prepare(`UPDATE restaurant_tables SET ${setClauses} WHERE id = ?`).run(...params, conflict.id);
+            } else {
+              this.db.prepare(`INSERT INTO restaurant_tables (${cols.map(c => `"${c}"`).join(', ')}) VALUES (${cols.map(() => '?').join(', ')})`).run(...params);
+            }
           }
           applied++;
         }

@@ -267,6 +267,12 @@ function ensureCoreQrMenuTables(): void {
   if (!orderColNames.includes('customer_phone')) db.exec(`ALTER TABLE orders ADD COLUMN customer_phone TEXT`);
   if (!orderColNames.includes('customer_id'))    db.exec(`ALTER TABLE orders ADD COLUMN customer_id INTEGER`);
 
+  // restaurant_tables enterprise columns
+  const tableCols = db.prepare("PRAGMA table_info(restaurant_tables)").all() as Array<{ name: string }>;
+  const tableColNames = tableCols.map(c => c.name);
+  if (!tableColNames.includes('remote_id')) db.exec(`ALTER TABLE restaurant_tables ADD COLUMN remote_id INTEGER`);
+  if (!tableColNames.includes('business_id')) db.exec(`ALTER TABLE restaurant_tables ADD COLUMN business_id TEXT`);
+
   // order_items (for checkout)
   db.exec(`
     CREATE TABLE IF NOT EXISTS order_items (

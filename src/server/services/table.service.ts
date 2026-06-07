@@ -127,9 +127,21 @@ export class TableService {
       try {
         const { getSupabaseClient } = require('../database/supabase.client');
         const supabase = getSupabaseClient();
-        const qrToken = crypto.randomUUID().replace(/-/g, '');
-        const businessId = process.env.SYNC_BUSINESS_ID || 'default-business';
+        
+        // 1. Check for duplicate table_number in Supabase first
+        const { data: existing } = await supabase
+          .from('restaurant_tables')
+          .select('id')
+          .eq('table_number', String(tableData.table_number))
+          .maybeSingle();
 
+        if (existing) {
+          throw new Error(`Le numéro de table "${tableData.table_number}" existe déjà.`);
+        }
+
+        const qrToken = crypto.randomUUID().replace(/-/g, '');
+
+        // 2. Insert without ID (let BigSerial handle it)
         const { data, error } = await supabase
           .from('restaurant_tables')
           .insert([{
@@ -137,7 +149,6 @@ export class TableService {
             capacity: tableData.capacity,
             status: tableData.status,
             assigned_waiter_id: tableData.assigned_waiter_id,
-            // business_id: businessId, // Removed: column does not exist in Supabase schema yet
             qr_token: qrToken,
             created_at: new Date().toISOString(),
             updated_at: new Date().toISOString()
@@ -147,20 +158,21 @@ export class TableService {
 
         if (error) {
           console.error('[TableService] Supabase insert error details:', error);
-          throw new Error(`Supabase error: ${error.message} (${error.code})`);
+          if (error.code === '23505') throw new Error(`Le numéro de table "${tableData.table_number}" existe déjà.`);
+          throw new Error(`Erreur Supabase: ${error.message} (${error.code})`);
         }
         return data;
       } catch (err: any) {
         console.error('[TableService] Supabase create failed:', err?.message || err);
-        throw new Error(err.message || 'Failed to create table via Supabase');
+        throw new Error(err.message || 'Échec de la création de la table sur le Cloud');
       }
     }
 
     try {
-      // Check if table number already exists
+      // Check if table number already exists locally
       const existing = db.prepare('SELECT id FROM restaurant_tables WHERE table_number = ?').get(tableData.table_number);
       if (existing) {
-        throw new Error(`Table number ${tableData.table_number} already exists`);
+        throw new Error(`Le numéro de table "${tableData.table_number}" existe déjà.`);
       }
 
       const now = new Date().toISOString();
@@ -169,7 +181,7 @@ export class TableService {
         INSERT INTO restaurant_tables (table_number, capacity, status, assigned_waiter_id, qr_token, created_at, updated_at)
         VALUES (?, ?, ?, ?, ?, ?, ?)
       `).run(
-        String(tableData.table_number), // Ensure it's stored as string
+        String(tableData.table_number),
         tableData.capacity,
         tableData.status,
         tableData.assigned_waiter_id,
@@ -179,12 +191,12 @@ export class TableService {
       );
 
       if (!result.lastInsertRowid) {
-        throw new Error('Failed to create table');
+        throw new Error('Échec de la création de la table en local');
       }
 
       const newTable = await this.getById(Number(result.lastInsertRowid));
       if (!newTable) {
-        throw new Error('Failed to retrieve created table');
+        throw new Error('Échec de récupération de la table créée');
       }
 
       // Queue for sync
