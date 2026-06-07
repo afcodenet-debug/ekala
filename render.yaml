@@ -26,9 +26,12 @@ services:
         value: https://ekala.vercel.app
       - key: ENABLE_SUPABASE_SYNC
         value: "false"
-      # === Supabase Pull Sync Configuration (CRITICAL for QR orders) ===
-      - key: ENABLE_SUPABASE_PULL
+      # === CRITICAL: Force cloud mode to use Supabase (SQLite won't work reliably on Render) ===
+      - key: RENDER_CLOUD_MODE
         value: "true"
+      # === Supabase Pull Sync Configuration (for future local development) ===
+      - key: ENABLE_SUPABASE_PULL
+        value: "false"  # Disabled in cloud mode (uses Supabase directly)
       - key: SUPABASE_URL
         value: https://pwxlnshtotpagsyqegiz.supabase.co
       - key: SUPABASE_SERVICE_ROLE_KEY
@@ -37,15 +40,13 @@ services:
         value: "8000"
       - key: SUPABASE_PULL_LOOKBACK_MIN
         value: "120"
-      # === Supabase as source of truth for QR menu / products ===
+      # === Supabase as source of truth for all data in cloud mode ===
       - key: USE_SUPABASE_PRODUCTS
-        value: "false"
-      - key: USE_SUPABASE_CATEGORIES
-        value: "false"
+        value: "true"
       - key: USE_SUPABASE_TABLES
-        value: "false"
+        value: "true"
       - key: USE_SUPABASE_ORDERS
-        value: "false"
+        value: "true"
       # Persistent disk still needed for uploads + any legacy tables not yet migrated
       - key: DATA_DIR
         value: /opt/render/project/src/data
