@@ -146,13 +146,17 @@ export class TableService {
         const qrToken = crypto.randomUUID().replace(/-/g, '');
         const businessId = process.env.SYNC_BUSINESS_ID || 'default-business';
 
+        // Status mapping for Supabase CHECK constraint
+        const supabaseStatus = tableData.status === 'active' ? 'occupied' : 
+                              (tableData.status === 'out_of_service' ? 'available' : tableData.status);
+
         // 2. Insert into Supabase with conflict resolution on table_number
         const { data, error } = await supabase
           .from('restaurant_tables')
           .upsert([{
             table_number: String(tableData.table_number),
             capacity: tableData.capacity,
-            status: tableData.status,
+            status: supabaseStatus,
             assigned_waiter_id: tableData.assigned_waiter_id,
             qr_token: qrToken,
             business_id: businessId,
@@ -288,10 +292,15 @@ export class TableService {
           }
         }
 
+        // Status mapping for Supabase CHECK constraint
+        const supabaseUpdates = { ...updates };
+        if (supabaseUpdates.status === 'active') supabaseUpdates.status = 'occupied' as any;
+        if (supabaseUpdates.status === 'out_of_service') supabaseUpdates.status = 'available' as any;
+
         const { data, error } = await supabase
           .from('restaurant_tables')
           .update({
-            ...updates,
+            ...supabaseUpdates,
             updated_at: new Date().toISOString()
           })
           .eq('id', id)

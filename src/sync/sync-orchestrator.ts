@@ -152,6 +152,9 @@ export class SyncOrchestrator {
     this.isSyncing = true;
 
     try {
+      // Periodic recovery of stuck/failed items
+      this.recoverInProgressItems();
+
       // 1. Sync Products (Push + Pull)
       const productResult = await this.syncService.syncNow(this.businessId);
       
@@ -220,6 +223,10 @@ export class SyncOrchestrator {
         const shouldApply = !local || new Date(remote.updated_at) > new Date(local.updated_at);
 
         if (shouldApply) {
+          // Status mapping: remote 'occupied' -> local 'active'
+          let mappedStatus = remote.status;
+          if (mappedStatus === 'occupied') mappedStatus = 'active';
+
           const fields: Record<string, any> = {
             remote_id: remote.id,
             business_id: remote.business_id,
@@ -227,7 +234,7 @@ export class SyncOrchestrator {
             created_at: remote.created_at,
             table_number: String(remote.table_number),
             capacity: remote.capacity,
-            status: remote.status,
+            status: mappedStatus,
             assigned_waiter_id: remote.assigned_waiter_id,
             qr_token: remote.qr_token
           };

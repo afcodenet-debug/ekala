@@ -198,6 +198,11 @@ else if (entity === 'restaurant_table') {
             const cols = ['table_number', 'capacity', 'status', 'assigned_waiter_id', 'qr_token', 'created_at'];
             cols.forEach(c => { if (payload[c] !== undefined) safeUpdate[c] = payload[c]; });
             
+            // Status mapping: local 'active' -> remote 'occupied' (Supabase CHECK constraint)
+            if (safeUpdate.status === 'active') safeUpdate.status = 'occupied';
+            // local 'out_of_service' -> remote 'available' (or keep if Supabase supports it, but migration says no)
+            if (safeUpdate.status === 'out_of_service') safeUpdate.status = 'available';
+
             if (!payload.remote_id && item.operation === 'insert') {
               // For new tables, don't include id - let Supabase auto-generate
               // The unique key is table_number, so we upsert on table_number
@@ -206,7 +211,7 @@ else if (entity === 'restaurant_table') {
               // Include business_id if available to ensure correct ownership on Supabase
               if (_businessId) safeUpdate.business_id = _businessId;
 
-              // Use table_number as the conflict resolution key
+              console.log(`[Sync] Pushing new table "${safeUpdate.table_number}" to Supabase...`);
               const { data, error } = await this.supabase
                 .from(table)
                 .upsert(safeUpdate, { onConflict: 'table_number' })
@@ -216,17 +221,41 @@ else if (entity === 'restaurant_table') {
               if (error) {
                 // If it's a duplicate key error, that's fine - the table exists remotely
                 if (error.code !== '23505') throw error;
-                console.log(`[Sync] Table "${safeUpdate.table_number}" already exists in Supabase, skipping push`);
+                console.log(`[Sync] Table "${safeUpdate.table_number}" already exists in Supabase, marking as done locally`);
               } else if (data?.id) {
                 // Save remote_id locally
                 this.db.prepare(`UPDATE ${table} SET remote_id = ? WHERE id = ?`).run(data.id, recordId);
                 console.log(`[Sync] Table "${safeUpdate.table_number}" pushed to Supabase (remote_id=${data.id})`);
               }
-              continue; // Skip the generic upsert below
+
+              // Mark as successfully pushed
+              this.db.prepare(`UPDATE sync_outbox SET status = 'done' WHERE id = ?`).run(item.id);
+              successCount++;
+              continue; 
             } else if (item.operation === 'update') {
-              // For updates, use the remote_id if we have it, otherwise fallback to recordId (dangerous if mismatched)
+              // For updates, use the remote_id if we have it, otherwise fallback to recordId
               safeUpdate.id = payload.remote_id || recordId;
               if (_businessId) safeUpdate.business_id = _businessId;
+              
+              console.log(`[Sync] Updating table "${safeUpdate.table_number}" (id=${safeUpdate.id}) in Supabase...`);
+              const { data, error } = await this.supabase
+                .from(table)
+                .upsert(safeUpdate, { onConflict: 'table_number' })
+                .select('id')
+                .single();
+
+              if (error) {
+                console.error(`[Sync] Table update failed for "${safeUpdate.table_number}":`, error);
+                throw error;
+              }
+              
+              if (!payload.remote_id && data?.id) {
+                this.db.prepare(`UPDATE ${table} SET remote_id = ? WHERE id = ?`).run(data.id, recordId);
+              }
+
+              this.db.prepare(`UPDATE sync_outbox SET status = 'done' WHERE id = ?`).run(item.id);
+              successCount++;
+              continue;
             }
           }
 
