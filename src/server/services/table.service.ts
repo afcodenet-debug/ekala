@@ -1,6 +1,7 @@
 import db from '../db/database';
 import crypto from 'crypto';
 import { getProductSyncService, withOutboxTransaction } from '../../sync';
+import { env } from '../config/env';
 
 export type TableStatus = 'available' | 'active' | 'reserved' | 'cleaning' | 'out_of_service';
 
@@ -122,50 +123,88 @@ export class TableService {
   }
 
   static async create(tableData: Omit<Table, 'id' | 'created_at' | 'updated_at'>): Promise<Table> {
-    if (!db) {
-      console.log('[TableService] SQLite disabled (db is null). Falling back to Supabase for create');
+    // Check Supabase first for immediate sync across all devices
+    if (env.SUPABASE_URL && env.SUPABASE_SERVICE_ROLE_KEY) {
+      console.log('[TableService] Supabase configured - creating table directly in Supabase for immediate sync');
       try {
         const { getSupabaseClient } = require('../database/supabase.client');
         const supabase = getSupabaseClient();
-        
+
         // 1. Check for duplicate table_number in Supabase first
-        const { data: existing } = await supabase
+        const { data: existing, error: checkErr } = await supabase
           .from('restaurant_tables')
           .select('id')
           .eq('table_number', String(tableData.table_number))
           .maybeSingle();
+
+        if (checkErr) console.error('[TableService] Supabase check error:', checkErr);
 
         if (existing) {
           throw new Error(`Le numéro de table "${tableData.table_number}" existe déjà.`);
         }
 
         const qrToken = crypto.randomUUID().replace(/-/g, '');
+        const businessId = process.env.SYNC_BUSINESS_ID || 'default-business';
 
-        // 2. Insert without ID (let BigSerial handle it)
+        // 2. Insert into Supabase with conflict resolution on table_number
         const { data, error } = await supabase
           .from('restaurant_tables')
-          .insert([{
+          .upsert([{
             table_number: String(tableData.table_number),
             capacity: tableData.capacity,
             status: tableData.status,
             assigned_waiter_id: tableData.assigned_waiter_id,
             qr_token: qrToken,
+            business_id: businessId,
             created_at: new Date().toISOString(),
             updated_at: new Date().toISOString()
-          }])
+          }], { onConflict: 'table_number' })
           .select()
           .single();
 
         if (error) {
-          console.error('[TableService] Supabase insert error details:', error);
+          console.error('[TableService] Supabase insert error:', error);
           if (error.code === '23505') throw new Error(`Le numéro de table "${tableData.table_number}" existe déjà.`);
-          throw new Error(`Erreur Supabase: ${error.message} (${error.code})`);
+          throw new Error(`Erreur Supabase: ${error.message}`);
         }
-        return data;
+
+        // 3. Also create locally for offline access (if db available)
+        if (db) {
+          try {
+            const now = new Date().toISOString();
+            const localResult = db.prepare(`
+              INSERT OR IGNORE INTO restaurant_tables (id, table_number, capacity, status, assigned_waiter_id, qr_token, created_at, updated_at, business_id)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            `).run(
+              data.id,
+              String(tableData.table_number),
+              tableData.capacity,
+              tableData.status,
+              tableData.assigned_waiter_id,
+              qrToken,
+              now,
+              now,
+              businessId
+            );
+            console.log('[TableService] Also created locally for offline access, id:', data.id);
+          } catch (localErr) {
+            console.warn('[TableService] Local creation failed (non-blocking):', localErr);
+          }
+        }
+
+        return {
+          ...data,
+          waiter_name: undefined
+        } as Table;
       } catch (err: any) {
         console.error('[TableService] Supabase create failed:', err?.message || err);
-        throw new Error(err.message || 'Échec de la création de la table sur le Cloud');
+        throw new Error(err.message || 'Échec de la création de la table');
       }
+    }
+
+    // Fallback to pure SQLite mode (no Supabase configured)
+    if (!db) {
+      throw new Error('Base de données non disponible');
     }
 
     try {
@@ -197,8 +236,6 @@ export class TableService {
           throw new Error('Échec de la création de la table en local');
         }
 
-        // We can't use await inside db.transaction directly in better-sqlite3 for fetching
-        // but since it's a synchronous read, we can just call a non-async version or use db directly
         const newTable = db.prepare(`
           SELECT t.*, u.full_name as waiter_name
           FROM restaurant_tables t
@@ -211,10 +248,14 @@ export class TableService {
         }
 
         // Queue for sync
-        getProductSyncService().queueChangeInsideTransaction('restaurant_table', 'insert', {
-          ...newTable,
-          business_id: businessId
-        });
+        try {
+          getProductSyncService().queueChangeInsideTransaction('restaurant_table', 'insert', {
+            ...newTable,
+            business_id: businessId
+          });
+        } catch (syncErr) {
+          console.warn('[TableService] Failed to queue table for sync:', syncErr);
+        }
 
         return newTable;
       });
@@ -225,11 +266,27 @@ export class TableService {
   }
 
   static async update(id: number, updates: Partial<Omit<Table, 'id' | 'created_at' | 'updated_at'>>): Promise<Table> {
-    if (!db) {
-      console.log(`[TableService] SQLite disabled (db is null). Falling back to Supabase for update (id=${id})`);
+    // First try Supabase for immediate sync across all devices
+    if (env.SUPABASE_URL && env.SUPABASE_SERVICE_ROLE_KEY) {
+      console.log('[TableService] Updating table directly in Supabase for immediate sync');
       try {
         const { getSupabaseClient } = require('../database/supabase.client');
         const supabase = getSupabaseClient();
+
+        // Check for table_number conflict if changing
+        if (updates.table_number) {
+          const { data: existing, error: checkErr } = await supabase
+            .from('restaurant_tables')
+            .select('id')
+            .eq('table_number', String(updates.table_number))
+            .neq('id', id)
+            .maybeSingle();
+          
+          if (checkErr) console.error('[TableService] Supabase check error:', checkErr);
+          if (existing) {
+            throw new Error(`Le numéro de table "${updates.table_number}" existe déjà.`);
+          }
+        }
 
         const { data, error } = await supabase
           .from('restaurant_tables')
@@ -241,14 +298,49 @@ export class TableService {
           .select()
           .single();
 
-        if (error) throw error;
-        if (!data) throw new Error('Table not found');
+        if (error) {
+          console.error('[TableService] Supabase update error:', error);
+          throw new Error(`Erreur Supabase: ${error.message}`);
+        }
+        if (!data) throw new Error('Table non trouvée');
 
-        return data;
+        // Also update locally for offline access (if db available)
+        if (db) {
+          try {
+            const updateFields: string[] = [];
+            const values: any[] = [];
+            
+            Object.entries(updates).forEach(([key, value]) => {
+              if (value !== undefined) {
+                updateFields.push(`${key} = ?`);
+                values.push(value);
+              }
+            });
+            
+            if (updateFields.length > 0) {
+              updateFields.push('updated_at = ?');
+              values.push(new Date().toISOString(), id);
+              db.prepare(`UPDATE restaurant_tables SET ${updateFields.join(', ')} WHERE id = ?`).run(...values);
+            }
+            console.log('[TableService] Also updated locally for offline access, id:', id);
+          } catch (localErr) {
+            console.warn('[TableService] Local update failed (non-blocking):', localErr);
+          }
+        }
+
+        return {
+          ...data,
+          waiter_name: undefined
+        } as Table;
       } catch (err: any) {
         console.error('[TableService] Supabase update failed:', err?.message || err);
-        throw new Error('Failed to update table via Supabase');
+        throw err;
       }
+    }
+
+    // Fallback to pure SQLite mode (no Supabase configured)
+    if (!db) {
+      throw new Error('Base de données non disponible');
     }
 
     try {
@@ -305,10 +397,14 @@ export class TableService {
         }
 
         // Queue for sync
-        getProductSyncService().queueChangeInsideTransaction('restaurant_table', 'update', {
-          ...updatedTable,
-          business_id: businessId
-        });
+        try {
+          getProductSyncService().queueChangeInsideTransaction('restaurant_table', 'update', {
+            ...updatedTable,
+            business_id: businessId
+          });
+        } catch (syncErr) {
+          console.warn('[TableService] Failed to queue table update for sync:', syncErr);
+        }
 
         return updatedTable;
       });
