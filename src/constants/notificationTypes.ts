@@ -17,6 +17,11 @@ export const NOTIFICATION_TYPES = {
   DAILY_CLOSURE: 'dailyClosure',
   SYSTEM_ERROR: 'systemError',
   PENDING_TOO_LONG: 'pendingTooLong',
+
+  // Table notifications
+  TABLE_DUPLICATE: 'tableDuplicate',
+  TABLE_ERROR: 'tableError',
+  SYSTEM_INFO: 'systemInfo',
 } as const;
 
 export type NotificationType =

@@ -112,7 +112,12 @@ export async function request<T>(
         parsedError = null;
       }
 
-      const errorMessage = parsedError?.error || parsedError?.message || text || `HTTP ${response.status}`;
+      let errorMessage = parsedError?.error || parsedError?.message || text || `HTTP ${response.status}`;
+      
+      if (typeof errorMessage === 'string' && errorMessage.includes('duplicate key value violates unique constraint')) {
+        errorMessage = `Cette entrée existe déjà dans la base de données. Veuillez actualiser la page et réessayer.`;
+      }
+
       const apiError = new Error(errorMessage);
       (apiError as any).status = response.status;
       (apiError as any).body = parsedError ?? text;

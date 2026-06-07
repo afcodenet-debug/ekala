@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { X, Edit, Users, CheckCircle2 } from 'lucide-react';
 import { useTableStore, Table } from '../../../stores/useTableStore';
 import { useI18n } from '../../../lib/i18n';
+import { useNotificationStore } from '../../../stores/useNotificationStore';
 
 interface EditTableModalProps {
   table: Table | null;
@@ -61,7 +62,14 @@ export const EditTableModal: React.FC<EditTableModalProps> = ({
         onSuccess(updatedTable);
       }, 800);
     } catch (err: any) {
-      setError(err.message || t('tables.failedUpdateTable'));
+      const errorMsg = err.message || t('tables.failedUpdateTable');
+      setError(errorMsg);
+      useNotificationStore.getState().addNotification({
+        type: 'tableError',
+        title: 'Erreur de modification',
+        message: errorMsg,
+        priority: 'high'
+      });
     } finally {
       setIsLoading(false);
     }

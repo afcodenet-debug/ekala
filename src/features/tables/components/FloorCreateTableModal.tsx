@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { X, Plus, Users } from 'lucide-react';
 import { useTableStore } from '../../../stores/useTableStore';
 import { useI18n } from '../../../lib/i18n';
+import { useNotificationStore } from '../../../stores/useNotificationStore';
 
 interface CreateTableModalProps {
   isOpen: boolean;
@@ -43,8 +44,15 @@ export const CreateTableModal: React.FC<CreateTableModalProps> = ({
         setFormData({ table_number: '', capacity: '4', status: 'available' });
       }
     } catch (err: any) {
-      setError(err.message || t('tables.failedCreateTable'));
-    } finally {
+        const errorMsg = err.message || t('tables.failedCreateTable');
+        setError(errorMsg);
+        useNotificationStore.getState().addNotification({
+          type: 'tableError',
+          title: 'Erreur de création',
+          message: errorMsg,
+          priority: 'high'
+        });
+      } finally {
       setIsLoading(false);
     }
   };

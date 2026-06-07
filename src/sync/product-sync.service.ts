@@ -197,6 +197,29 @@ export class ProductSyncService {
           else if (entity === 'restaurant_table') {
             const cols = ['table_number', 'capacity', 'status', 'assigned_waiter_id', 'qr_token', 'created_at'];
             cols.forEach(c => { if (payload[c] !== undefined) safeUpdate[c] = payload[c]; });
+            
+            if (!payload.remote_id && item.operation === 'insert') {
+              // For new tables, don't include id - let Supabase auto-generate
+              // The unique key is table_number, so we upsert on table_number
+              delete safeUpdate.id;
+              // Use table_number as the conflict resolution key
+              const { data, error } = await this.supabase
+                .from(table)
+                .upsert(safeUpdate, { onConflict: 'table_number' })
+                .select('id, remote_id')
+                .single();
+
+              if (error) throw error;
+
+              // Save remote_id locally
+              if (data?.id) {
+                this.db.prepare(`UPDATE ${table} SET remote_id = ? WHERE id = ?`).run(data.id, recordId);
+              }
+              continue; // Skip the generic upsert below
+            } else if (item.operation === 'update') {
+              // For updates, use the local id
+              safeUpdate.id = recordId;
+            }
           }
 
           // Use upsert to handle both insert and update

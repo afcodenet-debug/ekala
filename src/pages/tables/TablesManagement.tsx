@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { api } from '../../lib/api-client';
+import { useNotificationStore } from '../../stores/useNotificationStore';
 import { Plus, Edit2, Trash2, User, Table as TableIcon, QrCode, Copy, Download, RefreshCw, X } from 'lucide-react';
 import { QRCodeSVG, QRCodeCanvas } from 'qrcode.react';
 
@@ -50,8 +51,13 @@ const TablesManagement = () => {
       ]);
       setTables(tablesData as Table[]);
       setWaiters((usersData as any[]).filter((u: any) => u.role === 'waiter'));
-    } catch (error) {
-      console.error('Failed to load data:', error);
+    } catch (error: any) {
+      useNotificationStore.getState().addNotification({
+        type: 'systemError',
+        title: 'Erreur de chargement',
+        message: error.message || 'Échec du chargement des données',
+        priority: 'high'
+      });
     } finally {
       setLoading(false);
     }
@@ -62,30 +68,40 @@ const TablesManagement = () => {
     try {
       if (editingTable) {
         await api.tables.update(editingTable.id, formData);
+        setShowModal(false);
+        setEditingTable(null);
+        setFormData({ table_number: '', capacity: 4, status: 'available', assigned_waiter_id: null });
+        loadData();
       } else {
-        // Create via direct fetch since no endpoint yet
-        await fetch('/api/tables', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(formData)
-        });
+        await api.tables.create(formData, 'admin');
+        setShowModal(false);
+        setEditingTable(null);
+        setFormData({ table_number: '', capacity: 4, status: 'available', assigned_waiter_id: null });
+        loadData();
       }
-      setShowModal(false);
-      setEditingTable(null);
-      setFormData({ table_number: '', capacity: 4, status: 'available', assigned_waiter_id: null });
-      loadData();
     } catch (error: any) {
-      alert(error.message || 'Operation failed');
+      const errorMsg = error.message || 'Opération échouée';
+      useNotificationStore.getState().addNotification({
+        type: 'tableError',
+        title: 'Erreur de table',
+        message: errorMsg,
+        priority: 'high'
+      });
     }
   };
 
   const handleDelete = async (id: number) => {
     if (!confirm('Delete this table?')) return;
     try {
-      await fetch(`/api/tables/${id}`, { method: 'DELETE' });
+      await api.tables.delete(id, 'admin');
       loadData();
-    } catch {
-      alert('Failed to delete table');
+    } catch (error: any) {
+      useNotificationStore.getState().addNotification({
+        type: 'tableError',
+        title: 'Erreur de suppression',
+        message: error.message || 'Échec de la suppression de la table',
+        priority: 'high'
+      });
     }
   };
 
@@ -122,7 +138,12 @@ const TablesManagement = () => {
     if (!url) return;
     try {
       await navigator.clipboard.writeText(url);
-      alert('Link copied to clipboard');
+      useNotificationStore.getState().addNotification({
+        type: 'systemInfo',
+        title: 'Lien copié',
+        message: 'Le lien a été copié dans le presse-papiers',
+        priority: 'low'
+      });
     } catch {
       prompt('Copy this link manually:', url);
     }
@@ -134,16 +155,31 @@ const TablesManagement = () => {
       const updated: any = await api.tables.regenerateQr(table.id);
       setTables(prev => prev.map(t => t.id === table.id ? { ...t, qr_token: updated.qr_token } : t));
       setQrModalTable(prev => (prev && prev.id === table.id ? { ...prev, qr_token: updated.qr_token } : prev));
-      alert('New QR code generated. Old codes are now invalid.');
+      useNotificationStore.getState().addNotification({
+        type: 'systemInfo',
+        title: 'QR Code régénéré',
+        message: 'Nouveau code QR généré. Les anciens codes sont maintenant invalides.',
+        priority: 'medium'
+      });
     } catch (e: any) {
-      alert(e?.message || 'Failed to regenerate QR token');
+      useNotificationStore.getState().addNotification({
+        type: 'tableError',
+        title: 'Erreur QR',
+        message: e?.message || 'Échec de la régénération du QR',
+        priority: 'high'
+      });
     }
   };
 
   const downloadQrPng = (table: Table) => {
     const canvas = qrCanvasRef.current;
     if (!canvas) {
-      alert('Download not ready yet — please try again in a second');
+      useNotificationStore.getState().addNotification({
+        type: 'tableError',
+        title: 'Téléchargement',
+        message: 'Le téléchargement n\'est pas prêt, veuillez réessayer dans un instant',
+        priority: 'medium'
+      });
       return;
     }
     const link = document.createElement('a');
