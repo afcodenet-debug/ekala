@@ -14,7 +14,6 @@ services:
     buildCommand: npm ci --omit=dev && npm run build:render
     startCommand: node dist/server/server/server.js
 
-
     # Node version (Render supports 20/22 well for better-sqlite3)
     # You can also set this in the dashboard under "Settings > Environment"
     # nodeVersion: 20.18.0
@@ -26,34 +25,34 @@ services:
         value: https://ekala.vercel.app
       - key: ENABLE_SUPABASE_SYNC
         value: "false"
-      # === CRITICAL: Force cloud mode to use Supabase (SQLite won't work reliably on Render) ===
+      # === PRIMARY: SQLite as source of truth, with Supabase pull sync for QR orders ===
       - key: RENDER_CLOUD_MODE
-        value: "true"
-      # === Supabase Pull Sync Configuration (for future local development) ===
+        value: "false"  # Disable cloud mode to use SQLite as source of truth
+      # === Supabase Pull Sync Configuration (CRITICAL for QR orders visibility) ===
       - key: ENABLE_SUPABASE_PULL
-        value: "false"  # Disabled in cloud mode (uses Supabase directly)
+        value: "true"  # Enable pull sync from Supabase to SQLite
       - key: SUPABASE_URL
         value: https://pwxlnshtotpagsyqegiz.supabase.co
       - key: SUPABASE_SERVICE_ROLE_KEY
         value: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InB3eGxuc2h0b3RwYWdzeXFlZ2l6Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3ODY4NzcwNywiZXhwIjoyMDk0MjYzNzA3fQ.PqQv8AcjNKiMHZHnCDTZMQEhoXAcSs8faE2IaI2SLjI
       - key: SUPABASE_PULL_INTERVAL_MS
-        value: "8000"
+        value: "8000"  # Pull every 8 seconds
       - key: SUPABASE_PULL_LOOKBACK_MIN
-        value: "120"
-      # === Supabase as source of truth for all data in cloud mode ===
+        value: "120"  # 2 hour lookback on bootstrap
+      # === Supabase as secondary source (not primary - SQLite is truth) ===
       - key: USE_SUPABASE_PRODUCTS
-        value: "true"
+        value: "false"
       - key: USE_SUPABASE_TABLES
-        value: "true"
+        value: "false"
       - key: USE_SUPABASE_ORDERS
-        value: "true"
-      # Persistent disk still needed for uploads + any legacy tables not yet migrated
+        value: "false"
+      # Persistent disk for SQLite + uploads (CRITICAL for SQLite)
       - key: DATA_DIR
         value: /opt/render/project/src/data
 
     # Persistent disk for SQLite + uploads (CRITICAL for SQLite)
     disk:
-      name: great-olive-data
+      name: ekala-data
       mountPath: /opt/render/project/src/data
       sizeGB: 5
 

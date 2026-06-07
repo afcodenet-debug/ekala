@@ -176,62 +176,29 @@ export class OrderService {
   } = {}): Promise<OrderData[]> {
     const { waiter_id, role, table_id, status } = params;
 
-    // Cloud mode guard: db might be null (SQLite disabled on Render)
-    // CRITICAL: In cloud mode, we use Supabase directly as the source of truth
+    // SQLite as source of truth (primary). In production with ENABLE_SUPABASE_PULL,
+    // the pull sync worker brings QR orders from Supabase to SQLite automatically.
     const pullEnabled = process.env.ENABLE_SUPABASE_PULL === 'true' || process.env.ENABLE_SUPABASE_PULL === '1';
     const cloudMode = process.env.RENDER_CLOUD_MODE === 'true' || process.env.RENDER_CLOUD_MODE === '1';
     
     console.log(`[OrderService] getAll - db=${db ? 'available' : 'null'}, pullEnabled=${pullEnabled}, cloudMode=${cloudMode}`);
     console.log(`[OrderService] getAll - params:`, params);
     
-    if (!db || cloudMode) {
-      // In cloud mode or when db is null, use Supabase directly
-      console.log('[OrderService] Using Supabase as source of truth (cloud mode or db null)');
-      try {
-        const { getSupabaseClient } = require('../database/supabase.client');
-        const supabase = getSupabaseClient();
-        
-        console.log('[OrderService] Supabase client created successfully');
-
-        let query = supabase
-          .from('orders')
-          .select('*, table:restaurant_tables(table_number), waiter:users(full_name, role)');
-
-        if (role === 'waiter' && waiter_id) {
-          query = query.eq('waiter_id', waiter_id);
-        }
-        if (table_id) {
-          query = query.eq('table_id', table_id);
-        }
-        if (status) {
-          query = query.eq('status', status);
-        }
-
-        console.log('[OrderService] Executing Supabase query with filters:', { role, waiter_id, table_id, status });
-        const { data, error } = await query.order('created_at', { ascending: false });
-
-        if (error) {
-          console.error('[OrderService] Supabase query error:', error);
-          throw error;
-        }
-
-        console.log(`[OrderService] Supabase returned ${data?.length || 0} orders`);
-        return (data || []).map((order: any) => ({
-          ...order,
-          table_number: order.table?.table_number,
-          waiter_name: order.waiter?.full_name,
-          waiter_role: order.waiter?.role,
-          items: typeof order.items === 'string' ? JSON.parse(order.items) : (order.items || [])
-        }));
-      } catch (err: any) {
-        console.error('[OrderService] Supabase getAll failed:', err?.message || err);
-        console.error('[OrderService] Stack:', err?.stack);
-        throw new Error('Failed to fetch orders via Supabase: ' + (err?.message || String(err)));
-      }
-    } else {
-      // Use SQLite as source of truth (local development or pull sync mode)
-      console.log('[OrderService] Using SQLite as source of truth');
+    // PRIMARY: Always use SQLite as source of truth (as per user requirement)
+    // The pull sync worker (ENABLE_SUPABASE_PULL=true) will sync QR orders from Supabase → SQLite
+    if (!db) {
+      console.error('[OrderService] CRITICAL: db is null but SQLite is required as source of truth.');
+      console.error('[OrderService] Check that RENDER_CLOUD_MODE=false and disk is mounted.');
+      throw new Error('SQLite database not available. Check Render disk configuration.');
     }
+    
+    if (cloudMode) {
+      console.error('[OrderService] CRITICAL: RENDER_CLOUD_MODE=true but SQLite should be source of truth.');
+      console.error('[OrderService] Set RENDER_CLOUD_MODE=false in Render environment variables.');
+      throw new Error('Cloud mode enabled but SQLite should be source of truth. Disable RENDER_CLOUD_MODE.');
+    }
+    
+    console.log('[OrderService] Using SQLite as source of truth (primary)');
 
     let query = `
       SELECT

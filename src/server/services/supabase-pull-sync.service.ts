@@ -77,6 +77,8 @@ function getPullConfig(): PullConfig {
     enabled = hasSupabaseCreds && !env.RENDER_CLOUD_MODE;
   }
 
+  console.log(`[PullSync] Configuration: ENABLE_SUPABASE_PULL=${explicit}, hasCreds=${hasSupabaseCreds}, RENDER_CLOUD_MODE=${env.RENDER_CLOUD_MODE}, enabled=${enabled}`);
+
   return {
     enabled,
     intervalMs: parseInt(process.env.SUPABASE_PULL_INTERVAL_MS || '8000', 10),
