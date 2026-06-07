@@ -127,6 +127,7 @@ export class TableService {
         const { getSupabaseClient } = require('../database/supabase.client');
         const supabase = getSupabaseClient();
         const qrToken = crypto.randomUUID().replace(/-/g, '');
+        const businessId = process.env.SYNC_BUSINESS_ID || 'default-business';
 
         const { data, error } = await supabase
           .from('restaurant_tables')
@@ -135,6 +136,7 @@ export class TableService {
             capacity: tableData.capacity,
             status: tableData.status,
             assigned_waiter_id: tableData.assigned_waiter_id,
+            business_id: businessId, // CRITICAL: Supabase requires business_id
             qr_token: qrToken,
             created_at: new Date().toISOString(),
             updated_at: new Date().toISOString()
@@ -142,7 +144,10 @@ export class TableService {
           .select()
           .single();
 
-        if (error) throw error;
+        if (error) {
+          console.error('[TableService] Supabase insert error details:', error);
+          throw error;
+        }
         return data;
       } catch (err: any) {
         console.error('[TableService] Supabase create failed:', err?.message || err);
