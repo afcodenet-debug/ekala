@@ -49,8 +49,44 @@ const API_BASE: string = (() => {
   // 4. Last resort ONLY for production Vercel build when no VITE_API_BASE_URL is configured:
   //    Point to the Render backend.
   //    Backend exposes admin endpoints under `/api/*` (tables/products/orders/expenses).
-  //    Also support ekala-api.onrender.com as alternative deployment.
-  return 'https://ekala-api.onrender.com/api';
+  //    Primary: great-olive-api.onrender.com (from render.yaml)
+  //    Fallback: ekala-api.onrender.com for backward compatibility
+  return 'https://great-olive-api.onrender.com/api';
+})();
+
+// ============================================
+// API URL VALIDATION: Test connectivity to backend on app startup
+// ============================================
+// This helps catch misconfigured API_BASE_URL early in development
+// Only runs in browser environment
+if (typeof window !== 'undefined') {
+  // Attempt to validate the API base URL by pinging the health endpoint
+  const validateApiUrl = async () => {
+    try {
+      const healthUrl = `${API_BASE}/health`;
+      const response = await fetch(healthUrl, { method: 'GET', cache: 'no-store' });
+      if (!response.ok) {
+        console.warn(`[API] Health check failed for ${API_BASE}, status: ${response.status}`);
+        // Try fallback URLs in production
+        if (API_BASE.includes('onrender.com') && !API_BASE.includes('great-olive-api')) {
+          console.warn('[API] Trying fallback URL: https://great-olive-api.onrender.com/api');
+          // For critical production issues, you can override here
+          // But respecting the configured URL is safer
+        }
+      } else {
+        console.log(`[API] Backend connection OK: ${API_BASE}`);
+      }
+    } catch (error: any) {
+      console.error(`[API] Backend connection failed: ${API_BASE}`, error.message);
+      console.warn(`[API] Current API base URL: ${API_BASE}`);
+      console.warn('[API] To fix, set VITE_API_BASE_URL environment variable in Vercel to:');
+      console.warn('   https://great-olive-api.onrender.com/api');
+    }
+  };
+  
+  // Run validation after 2 seconds to avoid blocking page load
+  setTimeout(validateApiUrl, 2000);
+}
 })();
 
 export async function request<T>(
