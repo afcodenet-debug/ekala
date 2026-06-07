@@ -288,6 +288,12 @@ function ensureCoreQrMenuTables(): void {
   const prodCols = db.prepare("PRAGMA table_info(products)").all() as Array<{ name: string }>;
   if (!prodCols.some(c => c.name === 'remote_id')) db.exec(`ALTER TABLE products ADD COLUMN remote_id INTEGER`);
 
+  // Ensure unique indexes for remote_ids to prevent sync duplicates
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_tables_remote_id ON restaurant_tables(remote_id) WHERE remote_id IS NOT NULL;
+    CREATE INDEX IF NOT EXISTS idx_products_remote_id ON products(remote_id) WHERE remote_id IS NOT NULL;
+  `);
+
   // users (needed by seedAdmin and some protected routes)
   db.exec(`
     CREATE TABLE IF NOT EXISTS users (

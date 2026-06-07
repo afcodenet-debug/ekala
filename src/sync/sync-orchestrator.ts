@@ -62,7 +62,7 @@ export class SyncOrchestrator {
   /**
    * Crash recovery: resume any unfinished outbox items
    */
-  private readonly SYNC_ENTITIES = ['product', 'order', 'order_item'] as const;
+  private readonly SYNC_ENTITIES = ['product', 'order', 'order_item', 'restaurant_table'] as const;
 
   private recoverUnfinishedSync() {
     for (const entity of this.SYNC_ENTITIES) {
@@ -164,8 +164,17 @@ export class SyncOrchestrator {
         this.setLastPullTimestamp('order', new Date().toISOString());
       }
 
-      const totalPushed = productResult.pushed + ordersPushed;
-      const totalPulled = productResult.pulled + ordersPulled;
+      // 3. Sync Tables (Push + Pull)
+      const tablesPushed = await this.syncService.pushPendingByEntity('restaurant_table', this.businessId);
+      const lastTablePull = this.getLastPullTimestamp('restaurant_table') || '1970-01-01T00:00:00Z';
+      const tablesPulled = await this.syncPullTables(lastTablePull);
+
+      if (tablesPulled > 0) {
+        this.setLastPullTimestamp('restaurant_table', new Date().toISOString());
+      }
+
+      const totalPushed = productResult.pushed + ordersPushed + tablesPushed;
+      const totalPulled = productResult.pulled + ordersPulled + tablesPulled;
 
       if (totalPushed > 0 || totalPulled > 0) {
         console.log(`[SyncOrchestrator] Sync completed - Pushed: ${totalPushed}, Pulled: ${totalPulled}`);
@@ -176,6 +185,65 @@ export class SyncOrchestrator {
     } finally {
       this.isSyncing = false;
     }
+  }
+
+  /**
+   * Internal pull for tables
+   */
+  private async syncPullTables(since: string): Promise<number> {
+    const { getSupabaseClient } = require('../server/database/supabase.client');
+    const supabase = getSupabaseClient();
+
+    const { data, error } = await supabase
+      .from('restaurant_tables')
+      .select('*')
+      // .eq('business_id', this.businessId) // Disabled until schema confirmed
+      .gt('updated_at', since)
+      .order('updated_at', { ascending: true });
+
+    if (error) {
+      console.error('[Sync] Failed to pull tables from Supabase:', error.message);
+      return 0;
+    }
+
+    if (!data || data.length === 0) return 0;
+
+    let applied = 0;
+    const transaction = this.db.transaction((tables: any[]) => {
+      for (const remote of tables) {
+        const local = this.db.prepare('SELECT id, updated_at FROM restaurant_tables WHERE remote_id = ? OR id = ?')
+          .get(remote.id, remote.id) as { id: number, updated_at: string } | undefined;
+
+        const shouldApply = !local || new Date(remote.updated_at) > new Date(local.updated_at);
+
+        if (shouldApply) {
+          const fields: Record<string, any> = {
+            remote_id: remote.id,
+            updated_at: remote.updated_at,
+            created_at: remote.created_at,
+            table_number: String(remote.table_number),
+            capacity: remote.capacity,
+            status: remote.status,
+            assigned_waiter_id: remote.assigned_waiter_id,
+            qr_token: remote.qr_token
+          };
+
+          const cols = Object.keys(fields);
+          const setClauses = cols.map(k => `"${k}" = ?`).join(', ');
+          const params = cols.map(k => fields[k]);
+
+          if (local) {
+            this.db.prepare(`UPDATE restaurant_tables SET ${setClauses} WHERE id = ?`).run(...params, local.id);
+          } else {
+            this.db.prepare(`INSERT INTO restaurant_tables (${cols.map(c => `"${c}"`).join(', ')}) VALUES (${cols.map(() => '?').join(', ')})`).run(...params);
+          }
+          applied++;
+        }
+      }
+    });
+
+    transaction(data);
+    return applied;
   }
 
   /**

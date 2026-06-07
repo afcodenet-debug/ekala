@@ -1,5 +1,6 @@
 import db from '../db/database';
 import crypto from 'crypto';
+import { getProductSyncService } from '../../sync';
 
 export type TableStatus = 'available' | 'active' | 'reserved' | 'cleaning' | 'out_of_service';
 
@@ -136,7 +137,7 @@ export class TableService {
             capacity: tableData.capacity,
             status: tableData.status,
             assigned_waiter_id: tableData.assigned_waiter_id,
-            business_id: businessId, // CRITICAL: Supabase requires business_id
+            // business_id: businessId, // Removed: column does not exist in Supabase schema yet
             qr_token: qrToken,
             created_at: new Date().toISOString(),
             updated_at: new Date().toISOString()
@@ -146,12 +147,12 @@ export class TableService {
 
         if (error) {
           console.error('[TableService] Supabase insert error details:', error);
-          throw error;
+          throw new Error(`Supabase error: ${error.message} (${error.code})`);
         }
         return data;
       } catch (err: any) {
         console.error('[TableService] Supabase create failed:', err?.message || err);
-        throw new Error('Failed to create table via Supabase');
+        throw new Error(err.message || 'Failed to create table via Supabase');
       }
     }
 
@@ -184,6 +185,13 @@ export class TableService {
       const newTable = await this.getById(Number(result.lastInsertRowid));
       if (!newTable) {
         throw new Error('Failed to retrieve created table');
+      }
+
+      // Queue for sync
+      try {
+        getProductSyncService().queueChange('restaurant_table', 'insert', newTable);
+      } catch (syncErr) {
+        console.warn('[TableService] Failed to queue table for sync:', syncErr);
       }
 
       return newTable;
@@ -262,6 +270,13 @@ export class TableService {
       const updatedTable = await this.getById(id);
       if (!updatedTable) {
         throw new Error('Failed to retrieve updated table');
+      }
+
+      // Queue for sync
+      try {
+        getProductSyncService().queueChange('restaurant_table', 'update', updatedTable);
+      } catch (syncErr) {
+        console.warn('[TableService] Failed to queue table update for sync:', syncErr);
       }
 
       return updatedTable;
@@ -379,6 +394,16 @@ export class TableService {
       }
 
       const result = db.prepare('DELETE FROM restaurant_tables WHERE id = ?').run(id);
+      
+      if (result.changes > 0) {
+        // Queue for sync
+        try {
+          getProductSyncService().queueChange('restaurant_table', 'delete', { id });
+        } catch (syncErr) {
+          console.warn('[TableService] Failed to queue table deletion for sync:', syncErr);
+        }
+      }
+
       return result.changes > 0;
     } catch (error: any) {
       console.error('[TableService] Error deleting table:', error);
@@ -405,6 +430,14 @@ export class TableService {
     if (!updated) {
       throw new Error('Failed to retrieve updated table after regenerating QR token');
     }
+
+    // Queue for sync
+    try {
+      getProductSyncService().queueChange('restaurant_table', 'update', updated);
+    } catch (syncErr) {
+      console.warn('[TableService] Failed to queue table update for sync:', syncErr);
+    }
+
     return updated;
   }
 }

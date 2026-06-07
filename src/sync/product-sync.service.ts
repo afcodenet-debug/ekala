@@ -30,6 +30,7 @@ export class ProductSyncService {
     product: 'products',
     order: 'orders',
     order_item: 'order_items',
+    restaurant_table: 'restaurant_tables',
   };
 
   constructor(db: Database.Database, supabaseUrl: string, supabaseAnonKey: string) {
@@ -191,6 +192,10 @@ export class ProductSyncService {
           else if (entity === 'order_item') {
             // order_items table in Supabase does NOT have a 'name' column
             const cols = ['order_id', 'product_id', 'quantity', 'unit_price', 'total_price', 'notes', 'created_at'];
+            cols.forEach(c => { if (payload[c] !== undefined) safeUpdate[c] = payload[c]; });
+          }
+          else if (entity === 'restaurant_table') {
+            const cols = ['table_number', 'capacity', 'status', 'assigned_waiter_id', 'qr_token', 'created_at'];
             cols.forEach(c => { if (payload[c] !== undefined) safeUpdate[c] = payload[c]; });
           }
 
