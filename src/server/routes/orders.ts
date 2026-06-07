@@ -12,42 +12,23 @@ const router = express.Router();
 router.get('/active', async (req, res) => {
   const { waiter_id, role } = req.query;
 
-  // Cloud mode guard: db might be null (SQLite disabled).
-  if (!db) {
-    console.log('[Orders] SQLite disabled (db is null). Falling back to Supabase for GET /orders/active');
-    try {
-      if (!env.SUPABASE_URL || !env.SUPABASE_SERVICE_ROLE_KEY) {
-        return res.status(500).json({ error: 'Supabase not configured' });
-      }
-      const supabase = createClient(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false } });
-
-      // Fetch recent active orders (not paid/cancelled)
-      let query = supabase.from('orders').select('id, table_id, waiter_id, status, total, items, created_at, updated_at');
-      query = query.or("status.eq.pending,status.eq.preparing,status.eq.ready,status.eq.served");
-      if (waiter_id) query = query.eq('waiter_id', Number(waiter_id));
-
-      const { data, error } = await query.order('created_at', { ascending: false }).limit(200);
-      if (error) throw error;
-
-      return res.json(Array.isArray(data) ? data : []);
-    } catch (err: any) {
-      console.error('[Orders] Supabase fallback failed for /active:', err?.message || err);
-      return res.status(500).json({ error: 'Failed to fetch orders from Supabase' });
-    }
-  }
-
   try {
     const params: any = {};
     if (waiter_id) params.waiter_id = Number(waiter_id);
     if (role) params.role = role as string;
 
     const orders = await OrderService.getAll(params);
-    res.json(orders);
+    
+    // Additional filtering for 'active' status if not already handled by service
+    // Most orders returned by Service.getAll are already filtered if status was passed, 
+    // but here we want all 'non-final' statuses.
+    const activeOrders = orders.filter(o => !['paid', 'cancelled', 'rejected'].includes(o.status));
+    
+    res.json(activeOrders);
   } catch (error: any) {
-    console.error('[Orders] Real error in GET /orders:', error);
-    console.error(error.stack);
+    console.error('[Orders] Error in GET /orders/active:', error);
     res.status(500).json({ 
-      error: 'Failed to fetch orders',
+      error: 'Failed to fetch active orders',
       details: process.env.NODE_ENV === 'development' ? error.message : undefined 
     });
   }
@@ -55,163 +36,60 @@ router.get('/active', async (req, res) => {
 
 // Get all orders with filters (for management view)
 router.get('/', async (req, res) => {
-  // Cloud mode guard: db might be null (SQLite disabled).
-  if (!db) {
-    console.log('[Orders] SQLite disabled (db is null). Falling back to Supabase for GET /orders');
-    try {
-      if (!env.SUPABASE_URL || !env.SUPABASE_SERVICE_ROLE_KEY) {
-        return res.status(500).json({ error: 'Supabase not configured' });
-      }
-      const supabase = createClient(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false } });
-
-      const { waiter_id, role, status, payment_status, table_id, search } = req.query;
-      const limit = Number(req.query.limit || 50);
-      const offset = Number(req.query.offset || 0);
-
-      let q = supabase.from('orders').select('id, table_id, waiter_id, status, total, created_at, updated_at').order('created_at', { ascending: false }).range(offset, offset + limit - 1);
-
-      if (status) q = q.eq('status', status as string);
-      if (table_id) q = q.eq('table_id', Number(table_id));
-      if (waiter_id) q = q.eq('waiter_id', Number(waiter_id));
-      if (search) q = q.or(`id.ilike.%${search}%,table_id::text.ilike.%${search}%`);
-
-      const { data, error } = await q;
-      if (error) throw error;
-
-      // Compute simple stats client-side
-      const ordersArr = Array.isArray(data) ? data : [];
-      const stats = {
-        active_orders: ordersArr.filter((o: any) => o.status !== 'paid' && o.status !== 'cancelled').length,
-        preparing_orders: ordersArr.filter((o: any) => o.status === 'preparing').length,
-        ready_orders: ordersArr.filter((o: any) => o.status === 'ready').length,
-        served_orders: ordersArr.filter((o: any) => o.status === 'served').length,
-        paid_orders: ordersArr.filter((o: any) => o.status === 'paid').length,
-        revenue_today: ordersArr.reduce((sum: number, o: any) => {
-          const d = new Date(o.created_at);
-          return d.toDateString() === new Date().toDateString() ? sum + Number(o.total || 0) : sum;
-        }, 0)
-      };
-
-      return res.json({ orders: ordersArr, stats, pagination: { limit, offset, hasMore: ordersArr.length === limit } });
-    } catch (err: any) {
-      console.error('[Orders] Supabase fallback failed for /:', err?.message || err);
-      return res.status(500).json({ error: 'Failed to fetch orders from Supabase' });
-    }
-  }
-  const { waiter_id, role, status, payment_status, table_id, search, limit = 50, offset = 0 } = req.query;
+  const { waiter_id, role, status, table_id, search, limit = 50, offset = 0 } = req.query;
 
   try {
-    console.log('[Orders] GET / called with params:', { waiter_id, role, status, limit, offset });
+    const params: any = {
+      waiter_id: waiter_id ? Number(waiter_id) : undefined,
+      role: role as string,
+      status: status as string,
+      table_id: table_id ? Number(table_id) : undefined,
+    };
 
-    let query = `
-      SELECT
-        o.id, o.table_id, o.waiter_id, o.status, o.total, o.created_at,
-        o.remote_id, o.source,
-        t.table_number,
-        u.full_name as waiter_name,
-        NULL as customer_phone,
-        NULL as customer_name,
-        CASE
-          WHEN o.status IN ('paid', 'cancelled') THEN 'completed'
-          ELSE 'pending'
-        END as payment_status
-      FROM orders o
-      LEFT JOIN restaurant_tables t ON o.table_id = t.id
-      LEFT JOIN users u ON o.waiter_id = u.id
-      WHERE 1=1
-    `;
-
-    const params: any[] = [];
-
-    // RBAC filtering (legacy; authorization must be header-based)
-    if (role === 'waiter' && waiter_id) {
-      query += ` AND o.waiter_id = ?`;
-      params.push(waiter_id);
-    }
-
-    // Basic filters
-    if (status) {
-      query += ` AND o.status = ?`;
-      params.push(status);
-    }
-
-    if (table_id) {
-      query += ` AND o.table_id = ?`;
-      params.push(table_id);
-    }
-
+    const allOrders = await OrderService.getAll(params);
+    
+    // Manual search filtering if needed (SQLite handles it in SQL, Supabase might need it)
+    let filtered = allOrders;
     if (search) {
-      query += ` AND (o.id LIKE ? OR t.table_number LIKE ? OR u.full_name LIKE ?)`;
-      params.push(`%${search}%`, `%${search}%`, `%${search}%`);
+      const s = String(search).toLowerCase();
+      filtered = allOrders.filter(o => 
+        String(o.id).includes(s) || 
+        (o as any).table_number?.toLowerCase().includes(s) ||
+        (o as any).waiter_name?.toLowerCase().includes(s)
+      );
     }
 
-    query += ` ORDER BY o.created_at DESC LIMIT ? OFFSET ?`;
-    params.push(Number(limit), Number(offset));
+    // Pagination
+    const paginated = filtered.slice(Number(offset), Number(offset) + Number(limit));
 
-    const orders = db.prepare(query).all(...params);
-
-    // Simple stats
+    // Simple stats for the UI
     const stats = {
-      active_orders: 0,
-      preparing_orders: 0,
-      ready_orders: 0,
-      served_orders: 0,
-      paid_orders: 0,
-      revenue_today: 0
+      active_orders: allOrders.filter(o => !['paid', 'cancelled', 'rejected'].includes(o.status)).length,
+      preparing_orders: allOrders.filter(o => o.status === 'preparing').length,
+      ready_orders: allOrders.filter(o => o.status === 'ready').length,
+      served_orders: allOrders.filter(o => o.status === 'served').length,
+      paid_orders: allOrders.filter(o => o.status === 'paid').length,
+      revenue_today: allOrders.reduce((sum, o) => {
+        if (o.status !== 'paid') return sum;
+        const d = new Date(o.created_at || '');
+        return d.toDateString() === new Date().toDateString() ? sum + Number(o.total || 0) : sum;
+      }, 0)
     };
 
-    // Count stats with proper filtering (legacy)
-    let statsQuery = `
-      SELECT status, total, created_at
-      FROM orders o
-      WHERE 1=1
-    `;
-    const statsParams: any[] = [];
-
-    if (role === 'waiter' && waiter_id) {
-      statsQuery += ` AND o.waiter_id = ?`;
-      statsParams.push(waiter_id);
-    }
-
-    const allOrders = db.prepare(statsQuery).all(...statsParams);
-
-    allOrders.forEach((o: any) => {
-      try {
-        if (o.status !== 'paid' && o.status !== 'cancelled') stats.active_orders++;
-        if (o.status === 'preparing') stats.preparing_orders++;
-        if (o.status === 'ready') stats.ready_orders++;
-        if (o.status === 'served') stats.served_orders++;
-        if (o.status === 'paid') {
-          stats.paid_orders++;
-          const createdDate = o.created_at ? new Date(o.created_at) : null;
-          if (createdDate && createdDate.toDateString() === new Date().toDateString()) {
-            stats.revenue_today += Number(o.total) || 0;
-          }
-        }
-      } catch (e) {
-        console.warn('[Orders] Error processing stats for order', o?.id, e);
-      }
+    res.json({ 
+      orders: paginated, 
+      stats, 
+      pagination: { 
+        limit: Number(limit), 
+        offset: Number(offset), 
+        hasMore: filtered.length > Number(offset) + Number(limit) 
+      } 
     });
-
-    const response = {
-      orders: orders || [],
-      stats: stats,
-      pagination: {
-        limit: Number(limit),
-        offset: Number(offset),
-        hasMore: (orders || []).length === Number(limit)
-      }
-    };
-    res.json(response);
   } catch (error: any) {
-    console.error('=== ORDERS FETCH ERROR ===');
-    console.error('Error message:', error?.message);
-    console.error('Error code:', error?.code);
-    console.error('Full error:', error);
-    console.error(error?.stack);
+    console.error('[Orders] Error in GET /orders:', error);
     res.status(500).json({ 
       error: 'Failed to fetch orders',
-      details: process.env.NODE_ENV === 'development' ? (error?.message || error?.toString()) : undefined 
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined 
     });
   }
 });

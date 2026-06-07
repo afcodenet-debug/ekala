@@ -3,6 +3,8 @@ import { Search, Filter, SlidersHorizontal } from 'lucide-react';
 import { EnterpriseTokens } from '../../../../lib/design-system';
 import { useI18n } from '../../../../lib/i18n';
 import { Category } from '../../types';
+import { useBreakpoint } from '../../../../lib/hooks/useBreakpoint';
+import { spacing, touchTargets } from '../../../../lib/design-system/responsive';
 import { InventoryFiltersState, InventoryMarginFilter, InventoryStatusFilter } from '../../hooks/useInventoryFilters';
 
 const { colors, radius } = EnterpriseTokens;
@@ -26,9 +28,26 @@ const STATUS_OPTIONS: Array<{ value: InventoryStatusFilter; labelKey: string }> 
 
 const MARGIN_OPTIONS: Array<{ value: InventoryMarginFilter; label: string }> = [
   { value: 'all', label: 'All margins' },
-  { value: 'profitable', label: 'Profitable items' },
+  { value: 'profitable', label: 'Profitable' },
   { value: 'high_margin', label: 'High margin > 25%' },
 ];
+
+// Select style factory
+const makeSelectStyle = (isMobile: boolean): React.CSSProperties => ({
+  width: '100%',
+  padding: isMobile ? '10px 12px' : '12px 14px',
+  borderRadius: radius.md,
+  border: `1px solid ${colors.border}`,
+  background: colors.surface,
+  color: colors.text1,
+  fontSize: isMobile ? '13px' : '14px',
+  appearance: 'none' as const,
+  WebkitAppearance: 'none' as const,
+  cursor: 'pointer',
+  outline: 'none',
+  minHeight: touchTargets.min,
+  transition: 'border-color 0.15s, background 0.15s',
+});
 
 export const InventoryFilters: React.FC<InventoryFiltersProps> = React.memo(({
   categories,
@@ -39,125 +58,422 @@ export const InventoryFilters: React.FC<InventoryFiltersProps> = React.memo(({
   onClearFilters,
 }) => {
   const { t } = useI18n();
+  const bp = useBreakpoint();
+  const { isMobile, isTablet } = bp;
+
+  const cardPadding = isMobile ? '16px 14px' : isTablet ? '18px 16px' : '24px';
+  const sectionGap = isMobile ? spacing.sm : spacing.md;
+  const labelFontSize = isMobile ? '11.5px' : '12px';
+  const labelWeight = 700;
+
+  // Grid: 1 col on mobile, 3 col on tablet/desktop
+  const dropdownGrid = isMobile
+    ? 'repeat(1, minmax(0, 1fr))'
+    : isTablet
+    ? 'repeat(3, minmax(0, 1fr))'
+    : 'repeat(auto-fit, minmax(140px, 1fr))';
+
+  const selectStyle = makeSelectStyle(isMobile);
 
   return (
-    <section style={{ background: colors.card, border: `1px solid ${colors.border}`, borderRadius: radius.xl, padding: '24px', display: 'grid', gap: '18px' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', alignItems: 'center' }}>
-        <div>
-          <div style={{ fontSize: '14px', fontWeight: 800, color: colors.text1, marginBottom: '6px' }}>{t('products.management')}</div>
-          <div style={{ fontSize: '12px', color: colors.text3 }}>{t('products.searchPlaceholder')}</div>
-        </div>
-        <button
-          type="button"
-          onClick={onClearFilters}
-          disabled={activeFiltersCount === 0}
+    <section
+      style={{
+        background: colors.card,
+        border: `1px solid ${colors.border}`,
+        borderRadius: radius.xl,
+        padding: cardPadding,
+        display: 'grid',
+        gap: sectionGap,
+      }}
+    >
+      {/* Row 1: section title + clear button */}
+      <div
+        style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          gap: spacing.sm,
+          alignItems: isMobile ? 'flex-start' : 'center',
+          flexWrap: 'wrap',
+        }}
+      >
+        <div
           style={{
-            border: '1px solid ' + colors.border,
-            borderRadius: radius.md,
-            background: colors.surface,
-            color: colors.text2,
-            padding: '10px 14px',
-            fontSize: '12px',
-            fontWeight: 700,
-            cursor: activeFiltersCount === 0 ? 'not-allowed' : 'pointer',
-            opacity: activeFiltersCount === 0 ? 0.55 : 1,
+            minWidth: 0,
+            maxWidth: '100%',
           }}
         >
-          <Filter size={14} />
-          &nbsp; {t('common.clear')} {activeFiltersCount > 0 ? `(${activeFiltersCount})` : ''}
-        </button>
+          <div
+            style={{
+              fontSize: isMobile ? '13px' : '14px',
+              fontWeight: 800,
+              color: colors.text1,
+              marginBottom: '4px',
+              whiteSpace: 'nowrap',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+            }}
+          >
+            {t('products.filters')}
+          </div>
+          {!isMobile && (
+            <div
+              style={{
+                fontSize: '12px',
+                color: colors.text3,
+              }}
+            >
+              {t('products.searchPlaceholder')}
+            </div>
+          )}
+        </div>
+
+        {/* Clear filters button -stacked on mobile */}
+        <div
+          style={{
+            flexShrink: 0,
+            width: isMobile ? '100%' : 'auto',
+            marginTop: isMobile ? spacing.sm : 0,
+            order: isMobile ? 3 : 2,
+          }}
+        >
+          <button
+            type="button"
+            onClick={onClearFilters}
+            disabled={activeFiltersCount === 0}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: spacing.xs,
+              border: `1px solid ${
+                activeFiltersCount > 0
+                  ? colors.accent.amber + '80'
+                  : colors.border
+              }`,
+              borderRadius: radius.md,
+              background:
+                activeFiltersCount > 0
+                  ? `${colors.accent.amber}10`
+                  : colors.surface,
+              color:
+                activeFiltersCount > 0
+                  ? colors.accent.amber
+                  : colors.text3,
+              padding: isMobile
+                ? '10px 14px'
+                : activeFiltersCount > 0
+                ? '10px 16px'
+                : '8px 14px',
+              fontSize: isMobile ? '12px' : activeFiltersCount > 0 ? '12.5px' : '12px',
+              fontWeight: 700,
+              cursor: activeFiltersCount === 0 ? 'not-allowed' : 'pointer',
+              opacity: activeFiltersCount === 0 ? 0.55 : 1,
+              minHeight: touchTargets.min,
+              transition: 'all 0.15s ease',
+              whiteSpace: 'nowrap',
+              width: isMobile ? '100%' : 'auto',
+            }}
+            onMouseEnter={(e) => {
+              if (activeFiltersCount > 0) {
+                e.currentTarget.style.background = `${colors.accent.amber}12`;
+                e.currentTarget.style.borderColor = `${colors.accent.amber}90`;
+              }
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.background =
+                activeFiltersCount > 0 ? `${colors.accent.amber}10` : colors.surface;
+              e.currentTarget.style.borderColor =
+                activeFiltersCount > 0
+                  ? `${colors.accent.amber}80`
+                  : colors.border;
+            }}
+          >
+            <Filter
+              size={isMobile ? 14 : activeFiltersCount > 0 ? 14 : 13}
+              style={{
+                opacity: activeFiltersCount > 0 ? 1 : 0.7,
+              }}
+            />
+            {t('common.clear')}
+            {activeFiltersCount > 0 && (
+              <span
+                style={{
+                  background: colors.accent.amber,
+                  color: '#fff',
+                  borderRadius: 999,
+                  padding: '1px 7px',
+                  fontSize: '11px',
+                  fontWeight: 800,
+                  lineHeight: '18px',
+                }}
+              >
+                {activeFiltersCount}
+              </span>
+            )}
+          </button>
+        </div>
       </div>
 
-      <label style={{ position: 'relative' }}>
-        <Search size={16} style={{ position: 'absolute', left: 16, top: '50%', transform: 'translateY(-50%)', color: colors.text3 }} />
+      {/* Search input */}
+      <label
+        style={{
+          position: 'relative',
+          display: 'block',
+          order: isMobile ? 2 : 1,
+        }}
+      >
+        <Search
+          size={isMobile ? 14 : 16}
+          style={{
+            position: 'absolute',
+            left: isMobile ? '12px' : '16px',
+            top: '50%',
+            transform: 'translateY(-50%)',
+            color: colors.text3,
+            pointerEvents: 'none',
+          }}
+        />
         <input
           type="search"
           value={filters.search}
-          onChange={event => onSearchChange(event.target.value)}
+          onChange={(e) => onSearchChange(e.target.value)}
           placeholder={t('products.searchPlaceholder')}
           style={{
             width: '100%',
-            padding: '14px 16px 14px 44px',
+            padding: isMobile
+              ? '12px 14px 12px 36px'
+              : '14px 16px 14px 44px',
             borderRadius: radius.md,
             border: `1px solid ${colors.border}`,
             background: colors.surface,
             color: colors.text1,
-            fontSize: '14px',
+            fontSize: isMobile ? '14px' : '14px',
             outline: 'none',
+            boxSizing: 'border-box',
+            minHeight: touchTargets.min,
+            transition: 'border-color 0.15s ease',
+          }}
+          onFocus={(e) => {
+            e.currentTarget.style.borderColor = colors.accent.blue;
+          }}
+          onBlur={(e) => {
+            e.currentTarget.style.borderColor = colors.border;
           }}
         />
       </label>
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '14px' }}>
-        <label style={{ display: 'grid', gap: '8px', fontSize: '12px', color: colors.text3 }}>
-          <span style={{ fontWeight: 700, color: colors.text1 }}>{t('products.category')}</span>
-          <select
-            value={filters.categoryId ?? ''}
-            onChange={event => onFilterChange('categoryId', event.target.value ? Number(event.target.value) : null)}
+      {/* Dropdown filters */}
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateColumns: dropdownGrid,
+          gap: isMobile ? spacing.sm : spacing.md,
+          order: 4,
+        }}
+      >
+        {/* Category filter */}
+        <label
+          style={{
+            display: 'grid',
+            gap: '4px',
+          }}
+        >
+          <span
             style={{
-              width: '100%',
-              padding: '12px 14px',
-              borderRadius: radius.md,
-              border: `1px solid ${colors.border}`,
-              background: colors.surface,
+              fontSize: labelFontSize,
+              fontWeight: labelWeight,
               color: colors.text1,
-              fontSize: '14px',
             }}
           >
-            <option value="">{t('common.all')}</option>
-            {categories.map(category => (
-              <option key={category.id} value={category.id}>{category.name}</option>
-            ))}
-          </select>
+            {t('products.category')}
+          </span>
+          <div style={{ position: 'relative' }}>
+            <select
+              value={filters.categoryId ?? ''}
+              onChange={(e) =>
+                onFilterChange(
+                  'categoryId',
+                  e.target.value ? Number(e.target.value) : null
+                )
+              }
+              style={selectStyle}
+              onFocus={(e) => {
+                e.currentTarget.style.borderColor = colors.accent.blue;
+              }}
+              onBlur={(e) => {
+                e.currentTarget.style.borderColor = colors.border;
+              }}
+            >
+              <option value="">{t('common.all')}</option>
+              {categories.map((cat) => (
+                <option key={cat.id} value={cat.id}>
+                  {cat.name}
+                </option>
+              ))}
+            </select>
+            <span
+              style={{
+                position: 'absolute',
+                right: '12px',
+                top: '50%',
+                transform: 'translateY(-50%)',
+                color: colors.text3,
+                pointerEvents: 'none',
+                fontSize: isMobile ? '12px' : '14px',
+              }}
+            >
+              ▾
+            </span>
+          </div>
         </label>
 
-        <label style={{ display: 'grid', gap: '8px', fontSize: '12px', color: colors.text3 }}>
-          <span style={{ fontWeight: 700, color: colors.text1 }}>{t('common.status')}</span>
-          <select
-            value={filters.status}
-            onChange={event => onFilterChange('status', event.target.value as InventoryStatusFilter)}
+        {/* Status filter */}
+        <label
+          style={{
+            display: 'grid',
+            gap: '4px',
+          }}
+        >
+          <span
             style={{
-              width: '100%',
-              padding: '12px 14px',
-              borderRadius: radius.md,
-              border: `1px solid ${colors.border}`,
-              background: colors.surface,
+              fontSize: labelFontSize,
+              fontWeight: labelWeight,
               color: colors.text1,
-              fontSize: '14px',
             }}
           >
-            {STATUS_OPTIONS.map(option => (
-              <option key={option.value} value={option.value}>{t(option.labelKey)}</option>
-            ))}
-          </select>
+            {t('common.status')}
+          </span>
+          <div style={{ position: 'relative' }}>
+            <select
+              value={filters.status}
+              onChange={(e) =>
+                onFilterChange('status', e.target.value as InventoryStatusFilter)
+              }
+              style={selectStyle}
+              onFocus={(e) => {
+                e.currentTarget.style.borderColor = colors.accent.blue;
+              }}
+              onBlur={(e) => {
+                e.currentTarget.style.borderColor = colors.border;
+              }}
+            >
+              {STATUS_OPTIONS.map((opt) => (
+                <option key={opt.value} value={opt.value}>
+                  {t(opt.labelKey)}
+                </option>
+              ))}
+            </select>
+            <span
+              style={{
+                position: 'absolute',
+                right: '12px',
+                top: '50%',
+                transform: 'translateY(-50%)',
+                color: colors.text3,
+                pointerEvents: 'none',
+                fontSize: isMobile ? '12px' : '14px',
+              }}
+            >
+              ▾
+            </span>
+          </div>
         </label>
 
-        <label style={{ display: 'grid', gap: '8px', fontSize: '12px', color: colors.text3 }}>
-          <span style={{ fontWeight: 700, color: colors.text1 }}>Margin</span>
-          <select
-            value={filters.margin}
-            onChange={event => onFilterChange('margin', event.target.value as InventoryMarginFilter)}
+        {/* Margin filter */}
+        <label
+          style={{
+            display: 'grid',
+            gap: '4px',
+          }}
+        >
+          <span
             style={{
-              width: '100%',
-              padding: '12px 14px',
-              borderRadius: radius.md,
-              border: `1px solid ${colors.border}`,
-              background: colors.surface,
+              fontSize: labelFontSize,
+              fontWeight: labelWeight,
               color: colors.text1,
-              fontSize: '14px',
             }}
           >
-            {MARGIN_OPTIONS.map(option => (
-              <option key={option.value} value={option.value}>{option.label}</option>
-            ))}
-          </select>
+            {t('products.margin')}
+          </span>
+          <div style={{ position: 'relative' }}>
+            <select
+              value={filters.margin}
+              onChange={(e) =>
+                onFilterChange('margin', e.target.value as InventoryMarginFilter)
+              }
+              style={selectStyle}
+              onFocus={(e) => {
+                e.currentTarget.style.borderColor = colors.accent.blue;
+              }}
+              onBlur={(e) => {
+                e.currentTarget.style.borderColor = colors.border;
+              }}
+            >
+              {MARGIN_OPTIONS.map((opt) => (
+                <option key={opt.value} value={opt.value}>
+                  {t(`products.margin_${opt.value}`) || opt.label}
+                </option>
+              ))}
+            </select>
+            <span
+              style={{
+                position: 'absolute',
+                right: '12px',
+                top: '50%',
+                transform: 'translateY(-50%)',
+                color: colors.text3,
+                pointerEvents: 'none',
+                fontSize: isMobile ? '12px' : '14px',
+              }}
+            >
+              ▾
+            </span>
+          </div>
         </label>
       </div>
 
-      <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap', color: colors.text3, fontSize: '12px' }}>
-        <SlidersHorizontal size={14} />
-        <span>{`${filters.search ? 'Search' : 'Browse'} • ${activeFiltersCount} active filters`}</span>
+      {/* Status bar with filter summary */}
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: spacing.xs,
+          flexWrap: 'wrap',
+          color: colors.text3,
+          fontSize: isMobile ? '11.5px' : '12px',
+          paddingTop: '2px',
+          borderTop: `1px solid ${colors.border}`,
+          order: 5,
+        }}
+      >
+        <SlidersHorizontal
+          size={isMobile ? 12 : 14}
+          style={{
+            flexShrink: 0,
+          }}
+        />
+        <span>
+          {filters.search ? t('products.search') : t('products.browse')}
+        </span>
+        {activeFiltersCount > 0 && (
+          <span>
+            &middot;
+            <span
+              style={{
+                color: colors.accent.amber,
+                fontWeight: 700,
+              }}
+            >
+              {activeFiltersCount} {t('products.activeFilters')}
+            </span>
+          </span>
+        )}
+        {activeFiltersCount === 0 && (
+          <span>&middot; {t('products.noActiveFilters')}</span>
+        )}
       </div>
     </section>
   );
 });
+
+export default InventoryFilters;

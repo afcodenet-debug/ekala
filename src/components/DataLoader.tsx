@@ -23,10 +23,9 @@ export const DataLoader = () => {
       // 1. Set User Context in all stores that require it
       useTableStore.getState().setUserContext(user.id, user.role);
       useOrderStore.getState().setUserContext(user.id, user.role);
-      // Add other stores as needed
 
       // 2. Trigger parallel data fetching
-      const loadData = async () => {
+      const loadInitialData = async () => {
         try {
           await Promise.allSettled([
             useTableStore.getState().fetchTables(),
@@ -34,7 +33,6 @@ export const DataLoader = () => {
             useOrderStore.getState().fetchActiveOrders(),
             useOrderStore.getState().fetchAllOrders(),
             usePOSStore.getState().loadProducts(),
-            // Only load expenses if admin/manager
             (user.role === 'admin' || user.role === 'manager') 
               ? useExpenseStore.getState().fetchExpenses() 
               : Promise.resolve()
@@ -47,13 +45,25 @@ export const DataLoader = () => {
         }
       };
 
-      loadData();
+      loadInitialData();
     }
 
-    // Reset hasLoaded if user logs out
-    if (!isAuthenticated) {
-      hasLoaded.current = false;
+    // 3. Setup background polling for orders (Critical for QR Menu synchronicity)
+    let orderPolling: NodeJS.Timeout | null = null;
+    if (isAuthenticated && user) {
+      orderPolling = setInterval(() => {
+        // We only poll orders as they are the most volatile data (QR orders, status updates)
+        useOrderStore.getState().fetchActiveOrders();
+        useOrderStore.getState().fetchAllOrders();
+        
+        // Also poll tables occasionally to see status changes (occupied/free)
+        useTableStore.getState().fetchTables();
+      }, 10000); // Poll every 10 seconds
     }
+
+    return () => {
+      if (orderPolling) clearInterval(orderPolling);
+    };
   }, [isAuthenticated, user]);
 
   return null; // This component doesn't render anything

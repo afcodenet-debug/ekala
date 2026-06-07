@@ -3,7 +3,6 @@ import { Globe, Building2, Percent, Printer, Save, RefreshCw, CheckCircle2, Aler
 import { 
   useSettingsStore, 
   NotificationType, 
-  RoleNotificationSettings, 
   RoleNotificationConfig,
   Currency, 
   Language 

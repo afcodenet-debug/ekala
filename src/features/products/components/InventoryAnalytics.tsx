@@ -21,7 +21,7 @@ interface AnalyticsData {
   stock_turnover_summary: FastMoving[];
 }
 
-/* ─── Styles ─────────────────────────────────────────────────────────────── */
+/* ─── Responsive Styles ──────────────────────────────────────────────────── */
 const STYLES = `
   @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap');
 
@@ -64,6 +64,14 @@ const STYLES = `
     background: linear-gradient(90deg, rgba(255,255,255,0.07), transparent);
   }
 
+  /* ── KPI grid ── */
+  .ia-kpi-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 12px;
+    margin-bottom: 24px;
+  }
+
   /* ── section card ── */
   .ia-sec {
     background: var(--card); border: 1px solid var(--border); border-radius: 14px; overflow: hidden;
@@ -72,16 +80,25 @@ const STYLES = `
     display: flex; align-items: center; justify-content: space-between;
     padding: 14px 20px; border-bottom: 1px solid var(--border);
     background: rgba(255,255,255,0.012);
+    gap: 10px; flex-wrap: wrap;
+  }
+
+  /* ── 2-col main grid ── */
+  .ia-main-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+    margin-bottom: 16px;
   }
 
   /* ── table row ── */
   .ia-tr {
-    display: flex; align-items: center; padding: 0 16px; height: 52px;
+    display: flex; align-items: center; padding: 0 16px; min-height: 52px;
     border-bottom: 1px solid var(--border); transition: background 120ms ease;
   }
   .ia-tr:last-child { border-bottom: none; }
   .ia-tr:hover { background: rgba(255,255,255,0.012); }
-  .ia-th { height: 34px; background: rgba(255,255,255,0.018); border-bottom: 1px solid var(--border); cursor: default; }
+  .ia-th { min-height: 34px; background: rgba(255,255,255,0.018); border-bottom: 1px solid var(--border); cursor: default; }
   .ia-th:hover { background: rgba(255,255,255,0.018); }
 
   /* ── stock bar ── */
@@ -108,16 +125,44 @@ const STYLES = `
     background: var(--card); border: 1px solid var(--border); border-radius: 9px;
     color: var(--text-2); font-size: 12.5px; font-weight: 600; cursor: pointer;
     font-family: 'DM Sans', sans-serif; transition: all 140ms ease;
+    white-space: nowrap; flex-shrink: 0;
   }
   .ia-refresh:hover { border-color: var(--border-hi); color: var(--text-1); }
   .ia-refresh.spinning svg { animation: ia-spin 0.8s linear infinite; }
 
-  /* ── mono ── */
+  /* ── header row ── */
+  .ia-header-row {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    margin-bottom: 28px;
+    flex-wrap: wrap;
+    gap: 16px;
+  }
+
+  /* ── dead stock grid ── */
+  .ia-dead-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+    gap: 10px;
+    padding: 14px;
+  }
+
+  /* ── Low stock list ── */
+  .ia-lowstock-list { padding: 12px; }
+  .ia-lowstock-item {
+    display: flex; align-items: center; gap: 12px;
+    padding: 11px 12px; background: var(--surface);
+    border-radius: 10px; margin-bottom: 8px;
+  }
+
   .mono { font-family: 'JetBrains Mono', monospace; }
 
   /* ── skeleton ── */
   @keyframes ia-sk { 0%,100%{opacity:.2} 50%{opacity:.45} }
   .ia-sk { animation: ia-sk 1.5s ease infinite; background: var(--border); border-radius: 4px; }
+  .ia-sk-grid { display: grid; grid-template-columns: repeat(4,1fr); gap: 12px; margin-bottom: 24px; }
+  .ia-sk-2col { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
 
   /* ── spinner ── */
   @keyframes ia-spin { to { transform: rotate(360deg); } }
@@ -130,11 +175,100 @@ const STYLES = `
   .ia-root ::-webkit-scrollbar { width: 3px; }
   .ia-root ::-webkit-scrollbar-track { background: transparent; }
   .ia-root ::-webkit-scrollbar-thumb { background: var(--border-hi); border-radius: 2px; }
+
+  /* ═══════════════════════════════════════════════════════════════
+     RESPONSIVE — mobile-first
+  ═══════════════════════════════════════════════════════════════ */
+
+  /* ── Tablets landscape / small laptops (≤ 1024 px) ─────────── */
+  @media (max-width: 1024px) {
+    .ia-kpi-grid    { grid-template-columns: repeat(2, 1fr); gap: 10px; }
+    .ia-sk-grid     { grid-template-columns: repeat(2, 1fr); }
+    .ia-tr          { padding: 0 12px; }
+  }
+
+  /* ── Tablets portrait (≤ 768 px) ───────────────────────────── */
+  @media (max-width: 768px) {
+    .ia-header-row  { margin-bottom: 20px; gap: 12px; }
+    .ia-kpi-grid    { grid-template-columns: repeat(2, 1fr); gap: 9px; margin-bottom: 18px; }
+    .ia-kpi         { padding: 14px 16px; border-radius: 12px; }
+    .ia-main-grid   { grid-template-columns: 1fr; gap: 14px; margin-bottom: 14px; }
+    .ia-sk-2col     { grid-template-columns: 1fr; }
+
+    /* Hide category column in tables to save horizontal space */
+    .ia-col-cat     { display: none !important; }
+
+    .ia-sec-hd      { padding: 12px 16px; }
+    .ia-tr          { padding: 0 10px; min-height: 48px; }
+    .ia-th          { min-height: 30px; }
+
+    .ia-dead-grid   { grid-template-columns: 1fr; gap: 8px; padding: 10px; }
+    .ia-lowstock-list { padding: 10px; }
+  }
+
+  /* ── Large phones (≤ 640 px) ────────────────────────────────── */
+  @media (max-width: 640px) {
+    .ia-kpi-grid    { gap: 8px; }
+    .ia-kpi         { padding: 12px 14px; border-radius: 11px; }
+    .ia-kpi .mono   { font-size: 18px !important; }
+    .ia-kpi p:last-child { font-size: 10px !important; }
+
+    .ia-sec-hd      { padding: 10px 14px; gap: 8px; }
+    .ia-sec-hd h3   { font-size: 13px !important; }
+    .ia-sec-hd p    { font-size: 10.5px !important; }
+
+    /* In top sellers table: hide revenue bar mini chart, keep cols tight */
+    .ia-tr          { padding: 0 8px; min-height: 44px; }
+    .ia-rank        { width: 20px; height: 20px; font-size: 9.5px; border-radius: 5px; }
+  }
+
+  /* ── Standard phones (≤ 480 px) ────────────────────────────── */
+  @media (max-width: 480px) {
+    .ia-kpi-grid    { grid-template-columns: repeat(2, 1fr); gap: 7px; margin-bottom: 14px; }
+    .ia-kpi         { padding: 11px 12px; border-radius: 10px; }
+    .ia-kpi .mono   { font-size: 16px !important; }
+
+    .ia-header-row h2   { font-size: 20px !important; }
+    .ia-header-row p:first-child { font-size: 10px !important; }
+    .ia-refresh     { padding: 7px 12px; font-size: 11.5px; }
+
+    .ia-lowstock-item   { flex-wrap: wrap; gap: 8px; padding: 10px; }
+    .ia-lowstock-item .ia-badge { align-self: flex-start; }
+
+    .ia-dead-grid   { padding: 8px; gap: 7px; }
+
+    /* Waste list: stack layout */
+    .ia-waste-row   { flex-direction: column !important; align-items: flex-start !important; gap: 4px !important; padding: 10px 0 !important; }
+    .ia-waste-row .mono { font-size: 13px !important; }
+  }
+
+  /* ── Very small phones (≤ 360 px) ───────────────────────────── */
+  @media (max-width: 360px) {
+    .ia-kpi-grid    { grid-template-columns: repeat(2, 1fr); gap: 6px; }
+    .ia-kpi         { padding: 10px; }
+    .ia-kpi .mono   { font-size: 15px !important; }
+    .ia-tr          { padding: 0 6px; }
+  }
+
+  /* ── Touch targets ─────────────────────────────────────────── */
+  @media (pointer: coarse) {
+    .ia-tr          { min-height: 52px; }
+    .ia-refresh     { min-height: 42px; }
+  }
+
+  /* ── Skeleton responsive ───────────────────────────────────── */
+  @media (max-width: 768px) {
+    .ia-sk-grid { grid-template-columns: repeat(2, 1fr); }
+    .ia-sk-2col { grid-template-columns: 1fr; }
+  }
+  @media (max-width: 480px) {
+    .ia-sk-grid { grid-template-columns: repeat(2, 1fr); gap: 8px; }
+  }
 `;
 
 /* ─── Helpers ─────────────────────────────────────────────────────────────── */
-const TH: React.FC<{ label: string; flex?: number; align?: 'left'|'right'|'center' }> = ({ label, flex=1, align='left' }) => (
-  <div style={{ flex, display:'flex', alignItems:'center', padding:'0 8px', justifyContent: align==='right'?'flex-end':align==='center'?'center':'flex-start' }}>
+const TH: React.FC<{ label: string; flex?: number; align?: 'left'|'right'|'center'; className?: string }> = ({ label, flex=1, align='left', className='' }) => (
+  <div className={className} style={{ flex, display:'flex', alignItems:'center', padding:'0 8px', justifyContent: align==='right'?'flex-end':align==='center'?'center':'flex-start' }}>
     <span style={{ fontSize:9, fontWeight:700, color:'var(--text-3)', textTransform:'uppercase', letterSpacing:'0.1em' }}>{label}</span>
   </div>
 );
@@ -154,7 +288,7 @@ const SecHd: React.FC<{ icon: React.ReactNode; color: string; dim: string; title
         {sub && <p style={{ fontSize:11.5, color:'var(--text-3)', margin:0 }}>{sub}</p>}
       </div>
     </div>
-    {right}
+    {right && <div style={{ flexShrink:0 }}>{right}</div>}
   </div>
 );
 
@@ -165,7 +299,7 @@ const EmptyMsg: React.FC<{ icon?: string; msg: string }> = ({ icon='✅', msg })
   </div>
 );
 
-/* ─── Icons ─────────────────────────────────────────────────────────────────── */
+/* ─── Icons ─────────────────────────────────────────────────────────────── */
 const IC = {
   pkg:     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 2l8 4-8 4-8-4 8-4zM2 6l8 4v10L2 16V6zM22 6l-8 4v10l8-4V6z"/></svg>,
   trend:   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M22 7l-9.5 9.5-5-5L1 18"/><polyline points="16 7 22 7 22 13"/></svg>,
@@ -201,10 +335,10 @@ export const InventoryAnalyticsPage: React.FC = () => {
   /* ── Skeleton ── */
   if (isLoading) return (
     <div className="ia-root" style={{ padding:'36px 0 60px' }}>
-      <div style={{ display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:12, marginBottom:24 }}>
+      <div className="ia-sk-grid">
         {[1,2,3,4].map(i => <div key={i} className="ia-sk" style={{ height:110, borderRadius:14 }}/>)}
       </div>
-      <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:16 }}>
+      <div className="ia-sk-2col" style={{ gap: 16 }}>
         {[1,2,3,4].map(i => <div key={i} className="ia-sk" style={{ height:280, borderRadius:14 }}/>)}
       </div>
     </div>
@@ -230,7 +364,7 @@ export const InventoryAnalyticsPage: React.FC = () => {
     <div className="ia-root ia-fade" style={{ paddingBottom:80 }}>
 
       {/* ── Header ── */}
-      <div style={{ display:'flex', alignItems:'flex-end', justifyContent:'space-between', marginBottom:28, flexWrap:'wrap', gap:16 }}>
+      <div className="ia-header-row">
         <div>
           <p style={{ fontSize:11, fontWeight:600, color:'var(--text-3)', textTransform:'uppercase', letterSpacing:'0.12em', marginBottom:6 }}>
             Inventaire
@@ -249,7 +383,7 @@ export const InventoryAnalyticsPage: React.FC = () => {
       </div>
 
       {/* ── KPI strip ── */}
-      <div style={{ display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:12, marginBottom:24 }}>
+      <div className="ia-kpi-grid">
         {[
           { label: t('analytics.inventoryValue')   || 'Valeur inventaire',    value: fmt(valuation.total_inventory_value),  sub: `${valuation.active_skus} ${t('analytics.activeSkus')||'SKUs actifs'}`, color:'var(--blue)',  dim:'var(--blue-dim)',  icon:IC.pkg    },
           { label: t('analytics.potentialProfit')  || 'Profit potentiel',     value: fmt(valuation.potential_gross_profit), sub: t('analytics.potentialProfitSub')  || 'Si tout vendu',                   color:'var(--green)', dim:'var(--green-dim)', icon:IC.trend  },
@@ -258,11 +392,10 @@ export const InventoryAnalyticsPage: React.FC = () => {
         ].map((k, i) => (
           <div key={i} className="ia-kpi" style={{ animationDelay:`${i*60}ms` }}>
             <div style={{ position:'absolute', top:0, left:0, right:0, height:2, background:`linear-gradient(90deg,${k.color}55,transparent)`, borderRadius:'14px 14px 0 0' }}/>
-            {/* glow */}
             <div style={{ position:'absolute', top:'-20%', right:'-5%', width:100, height:100, background:`radial-gradient(circle,${k.color}12 0%,transparent 65%)`, filter:'blur(16px)', pointerEvents:'none' }}/>
-            <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:14 }}>
-              <span style={{ fontSize:10, fontWeight:600, color:'var(--text-3)', textTransform:'uppercase', letterSpacing:'0.1em' }}>{k.label}</span>
-              <div style={{ width:28, height:28, borderRadius:8, background:k.dim, display:'flex', alignItems:'center', justifyContent:'center', color:k.color }}>{k.icon}</div>
+            <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:14, gap:6 }}>
+              <span style={{ fontSize:10, fontWeight:600, color:'var(--text-3)', textTransform:'uppercase', letterSpacing:'0.1em', lineHeight:1.3 }}>{k.label}</span>
+              <div style={{ width:28, height:28, borderRadius:8, background:k.dim, display:'flex', alignItems:'center', justifyContent:'center', color:k.color, flexShrink:0 }}>{k.icon}</div>
             </div>
             <p className="mono" style={{ fontSize:22, fontWeight:300, color:'var(--text-1)', margin:'0 0 4px', lineHeight:1 }}>{k.value}</p>
             {k.sub && <p style={{ fontSize:11, color:'var(--text-3)', margin:0 }}>{k.sub}</p>}
@@ -271,7 +404,7 @@ export const InventoryAnalyticsPage: React.FC = () => {
       </div>
 
       {/* ── 2×2 grid ── */}
-      <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:16, marginBottom:16 }}>
+      <div className="ia-main-grid">
 
         {/* Top sellers */}
         <div className="ia-sec">
@@ -285,7 +418,7 @@ export const InventoryAnalyticsPage: React.FC = () => {
               <div className="ia-tr ia-th">
                 <TH label="#"         flex={0.4} align="center"/>
                 <TH label="Produit"   flex={2}/>
-                <TH label="Catégorie" flex={1.2}/>
+                <TH label="Catégorie" flex={1.2} className="ia-col-cat"/>
                 <TH label="Unités"    flex={0.8} align="right"/>
                 <TH label="Revenus"   flex={1}   align="right"/>
               </div>
@@ -304,7 +437,8 @@ export const InventoryAnalyticsPage: React.FC = () => {
                         <div style={{ height:'100%', width:`${(p.revenue/maxRev)*100}%`, background:'var(--blue)', borderRadius:1, transition:'width 600ms ease' }}/>
                       </div>
                     </div>
-                    <div style={{ flex:1.2, padding:'0 8px' }}>
+                    {/* Category hidden on mobile via CSS */}
+                    <div className="ia-col-cat" style={{ flex:1.2, padding:'0 8px' }}>
                       <span style={{ fontSize:11.5, color:'var(--text-3)' }}>{p.category_name}</span>
                     </div>
                     <div style={{ flex:0.8, padding:'0 8px', display:'flex', justifyContent:'flex-end' }}>
@@ -333,12 +467,12 @@ export const InventoryAnalyticsPage: React.FC = () => {
             }
           />
           {!low_stock_alerts.length ? <EmptyMsg msg={t('analytics.allStockHealthy')||'Tous les stocks sont OK'}/> : (
-            <div style={{ padding:'12px' }}>
+            <div className="ia-lowstock-list">
               {low_stock_alerts.map(item => {
                 const isCrit = item.urgency === 'critical';
                 const pct = Math.min(100, Math.round((item.stock / Math.max(item.minimum_stock,1))*100));
                 return (
-                  <div key={item.product_id} style={{ display:'flex', alignItems:'center', gap:12, padding:'11px 12px', background:'var(--surface)', border:`1px solid ${isCrit?'rgba(239,68,68,0.2)':'rgba(245,158,11,0.2)'}`, borderRadius:10, marginBottom:8 }}>
+                  <div key={item.product_id} className="ia-lowstock-item" style={{ border:`1px solid ${isCrit?'rgba(239,68,68,0.2)':'rgba(245,158,11,0.2)'}` }}>
                     <div style={{ flex:1, minWidth:0 }}>
                       <p style={{ fontSize:13, fontWeight:500, color:'var(--text-1)', margin:'0 0 1px', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{item.product_name}</p>
                       <p style={{ fontSize:11, color:'var(--text-3)', margin:'0 0 5px' }}>{item.category_name}</p>
@@ -378,7 +512,7 @@ export const InventoryAnalyticsPage: React.FC = () => {
                 <span className="mono" style={{ fontSize:18, fontWeight:500, color:'var(--red)' }}>{fmt(wastedTotal)}</span>
               </div>
               {waste_analytics.map(w => (
-                <div key={w.reason} style={{ display:'flex', alignItems:'center', justifyContent:'space-between', padding:'11px 0', borderBottom:'1px solid var(--border)' }}>
+                <div key={w.reason} className="ia-waste-row" style={{ display:'flex', alignItems:'center', justifyContent:'space-between', padding:'11px 0', borderBottom:'1px solid var(--border)' }}>
                   <div style={{ flex:1 }}>
                     <p style={{ fontSize:13, fontWeight:500, color:'var(--text-1)', margin:'0 0 2px', textTransform:'capitalize' }}>
                       {t(`products.reason.${w.reason}`)||w.reason}
@@ -404,7 +538,7 @@ export const InventoryAnalyticsPage: React.FC = () => {
             <>
               <div className="ia-tr ia-th">
                 <TH label="Produit"     flex={2}/>
-                <TH label="Catégorie"   flex={1.2}/>
+                <TH label="Catégorie"   flex={1.2} className="ia-col-cat"/>
                 <TH label="Unités 30j"  flex={0.9} align="right"/>
                 <TH label="Rotation"    flex={0.9} align="right"/>
               </div>
@@ -413,7 +547,7 @@ export const InventoryAnalyticsPage: React.FC = () => {
                   <div style={{ flex:2, padding:'0 8px', minWidth:0 }}>
                     <p style={{ fontSize:13, fontWeight:500, color:'var(--text-1)', margin:0, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{p.product_name}</p>
                   </div>
-                  <div style={{ flex:1.2, padding:'0 8px' }}>
+                  <div className="ia-col-cat" style={{ flex:1.2, padding:'0 8px' }}>
                     <span style={{ fontSize:11.5, color:'var(--text-3)' }}>{p.category_name}</span>
                   </div>
                   <div style={{ flex:0.9, padding:'0 8px', display:'flex', justifyContent:'flex-end' }}>
@@ -441,7 +575,7 @@ export const InventoryAnalyticsPage: React.FC = () => {
             sub="Produits sans rotation depuis 90 jours"
             right={<span className="mono" style={{ fontSize:11, color:'var(--text-3)' }}>{dead_stock.length} article{dead_stock.length!==1?'s':''}</span>}
           />
-          <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(260px,1fr))', gap:10, padding:'14px' }}>
+          <div className="ia-dead-grid">
             {dead_stock.map(item => (
               <div key={item.product_id} style={{ padding:'13px 16px', background:'var(--surface)', border:'1px solid rgba(245,158,11,0.15)', borderRadius:11, display:'flex', alignItems:'center', gap:12 }}>
                 <div style={{ flex:1, minWidth:0 }}>
