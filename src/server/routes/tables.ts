@@ -6,6 +6,19 @@ import { createClient } from '@supabase/supabase-js';
 
 const router = express.Router();
 
+// Local <-> remote status mapping (mirrors TableService)
+// Supabase CHECK constraint only allows: available | occupied | reserved | cleaning
+function remoteToLocalStatus(s: string): string {
+  if (s === 'occupied') return 'active';
+  return s;
+}
+
+function localToRemoteStatus(s: string): string {
+  if (s === 'active') return 'occupied';
+  if (s === 'out_of_service') return 'available';
+  return s;
+}
+
 // Get tables (Role-based filtering)
 router.get('/', async (req, res) => {
   const { waiter_id, role } = req.query;
@@ -35,7 +48,13 @@ router.get('/', async (req, res) => {
         return res.status(500).json({ error: 'Failed to fetch tables from Supabase' });
       }
 
-      return res.json(data || []);
+      // Normalize status for the local frontend
+      const normalized = (data || []).map((t: any) => ({
+        ...t,
+        status: remoteToLocalStatus(t.status),
+      }));
+
+      return res.json(normalized);
     } catch (error: any) {
       console.error('[Tables Supabase] GET critical error:', error);
       return res.status(500).json({ error: 'Failed to fetch tables from Supabase' });
@@ -80,10 +99,10 @@ router.get('/waiter/:waiterId', async (req, res) => {
         console.error('[Tables Supabase] GET by waiter error:', error);
         return res.status(500).json({ error: 'Failed to fetch waiter tables from Supabase' });
       }
-      return res.json(data || []);
+      const normalized = (data || []).map((t: any) => ({ ...t, status: remoteToLocalStatus(t.status) }));
+      return res.json(normalized);
     }
 
-    // Local SQLite only - lazy load
     const dbMod = await import('../db/database');
     const localDb = dbMod.db;
 
@@ -110,9 +129,6 @@ router.post('/:id/open', async (req, res) => {
     const tableId = Number(id);
     const waiterId = Number(waiter_id);
 
-    // Validate permissions (would be done in middleware)
-    // For now, assume valid
-
     const table = await TableService.openTable(tableId, waiterId);
     res.json({ table, success: true });
   } catch (error: any) {
@@ -135,7 +151,7 @@ router.patch('/:id', requireAdminOrManager, async (req, res) => {
   }
 });
 
-// Regenerate QR token (Admin/Manager only) — old token becomes invalid immediately
+// Regenerate QR token (Admin/Manager only)
 router.post('/:id/regenerate-qr', requireAdminOrManager, async (req, res) => {
   const { id } = req.params;
 
@@ -205,7 +221,6 @@ router.post('/', requireAdminOrManager, async (req, res) => {
   const { table_number, capacity, status, assigned_waiter_id } = req.body;
 
   try {
-    // CRITICAL: table_number must be a string to avoid NaN in local/remote DBs
     const tableData = {
       table_number: String(table_number),
       capacity: Number(capacity) || 4,

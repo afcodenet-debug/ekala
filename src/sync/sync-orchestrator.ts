@@ -191,7 +191,13 @@ export class SyncOrchestrator {
   }
 
   /**
-   * Internal pull for tables
+   * Internal pull for tables (bidirectional sync: Supabase -> local SQLite)
+   *
+   * Robust against:
+   *  - Local row with no remote_id yet (newly created in local app)
+   *  - Local row that has the same id as a Supabase row (race condition)
+   *  - table_number conflict between local-only row and remote row
+   *  - Stale cursor (always picks up everything modified after `since`)
    */
   private async syncPullTables(since: string): Promise<number> {
     const { getSupabaseClient } = require('../server/database/supabase.client');
@@ -216,47 +222,63 @@ export class SyncOrchestrator {
         // Business filter (manual if column wasn't in SQL query)
         if (remote.business_id && remote.business_id !== this.businessId) continue;
 
-        // CRITICAL: Look up by remote_id OR local ID to prevent duplicates
-        const local = this.db.prepare('SELECT id, updated_at FROM restaurant_tables WHERE remote_id = ? OR id = ?')
-          .get(remote.id, remote.id) as { id: number, updated_at: string } | undefined;
+        // Status mapping: remote 'occupied' -> local 'active'
+        let mappedStatus = remote.status;
+        if (mappedStatus === 'occupied') mappedStatus = 'active';
 
-        const shouldApply = !local || new Date(remote.updated_at) > new Date(local.updated_at);
+        const fields: Record<string, any> = {
+          remote_id: remote.id,
+          business_id: remote.business_id,
+          updated_at: remote.updated_at,
+          created_at: remote.created_at,
+          table_number: String(remote.table_number),
+          capacity: remote.capacity,
+          status: mappedStatus,
+          assigned_waiter_id: remote.assigned_waiter_id,
+          qr_token: remote.qr_token,
+        };
 
-        if (shouldApply) {
-          // Status mapping: remote 'occupied' -> local 'active'
-          let mappedStatus = remote.status;
-          if (mappedStatus === 'occupied') mappedStatus = 'active';
+        // 1) Find by remote_id (the canonical Supabase key)
+        const byRemote = this.db.prepare(
+          'SELECT id, updated_at, table_number FROM restaurant_tables WHERE remote_id = ?'
+        ).get(remote.id) as { id: number; updated_at: string; table_number: string } | undefined;
 
-          const fields: Record<string, any> = {
-            remote_id: remote.id,
-            business_id: remote.business_id,
-            updated_at: remote.updated_at,
-            created_at: remote.created_at,
-            table_number: String(remote.table_number),
-            capacity: remote.capacity,
-            status: mappedStatus,
-            assigned_waiter_id: remote.assigned_waiter_id,
-            qr_token: remote.qr_token
-          };
+        // 2) Find by local id (covers case where insert was done locally and used
+        //    the same id as the Supabase row, or where remote_id was never set)
+        const byLocalId = this.db.prepare(
+          'SELECT id, updated_at, table_number FROM restaurant_tables WHERE id = ?'
+        ).get(remote.id) as { id: number; updated_at: string; table_number: string } | undefined;
 
-          const cols = Object.keys(fields);
-          const setClauses = cols.map(k => `"${k}" = ?`).join(', ');
-          const params = cols.map(k => fields[k]);
+        // 3) Find by table_number (covers case where local row exists for the same
+        //    table number but with a DIFFERENT id and no remote_id yet)
+        const byNumber = this.db.prepare(
+          'SELECT id, updated_at, table_number, remote_id FROM restaurant_tables WHERE table_number = ?'
+        ).get(String(remote.table_number)) as { id: number; updated_at: string; table_number: string; remote_id: number | null } | undefined;
 
-          if (local) {
-            this.db.prepare(`UPDATE restaurant_tables SET ${setClauses} WHERE id = ?`).run(...params, local.id);
-          } else {
-            // Check for table_number conflict before insert
-            const conflict = this.db.prepare('SELECT id FROM restaurant_tables WHERE table_number = ?').get(fields.table_number) as { id: number } | undefined;
-            if (conflict) {
-              // Update existing local record with remote_id and other fields
-              this.db.prepare(`UPDATE restaurant_tables SET ${setClauses} WHERE id = ?`).run(...params, conflict.id);
-            } else {
-              this.db.prepare(`INSERT INTO restaurant_tables (${cols.map(c => `"${c}"`).join(', ')}) VALUES (${cols.map(() => '?').join(', ')})`).run(...params);
-            }
-          }
-          applied++;
+        // Pick the best match: prefer remote_id, then local id, then table_number
+        const local = byRemote || byLocalId || byNumber;
+
+        const remoteUpdatedAt = new Date(remote.updated_at);
+        const localUpdatedAt = local?.updated_at ? new Date(local.updated_at) : null;
+        const shouldApply = !local || !localUpdatedAt || remoteUpdatedAt > localUpdatedAt;
+
+        if (!shouldApply) continue;
+
+        const cols = Object.keys(fields);
+        const setClauses = cols.map(k => `"${k}" = ?`).join(', ');
+        const params = cols.map(k => fields[k]);
+
+        if (local) {
+          // Update existing local row, even if its id differs from the remote id.
+          // This is safe because we matched on (remote_id OR id OR table_number).
+          this.db.prepare(`UPDATE restaurant_tables SET ${setClauses} WHERE id = ?`).run(...params, local.id);
+        } else {
+          // Brand new row from Supabase — let SQLite auto-assign a new id
+          this.db.prepare(
+            `INSERT INTO restaurant_tables (${cols.map(c => `"${c}"`).join(', ')}) VALUES (${cols.map(() => '?').join(', ')})`
+          ).run(...params);
         }
+        applied++;
       }
     });
 

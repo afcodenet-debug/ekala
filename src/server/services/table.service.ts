@@ -7,6 +7,8 @@ export type TableStatus = 'available' | 'active' | 'reserved' | 'cleaning' | 'ou
 
 export interface Table {
   id: number;
+  remote_id?: number | null;
+  business_id?: string | null;
   table_number: string;
   capacity: number;
   status: TableStatus;
@@ -14,6 +16,25 @@ export interface Table {
   qr_token?: string | null;
   created_at: string;
   updated_at: string;
+}
+
+/**
+ * Status mapping between local SQLite and Supabase (CHECK constraint).
+ *  - local 'active'        <-> remote 'occupied'
+ *  - local 'out_of_service' <-> remote 'available'
+ *  - local 'available'     <-> remote 'available'
+ *  - local 'reserved'      <-> remote 'reserved'
+ *  - local 'cleaning'      <-> remote 'cleaning'
+ */
+function localToRemoteStatus(status: string): string {
+  if (status === 'active') return 'occupied';
+  if (status === 'out_of_service') return 'available';
+  return status;
+}
+
+function remoteToLocalStatus(status: string): string {
+  if (status === 'occupied') return 'active';
+  return status;
 }
 
 export class TableService {
@@ -37,7 +58,8 @@ export class TableService {
 
         return (data || []).map((t: any) => ({
           ...t,
-          waiter_name: t.waiter?.full_name
+          waiter_name: t.waiter?.full_name,
+          status: remoteToLocalStatus(t.status),
         }));
       } catch (err: any) {
         console.error('[TableService] Supabase getAll failed:', err?.message || err);
@@ -57,7 +79,6 @@ export class TableService {
       const conditions: string[] = [];
       const values: any[] = [];
 
-      // Role-based filtering
       if (params?.role === 'waiter' && params.waiter_id) {
         conditions.push('t.assigned_waiter_id = ?');
         values.push(params.waiter_id);
@@ -97,7 +118,8 @@ export class TableService {
 
         return {
           ...data,
-          waiter_name: data.waiter?.full_name
+          waiter_name: data.waiter?.full_name,
+          status: remoteToLocalStatus(data.status) as any,
         };
       } catch (err: any) {
         console.error('[TableService] Supabase getById failed:', err?.message || err);
@@ -122,35 +144,43 @@ export class TableService {
     }
   }
 
+  /**
+   * Create a new table.
+   *
+   * Behavior is now CONSISTENT regardless of whether we are in pure cloud mode
+   * (RENDER_CLOUD_MODE) or local mode:
+   *  - In pure cloud mode (no local DB): insert directly in Supabase.
+   *  - In local mode: insert in SQLite + queue an outbox entry so the
+   *    SyncOrchestrator pushes it to Supabase. The local write is durable, and
+   *    the Supabase write is retried automatically by the orchestrator.
+   *
+   * This eliminates the previous double-write inconsistency (root cause of
+   * "T9 created locally never appears in Vercel").
+   */
   static async create(tableData: Omit<Table, 'id' | 'created_at' | 'updated_at'>): Promise<Table> {
-    // Check Supabase first for immediate sync across all devices
-    if (env.SUPABASE_URL && env.SUPABASE_SERVICE_ROLE_KEY) {
-      console.log('[TableService] Supabase configured - creating table directly in Supabase for immediate sync');
+    const businessId = process.env.SYNC_BUSINESS_ID || 'default-business';
+
+    if (!db || env.RENDER_CLOUD_MODE) {
+      if (!env.SUPABASE_URL || !env.SUPABASE_SERVICE_ROLE_KEY) {
+        throw new Error('Supabase not configured');
+      }
       try {
         const { getSupabaseClient } = require('../database/supabase.client');
         const supabase = getSupabaseClient();
 
-        // 1. Check for duplicate table_number in Supabase first
         const { data: existing, error: checkErr } = await supabase
           .from('restaurant_tables')
           .select('id')
           .eq('table_number', String(tableData.table_number))
           .maybeSingle();
-
         if (checkErr) console.error('[TableService] Supabase check error:', checkErr);
-
         if (existing) {
           throw new Error(`Le numéro de table "${tableData.table_number}" existe déjà.`);
         }
 
         const qrToken = crypto.randomUUID().replace(/-/g, '');
-        const businessId = process.env.SYNC_BUSINESS_ID || 'default-business';
+        const supabaseStatus = localToRemoteStatus(tableData.status);
 
-        // Status mapping for Supabase CHECK constraint
-        const supabaseStatus = tableData.status === 'active' ? 'occupied' : 
-                              (tableData.status === 'out_of_service' ? 'available' : tableData.status);
-
-        // 2. Insert into Supabase with conflict resolution on table_number
         const { data, error } = await supabase
           .from('restaurant_tables')
           .upsert([{
@@ -167,38 +197,16 @@ export class TableService {
           .single();
 
         if (error) {
-          console.error('[TableService] Supabase insert error:', error);
-          if (error.code === '23505') throw new Error(`Le numéro de table "${tableData.table_number}" existe déjà.`);
-          throw new Error(`Erreur Supabase: ${error.message}`);
-        }
-
-        // 3. Also create locally for offline access (if db available)
-        if (db) {
-          try {
-            const now = new Date().toISOString();
-            const localResult = db.prepare(`
-              INSERT OR IGNORE INTO restaurant_tables (id, table_number, capacity, status, assigned_waiter_id, qr_token, created_at, updated_at, business_id)
-              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            `).run(
-              data.id,
-              String(tableData.table_number),
-              tableData.capacity,
-              tableData.status,
-              tableData.assigned_waiter_id,
-              qrToken,
-              now,
-              now,
-              businessId
-            );
-            console.log('[TableService] Also created locally for offline access, id:', data.id);
-          } catch (localErr) {
-            console.warn('[TableService] Local creation failed (non-blocking):', localErr);
+          if (error.code === '23505') {
+            throw new Error(`Le numéro de table "${tableData.table_number}" existe déjà.`);
           }
+          throw new Error(`Erreur Supabase: ${error.message}`);
         }
 
         return {
           ...data,
-          waiter_name: undefined
+          status: remoteToLocalStatus(data.status) as any,
+          waiter_name: undefined,
         } as Table;
       } catch (err: any) {
         console.error('[TableService] Supabase create failed:', err?.message || err);
@@ -206,16 +214,9 @@ export class TableService {
       }
     }
 
-    // Fallback to pure SQLite mode (no Supabase configured)
-    if (!db) {
-      throw new Error('Base de données non disponible');
-    }
-
+    // ===== Local mode: SQLite + outbox =====
     try {
-      const businessId = process.env.SYNC_BUSINESS_ID || 'default-business';
-
       return withOutboxTransaction(db, businessId, () => {
-        // Check if table number already exists locally
         const existing = db.prepare('SELECT id FROM restaurant_tables WHERE table_number = ?').get(tableData.table_number);
         if (existing) {
           throw new Error(`Le numéro de table "${tableData.table_number}" existe déjà.`);
@@ -224,14 +225,15 @@ export class TableService {
         const now = new Date().toISOString();
         const qrToken = crypto.randomUUID().replace(/-/g, '');
         const result = db.prepare(`
-          INSERT INTO restaurant_tables (table_number, capacity, status, assigned_waiter_id, qr_token, created_at, updated_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?)
+          INSERT INTO restaurant_tables (table_number, capacity, status, assigned_waiter_id, qr_token, business_id, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         `).run(
           String(tableData.table_number),
           tableData.capacity,
           tableData.status,
           tableData.assigned_waiter_id,
           qrToken,
+          businessId,
           now,
           now
         );
@@ -251,11 +253,12 @@ export class TableService {
           throw new Error('Échec de récupération de la table créée');
         }
 
-        // Queue for sync
+        // CRITICAL: queue the change for Supabase push via the SyncOrchestrator.
+        // This is the only path to Supabase in local mode.
         try {
           getProductSyncService().queueChangeInsideTransaction('restaurant_table', 'insert', {
             ...newTable,
-            business_id: businessId
+            business_id: businessId,
           });
         } catch (syncErr) {
           console.warn('[TableService] Failed to queue table for sync:', syncErr);
@@ -270,14 +273,16 @@ export class TableService {
   }
 
   static async update(id: number, updates: Partial<Omit<Table, 'id' | 'created_at' | 'updated_at'>>): Promise<Table> {
-    // First try Supabase for immediate sync across all devices
-    if (env.SUPABASE_URL && env.SUPABASE_SERVICE_ROLE_KEY) {
-      console.log('[TableService] Updating table directly in Supabase for immediate sync');
+    const businessId = process.env.SYNC_BUSINESS_ID || 'default-business';
+
+    if (!db || env.RENDER_CLOUD_MODE) {
+      if (!env.SUPABASE_URL || !env.SUPABASE_SERVICE_ROLE_KEY) {
+        throw new Error('Supabase not configured');
+      }
       try {
         const { getSupabaseClient } = require('../database/supabase.client');
         const supabase = getSupabaseClient();
 
-        // Check for table_number conflict if changing
         if (updates.table_number) {
           const { data: existing, error: checkErr } = await supabase
             .from('restaurant_tables')
@@ -285,61 +290,32 @@ export class TableService {
             .eq('table_number', String(updates.table_number))
             .neq('id', id)
             .maybeSingle();
-          
           if (checkErr) console.error('[TableService] Supabase check error:', checkErr);
           if (existing) {
             throw new Error(`Le numéro de table "${updates.table_number}" existe déjà.`);
           }
         }
 
-        // Status mapping for Supabase CHECK constraint
-        const supabaseUpdates = { ...updates };
-        if (supabaseUpdates.status === 'active') supabaseUpdates.status = 'occupied' as any;
-        if (supabaseUpdates.status === 'out_of_service') supabaseUpdates.status = 'available' as any;
+        const supabaseUpdates: any = { ...updates };
+        if (supabaseUpdates.status) supabaseUpdates.status = localToRemoteStatus(supabaseUpdates.status);
+        supabaseUpdates.updated_at = new Date().toISOString();
 
         const { data, error } = await supabase
           .from('restaurant_tables')
-          .update({
-            ...supabaseUpdates,
-            updated_at: new Date().toISOString()
-          })
+          .update(supabaseUpdates)
           .eq('id', id)
           .select()
           .single();
 
         if (error) {
-          console.error('[TableService] Supabase update error:', error);
           throw new Error(`Erreur Supabase: ${error.message}`);
         }
         if (!data) throw new Error('Table non trouvée');
 
-        // Also update locally for offline access (if db available)
-        if (db) {
-          try {
-            const updateFields: string[] = [];
-            const values: any[] = [];
-            
-            Object.entries(updates).forEach(([key, value]) => {
-              if (value !== undefined) {
-                updateFields.push(`${key} = ?`);
-                values.push(value);
-              }
-            });
-            
-            if (updateFields.length > 0) {
-              updateFields.push('updated_at = ?');
-              values.push(new Date().toISOString(), id);
-              db.prepare(`UPDATE restaurant_tables SET ${updateFields.join(', ')} WHERE id = ?`).run(...values);
-            }
-            console.log('[TableService] Also updated locally for offline access, id:', id);
-          } catch (localErr) {
-            console.warn('[TableService] Local update failed (non-blocking):', localErr);
-          }
-        }
-
         return {
           ...data,
-          waiter_name: undefined
+          status: remoteToLocalStatus(data.status) as any,
+          waiter_name: undefined,
         } as Table;
       } catch (err: any) {
         console.error('[TableService] Supabase update failed:', err?.message || err);
@@ -347,21 +323,14 @@ export class TableService {
       }
     }
 
-    // Fallback to pure SQLite mode (no Supabase configured)
-    if (!db) {
-      throw new Error('Base de données non disponible');
-    }
-
+    // ===== Local mode: SQLite + outbox =====
     try {
-      const businessId = process.env.SYNC_BUSINESS_ID || 'default-business';
-
       return withOutboxTransaction(db, businessId, () => {
         const table = db.prepare('SELECT * FROM restaurant_tables WHERE id = ?').get(id) as Table | undefined;
         if (!table) {
           throw new Error('Table not found');
         }
 
-        // Check if table number conflict
         if (updates.table_number && updates.table_number !== table.table_number) {
           const existing = db.prepare('SELECT id FROM restaurant_tables WHERE table_number = ? AND id != ?')
             .get(updates.table_number, id);
@@ -381,7 +350,7 @@ export class TableService {
         });
 
         if (updateFields.length === 0) {
-          return table; // No changes
+          return table;
         }
 
         updateFields.push('updated_at = ?');
@@ -405,11 +374,10 @@ export class TableService {
           throw new Error('Failed to retrieve updated table');
         }
 
-        // Queue for sync
         try {
           getProductSyncService().queueChangeInsideTransaction('restaurant_table', 'update', {
             ...updatedTable,
-            business_id: businessId
+            business_id: businessId,
           });
         } catch (syncErr) {
           console.warn('[TableService] Failed to queue table update for sync:', syncErr);
@@ -482,19 +450,18 @@ export class TableService {
   }
 
   static async delete(id: number): Promise<boolean> {
-    if (!db) {
-      console.log(`[TableService] SQLite disabled (db is null). Falling back to Supabase for delete (id=${id})`);
+    const businessId = process.env.SYNC_BUSINESS_ID || 'default-business';
+
+    if (!db || env.RENDER_CLOUD_MODE) {
       try {
         const { getSupabaseClient } = require('../database/supabase.client');
         const supabase = getSupabaseClient();
 
-        // Check if table has active orders
         const { count, error: countErr } = await supabase
           .from('orders')
           .select('*', { count: 'exact', head: true })
           .eq('table_id', id)
           .in('status', ['pending', 'confirmed', 'preparing', 'ready']);
-
         if (countErr) throw countErr;
         if (count && count > 0) {
           throw new Error('Cannot delete table with active orders');
@@ -504,7 +471,6 @@ export class TableService {
           .from('restaurant_tables')
           .delete()
           .eq('id', id);
-
         if (error) throw error;
         return true;
       } catch (err: any) {
@@ -513,16 +479,14 @@ export class TableService {
       }
     }
 
+    // ===== Local mode: SQLite + outbox =====
     try {
-      const businessId = process.env.SYNC_BUSINESS_ID || 'default-business';
-
       return withOutboxTransaction(db, businessId, () => {
         const table = db.prepare('SELECT id FROM restaurant_tables WHERE id = ?').get(id) as { id: number } | undefined;
         if (!table) {
           return false;
         }
 
-        // Check if table has active orders
         const activeOrders = db.prepare(`
           SELECT COUNT(*) as count
           FROM orders
@@ -534,13 +498,16 @@ export class TableService {
         }
 
         const result = db.prepare('DELETE FROM restaurant_tables WHERE id = ?').run(id);
-        
+
         if (result.changes > 0) {
-          // Queue for sync
-          getProductSyncService().queueChangeInsideTransaction('restaurant_table', 'delete', { 
-            id,
-            business_id: businessId 
-          });
+          try {
+            getProductSyncService().queueChangeInsideTransaction('restaurant_table', 'delete', {
+              id,
+              business_id: businessId,
+            });
+          } catch (syncErr) {
+            console.warn('[TableService] Failed to queue table deletion for sync:', syncErr);
+          }
         }
 
         return result.changes > 0;
@@ -554,39 +521,79 @@ export class TableService {
   static async regenerateQrToken(id: number): Promise<Table> {
     const businessId = process.env.SYNC_BUSINESS_ID || 'default-business';
 
-    return withOutboxTransaction(db, businessId, () => {
-      const table = db.prepare('SELECT * FROM restaurant_tables WHERE id = ?').get(id) as Table | undefined;
-      if (!table) {
-        throw new Error('Table not found');
+    if (!db || env.RENDER_CLOUD_MODE) {
+      if (!env.SUPABASE_URL || !env.SUPABASE_SERVICE_ROLE_KEY) {
+        throw new Error('Supabase not configured');
       }
+      try {
+        const { getSupabaseClient } = require('../database/supabase.client');
+        const supabase = getSupabaseClient();
 
-      const newToken = crypto.randomUUID().replace(/-/g, '');
-      const now = new Date().toISOString();
+        const newToken = crypto.randomUUID().replace(/-/g, '');
+        const { data, error } = await supabase
+          .from('restaurant_tables')
+          .update({ qr_token: newToken, updated_at: new Date().toISOString() })
+          .eq('id', id)
+          .select()
+          .single();
 
-      db.prepare(`
-        UPDATE restaurant_tables
-        SET qr_token = ?, updated_at = ?
-        WHERE id = ?
-      `).run(newToken, now, id);
+        if (error) throw new Error(`Erreur Supabase: ${error.message}`);
+        if (!data) throw new Error('Table non trouvée');
 
-      const updated = db.prepare(`
-        SELECT t.*, u.full_name as waiter_name
-        FROM restaurant_tables t
-        LEFT JOIN users u ON t.assigned_waiter_id = u.id
-        WHERE t.id = ?
-      `).get(id) as Table;
-
-      if (!updated) {
-        throw new Error('Failed to retrieve updated table after regenerating QR token');
+        return {
+          ...data,
+          status: remoteToLocalStatus(data.status) as any,
+          waiter_name: undefined,
+        } as Table;
+      } catch (err: any) {
+        console.error('[TableService] Supabase regenerate QR failed:', err?.message || err);
+        throw err;
       }
+    }
 
-      // Queue for sync
-      getProductSyncService().queueChangeInsideTransaction('restaurant_table', 'update', {
-        ...updated,
-        business_id: businessId
+    // ===== Local mode: SQLite + outbox =====
+    try {
+      return withOutboxTransaction(db, businessId, () => {
+        const table = db.prepare('SELECT * FROM restaurant_tables WHERE id = ?').get(id) as Table | undefined;
+        if (!table) {
+          throw new Error('Table not found');
+        }
+
+        const newToken = crypto.randomUUID().replace(/-/g, '');
+        const now = new Date().toISOString();
+
+        db.prepare(`
+          UPDATE restaurant_tables
+          SET qr_token = ?, updated_at = ?
+          WHERE id = ?
+        `).run(newToken, now, id);
+
+        const updated = db.prepare(`
+          SELECT t.*, u.full_name as waiter_name
+          FROM restaurant_tables t
+          LEFT JOIN users u ON t.assigned_waiter_id = u.id
+          WHERE t.id = ?
+        `).get(id) as Table;
+
+        if (!updated) {
+          throw new Error('Failed to retrieve updated table after regenerating QR token');
+        }
+
+        try {
+          getProductSyncService().queueChangeInsideTransaction('restaurant_table', 'update', {
+            ...updated,
+            business_id: businessId,
+          });
+        } catch (syncErr) {
+          console.warn('[TableService] Failed to queue QR regeneration for sync:', syncErr);
+        }
+
+        return updated;
       });
-
-      return updated;
-    });
+    } catch (error: any) {
+      console.error('[TableService] Error regenerating QR token:', error);
+      throw error;
+    }
   }
 }
+ 
