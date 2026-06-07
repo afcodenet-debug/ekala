@@ -22,20 +22,11 @@ const API_BASE: string = (() => {
   };
 
   // 1. Explicit VITE_API_BASE_URL always wins (set in Vercel, .env, or local overrides)
-  // TEMPORARY FIX: Force great-olive-api for production to bypass misconfigured Vercel env var
-  // TODO: Remove this override once VITE_API_BASE_URL is correctly set in Vercel dashboard
   try {
     // @ts-ignore - safe in browser ESM (Vite). Hidden from server CommonJS tsc.
     const viteEnv = (typeof import.meta !== 'undefined' ? (import.meta as any).env : undefined);
     const explicit = viteEnv?.VITE_API_BASE_URL;
-    if (explicit) {
-      // For now, override any ekala-api URL with great-olive-api to fix production
-      if (explicit.includes('ekala-api.onrender.com')) {
-        console.warn('[API] Overriding misconfigured VITE_API_BASE_URL: ekala-api -> great-olive-api');
-        return 'https://great-olive-api.onrender.com/api';
-      }
-      return normalizeBaseUrl(String(explicit));
-    }
+    if (explicit) return normalizeBaseUrl(String(explicit));
   } catch {}
 
   // 2. In Vite development (local `npm run dev:web` or full dev), ALWAYS use relative /api
@@ -58,8 +49,8 @@ const API_BASE: string = (() => {
   // 4. Last resort ONLY for production Vercel build when no VITE_API_BASE_URL is configured:
   //    Point to the Render backend.
   //    Backend exposes admin endpoints under `/api/*` (tables/products/orders/expenses).
-  //    Primary: great-olive-api.onrender.com (from render.yaml)
-  return 'https://great-olive-api.onrender.com/api';
+  //    Primary: ekala-api.onrender.com (confirmed by user)
+  return 'https://ekala-api.onrender.com/api';
 })();
 
 export async function request<T>(

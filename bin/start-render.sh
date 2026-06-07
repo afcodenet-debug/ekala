@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # =============================================================================
-# Render start script for the public QR Menu service (great-olive-api)
+# Render start script for the public QR Menu service (ekala-api)
 # Uses Litestream to restore a near-real-time replica of the main SQLite DB.
 #
 # This is the RECOMMENDED setup for the public menu on Render while the

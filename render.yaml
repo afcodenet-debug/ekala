@@ -3,7 +3,7 @@
 
 services:
   - type: web
-    name: great-olive-api
+    name: ekala-api
     runtime: node
     plan: starter          # change to standard if you need more RAM/CPU
     region: frankfurt      # or oregon, ohio, etc.
