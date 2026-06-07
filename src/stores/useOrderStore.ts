@@ -219,22 +219,44 @@ export const useOrderStore = create<OrderStore>((set, get) => ({
 }));
 
 // Auto-feed the global notification store when new QR orders arrive
-// (light integration - can be moved to a dedicated watcher later)
+// Robust ID-based tracking to avoid duplicate notifications during polling/sync
 import { useNotificationStore } from './useNotificationStore';
 
-let previousPendingQr = 0;
+const notifiedOrderIds = new Set<number>();
+
 useOrderStore.subscribe((state) => {
-  const current = state.pendingQrCount;
-  if (current > previousPendingQr) {
-    const diff = current - previousPendingQr;
-    useNotificationStore.getState().addNotification({
-      type: 'newQrOrder' as any,
-      title: 'Nouvelle commande QR',
-      message: `${diff} nouvelle(s) commande(s) en attente de validation`,
-      priority: 'high',
-      link: '/orders',
-      metadata: { count: current },
+  const pendingOrders = state.allOrders.filter(o => o.status === 'pending');
+  
+  // Find truly new pending orders that we haven't notified about yet
+  const newPendingOrders = pendingOrders.filter(o => !notifiedOrderIds.has(o.id));
+  
+  if (newPendingOrders.length > 0) {
+    newPendingOrders.forEach(order => {
+      // Mark as notified immediately to prevent re-triggering
+      notifiedOrderIds.add(order.id);
+      
+      useNotificationStore.getState().addNotification({
+        type: 'newQrOrder' as any,
+        title: 'Nouvelle commande QR',
+        message: `Table ${order.table_number || order.table_id} : Nouvelle commande en attente`,
+        priority: 'high',
+        link: '/orders',
+        metadata: { 
+          orderId: order.id,
+          tableId: order.table_id,
+          tableNumber: order.table_number
+        },
+      });
     });
   }
-  previousPendingQr = current;
+
+  // Cleanup: remove IDs from the set if they are no longer in 'pending' status
+  // so that if they were to somehow become pending again (rare), they could re-notify
+  // Or just keep the set manageable.
+  const allOrderIds = new Set(state.allOrders.map(o => o.id));
+  notifiedOrderIds.forEach(id => {
+    if (!allOrderIds.has(id)) {
+      notifiedOrderIds.delete(id);
+    }
+  });
 });
