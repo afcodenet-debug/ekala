@@ -37,6 +37,7 @@ import { startSupabasePullWorker, getPullSyncStatus } from './services/supabase-
 import { startScheduledReports } from './services/scheduled-reports.service';
 import { initializeProductSync, getOrderSyncService, SyncOrchestrator } from '../sync';
 import { env } from './config/env';
+import { createSaaSRouter } from './saas/saas.routes';
 
 const app = express();
 
@@ -143,6 +144,11 @@ app.use('/api/customers', customersRoutes);
 app.use('/api/notifications', notificationsRoutes);
 app.use('/api/notification_preferences', notificationPreferencesRoutes);
 app.use('/api/scheduled_reports_log', scheduledReportsLogRoutes);
+
+// =============================================================================
+// SaaS Multi-Tenant Routes (Phase 1)
+// =============================================================================
+app.use('/api', createSaaSRouter());
 
 app.listen(PORT, () => {
   console.log(`[RENDER BOOT] Express listening on port ${PORT}`);
