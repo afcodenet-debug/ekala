@@ -77,7 +77,7 @@ export class OrderSyncService {
     const { data, error } = await this.supabase
       .from('orders')
       .select('*, order_items(*)')
-      .eq('business_id', businessId)
+      // .eq('business_id', businessId) // Commented out until column is added to Supabase
       .gt('updated_at', since)
       .order('updated_at', { ascending: true });
 
@@ -123,7 +123,8 @@ export class OrderSyncService {
     // Columns that exist in local SQLite 'orders' table
     const allowedColumns = [
       'table_id', 'waiter_id', 'status', 'total', 'items', 
-      'customer_phone', 'notes', 'created_at', 'updated_at', 'remote_id'
+      'customer_phone', 'notes', 'created_at', 'updated_at', 'remote_id',
+      'customer_id', 'source'
     ];
 
     const fields: Record<string, any> = {
@@ -135,6 +136,8 @@ export class OrderSyncService {
       table_id: remote.table_id,
       waiter_id: remote.waiter_id,
       notes: remote.notes,
+      customer_id: remote.customer_id,
+      source: remote.source || 'qr',
       items: typeof remote.items === 'string' ? remote.items : JSON.stringify(remote.items || []),
     };
 
@@ -142,8 +145,8 @@ export class OrderSyncService {
     const setClauses = updateFields.map(k => `"${k}" = ?`).join(', ');
     const params = updateFields.map(k => sanitize(fields[k]));
 
-    // Use remote_id to find local row
-    const existing = this.db.prepare('SELECT id FROM orders WHERE id = ? OR remote_id = ?').get(remote.id, remote.id) as { id: number } | undefined;
+    // Use remote_id to find local row, OR check if the local ID itself matches (common in some migration scenarios)
+    const existing = this.db.prepare('SELECT id FROM orders WHERE remote_id = ? OR id = ?').get(remote.id, remote.id) as { id: number } | undefined;
 
     let localOrderId: number;
 
@@ -151,16 +154,21 @@ export class OrderSyncService {
       this.db.prepare(`UPDATE orders SET ${setClauses} WHERE id = ?`).run(...params, existing.id);
       localOrderId = existing.id;
     } else {
-      // For NEW orders from remote (e.g. QR), we might want to preserve the remote ID as the local ID if it's numeric
-      // or just let SQLite generate one and link via remote_id.
-      // Since Supabase uses BigInt/UUID and SQLite uses INTEGER, we link via remote_id.
-      const insertKeys = updateFields;
-      const insertParams = params;
-      const result = this.db.prepare(`
-        INSERT INTO orders (${insertKeys.map(k => `"${k}"`).join(', ')})
-        VALUES (${insertParams.map(() => '?').join(', ')})
-      `).run(...insertParams);
-      localOrderId = Number(result.lastInsertRowid);
+      // For NEW orders from remote, we must be careful not to violate unique remote_id if a row exists with that ID but no remote_id set yet
+      const duplicateRemote = this.db.prepare('SELECT id FROM orders WHERE remote_id = ?').get(remote.id) as { id: number } | undefined;
+
+      if (duplicateRemote) {
+        this.db.prepare(`UPDATE orders SET ${setClauses} WHERE id = ?`).run(...params, duplicateRemote.id);
+        localOrderId = duplicateRemote.id;
+      } else {
+        const insertKeys = updateFields;
+        const insertParams = params;
+        const result = this.db.prepare(`
+          INSERT INTO orders (${insertKeys.map(k => `"${k}"`).join(', ')})
+          VALUES (${insertParams.map(() => '?').join(', ')})
+        `).run(...insertParams);
+        localOrderId = Number(result.lastInsertRowid);
+      }
     }
 
     // Apply order items if present

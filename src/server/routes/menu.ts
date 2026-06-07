@@ -399,7 +399,87 @@ router.post('/checkout', async (req, res) => {
       return res.status(404).json({ error: 'Table introuvable pour ce code QR' });
     }
 
-    // 3. Create order in Supabase (minimal but respecting the schema)
+    // 3. CHECK FOR EXISTING ACTIVE ORDER (Merge logic for "Source of Truth")
+    // If a table already has a pending/confirmed/preparing order in Supabase, 
+    // we merge the new items ONLY if it's the same customer (linked to PIN).
+    const { data: existingOrder } = await supabase
+      .from('orders')
+      .select('id, items, total, status, customer_id')
+      .eq('table_id', table.id)
+      .eq('customer_id', customer.id)
+      .not('status', 'in', '("paid","cancelled","rejected")')
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .single();
+
+    if (existingOrder) {
+      console.log(`[Public Menu] Merging items into existing Supabase order #${existingOrder.id}`);
+      
+      const existingItems = Array.isArray(existingOrder.items) ? existingOrder.items : [];
+      const newItems = Array.isArray(items) ? items : [];
+      
+      // Merge items by product_id
+      const itemMap = new Map();
+      existingItems.forEach((it: any) => {
+        const pid = it.product_id || it.productId;
+        itemMap.set(pid, { ...it, quantity: Number(it.quantity) });
+      });
+      
+      newItems.forEach((it: any) => {
+        const pid = it.product_id || it.productId;
+        if (itemMap.has(pid)) {
+          const existing = itemMap.get(pid);
+          existing.quantity += Number(it.quantity);
+        } else {
+          itemMap.set(pid, { ...it, quantity: Number(it.quantity) });
+        }
+      });
+      
+      const mergedItems = Array.from(itemMap.values());
+      const mergedTotal = mergedItems.reduce((sum, it) => sum + (Number(it.price || it.unit_price || 0) * it.quantity), 0);
+      
+      // Add special instructions if provided
+      if (notes && String(notes).trim()) {
+        (mergedItems as any).notes = String(notes).trim();
+      } else if ((existingItems as any).notes) {
+        (mergedItems as any).notes = (existingItems as any).notes;
+      }
+
+      const { data: updatedOrder, error: updateErr } = await supabase
+        .from('orders')
+        .update({
+          items: mergedItems,
+          total: mergedTotal,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', existingOrder.id)
+        .select()
+        .single();
+
+      if (updateErr) {
+        console.error('[Public Menu] Failed to merge into existing order:', updateErr);
+        // Fallback to creating a new one if update fails
+      } else {
+        // Also insert/update order_items table for normalized tracking
+        const orderItemsPayload = newItems.map((item: any) => ({
+          order_id: existingOrder.id,
+          product_id: item.product_id || item.productId,
+          quantity: Number(item.quantity) || 1,
+          created_at: new Date().toISOString(),
+        }));
+        
+        await supabase.from('order_items').insert(orderItemsPayload);
+
+        return res.json({
+          success: true,
+          orderId: existingOrder.id,
+          customerPhone: finalCustomerPhone,
+          merged: true
+        });
+      }
+    }
+
+    // 4. Create NEW order in Supabase (if no active order found)
     // waiter_id is REQUIRED (NOT NULL + FK to users)
     let waiterId = table.assigned_waiter_id;
 

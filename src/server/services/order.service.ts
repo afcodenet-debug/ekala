@@ -46,19 +46,44 @@ export class OrderService {
       // For remote QR orders (pulled from Supabase), the pulled JSON snapshot is the source of truth.
       // The public menu only sends {product_id, quantity, name} — we enrich with current local price.
       if (isRemote && fallbackJson) {
-        const rawItems = JSON.parse(fallbackJson || '[]') as any[];
-        return rawItems.map((it: any) => {
-          const prod = db.prepare('SELECT selling_price FROM products WHERE id = ?').get(it.product_id || it.productId) as any;
+        let data: any = fallbackJson;
+        
+        // robust multi-pass parsing
+        try {
+          if (typeof data === 'string') data = JSON.parse(data);
+          if (typeof data === 'string') data = JSON.parse(data);
+        } catch (e: any) {
+          console.warn('[OrderService] fallbackJson parse error:', e.message);
+        }
+
+        // Handle both direct array and wrapped object { items: [], notes: ... }
+        let itemsArray: any[] = [];
+        if (Array.isArray(data)) {
+          itemsArray = data;
+        } else if (data && typeof data === 'object' && Array.isArray(data.items)) {
+          itemsArray = data.items;
+        } else if (data && typeof data === 'object') {
+          // If it's an object but not a standard wrapper, maybe it's just one item or malformed
+          console.warn('[OrderService] fallbackJson is an object but no items array found:', data);
+          // try to recover if it looks like a single item
+          if (data.product_id || data.productId) itemsArray = [data];
+        }
+
+        return itemsArray.map((it: any) => {
+          const pid = it.product_id || it.productId;
+          if (!pid) return null;
+
+          const prod = db.prepare('SELECT selling_price FROM products WHERE id = ?').get(pid) as any;
           const price = Number(prod?.selling_price ?? it.price ?? it.unit_price ?? 0);
           return {
             id: it.id,
-            productId: it.product_id || it.productId,
-            name: it.name || '',
+            productId: pid,
+            name: it.name || prod?.name || 'Unknown',
             price,
             quantity: Number(it.quantity) || 0,
             notes: it.notes ?? undefined
           };
-        });
+        }).filter(Boolean) as OrderItem[];
       }
 
       const items = db.prepare(`

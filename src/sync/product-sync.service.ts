@@ -157,48 +157,55 @@ export class ProductSyncService {
         }
 
         if (item.operation === 'insert' || item.operation === 'update') {
-          // --- Tolerant push for legacy schemas ---
-          // We include fields for products, orders, and order_items to handle multiple entities
           const safeUpdate: Record<string, any> = {
-            id: recordId,
             updated_at: new Date().toISOString()
           };
 
-          // Product fields
-          if (payload.stock_quantity !== undefined) safeUpdate.stock_quantity = payload.stock_quantity;
-          if (payload.name !== undefined)            safeUpdate.name = payload.name;
-          if (payload.price !== undefined)           safeUpdate.price = payload.price;
-          if (payload.selling_price !== undefined)   safeUpdate.selling_price = payload.selling_price;
-          if (payload.buying_price !== undefined)    safeUpdate.buying_price = payload.buying_price;
-          if (payload.is_available !== undefined)    safeUpdate.is_available = payload.is_available;
-          if (payload.category_id !== undefined)     safeUpdate.category_id = payload.category_id;
-          if (payload.barcode !== undefined)         safeUpdate.barcode = payload.barcode;
+          // Use remote_id if available
+          if (payload.remote_id) {
+            safeUpdate.id = Number(payload.remote_id);
+          } else if (item.operation === 'update') {
+            safeUpdate.id = recordId;
+          }
 
-          // Order fields
-          if (payload.table_id !== undefined)        safeUpdate.table_id = payload.table_id;
-          if (payload.waiter_id !== undefined)       safeUpdate.waiter_id = payload.waiter_id;
-          if (payload.customer_id !== undefined)     safeUpdate.customer_id = payload.customer_id;
-          if (payload.status !== undefined)          safeUpdate.status = payload.status;
-          if (payload.total !== undefined)           safeUpdate.total = payload.total;
-          if (payload.items !== undefined)           safeUpdate.items = payload.items;
-          if (payload.version !== undefined)         safeUpdate.version = payload.version;
-          if (payload.created_at !== undefined)      safeUpdate.created_at = payload.created_at;
-
-          // Order Item fields
-          if (payload.order_id !== undefined)        safeUpdate.order_id = payload.order_id;
-          if (payload.product_id !== undefined)      safeUpdate.product_id = payload.product_id;
-          if (payload.quantity !== undefined)        safeUpdate.quantity = payload.quantity;
-          if (payload.unit_price !== undefined)      safeUpdate.unit_price = payload.unit_price;
-          if (payload.total_price !== undefined)     safeUpdate.total_price = payload.total_price;
-          if (payload.notes !== undefined)           safeUpdate.notes = payload.notes;
+          // Strict column filtering based on entity
+          if (entity === 'product') {
+            const cols = ['name', 'stock_quantity', 'selling_price', 'buying_price', 'is_available', 'category_id', 'barcode', 'description', 'unit', 'image_url', 'minimum_stock'];
+            cols.forEach(c => { if (payload[c] !== undefined) safeUpdate[c] = payload[c]; });
+            
+            // Fix NOT NULL constraint: if we're upserting and don't have a remote_id, 
+            // it might be an INSERT, so we need the name.
+            if (!safeUpdate.id || !safeUpdate.name) {
+               // Best effort: try to get name from local DB if missing in payload
+               try {
+                 const row = this.db.prepare('SELECT name FROM products WHERE id = ?').get(recordId) as any;
+                 if (row?.name) safeUpdate.name = row.name;
+               } catch {}
+            }
+          } 
+          else if (entity === 'order') {
+            const cols = ['table_id', 'waiter_id', 'customer_id', 'status', 'total', 'items', 'version', 'created_at', 'notes'];
+            cols.forEach(c => { if (payload[c] !== undefined) safeUpdate[c] = payload[c]; });
+          } 
+          else if (entity === 'order_item') {
+            // order_items table in Supabase does NOT have a 'name' column
+            const cols = ['order_id', 'product_id', 'quantity', 'unit_price', 'total_price', 'notes', 'created_at'];
+            cols.forEach(c => { if (payload[c] !== undefined) safeUpdate[c] = payload[c]; });
+          }
 
           // Use upsert to handle both insert and update
-          const { error } = await this.supabase
+          const { data, error } = await this.supabase
             .from(table)
-            .upsert(safeUpdate);
+            .upsert(safeUpdate)
+            .select('id')
+            .single();
 
           if (error) throw error;
 
+          // Save remote_id locally if it was a new record
+          if (!payload.remote_id && data?.id) {
+            this.db.prepare(`UPDATE ${table} SET remote_id = ? WHERE id = ?`).run(data.id, recordId);
+          }
         } else if (item.operation === 'delete') {
           if (entity === 'order_item') {
             // Actual deletion for order items (normalized items)

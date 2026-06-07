@@ -107,6 +107,9 @@ function ensureRemoteSyncSchema() {
 
     if (!orderColNames.includes('remote_id')) db.exec(`ALTER TABLE orders ADD COLUMN remote_id INTEGER`);
     if (!orderColNames.includes('source'))     db.exec(`ALTER TABLE orders ADD COLUMN source TEXT DEFAULT 'local'`);
+    if (!orderColNames.includes('notes'))      db.exec(`ALTER TABLE orders ADD COLUMN notes TEXT`);
+    if (!orderColNames.includes('customer_phone')) db.exec(`ALTER TABLE orders ADD COLUMN customer_phone TEXT`);
+    if (!orderColNames.includes('customer_id')) db.exec(`ALTER TABLE orders ADD COLUMN customer_id INTEGER`);
 
     // order_items
     const itemCols = db.prepare("PRAGMA table_info(order_items)").all() as Array<{ name: string }>;

@@ -235,6 +235,7 @@ function ensureCoreQrMenuTables(): void {
       is_available INTEGER DEFAULT 1,
       stock_quantity INTEGER DEFAULT 0,
       minimum_stock INTEGER DEFAULT 5,
+      remote_id INTEGER,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )
@@ -249,10 +250,22 @@ function ensureCoreQrMenuTables(): void {
       total REAL DEFAULT 0,
       customer_phone TEXT,
       notes TEXT,
+      remote_id INTEGER,
+      source TEXT DEFAULT 'local',
+      customer_id INTEGER,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )
   `);
+
+  // Ensure columns exist if table was already created (migration-like)
+  const orderCols = db.prepare("PRAGMA table_info(orders)").all() as Array<{ name: string }>;
+  const orderColNames = orderCols.map(c => c.name);
+  if (!orderColNames.includes('remote_id')) db.exec(`ALTER TABLE orders ADD COLUMN remote_id INTEGER`);
+  if (!orderColNames.includes('source'))     db.exec(`ALTER TABLE orders ADD COLUMN source TEXT DEFAULT 'local'`);
+  if (!orderColNames.includes('notes'))      db.exec(`ALTER TABLE orders ADD COLUMN notes TEXT`);
+  if (!orderColNames.includes('customer_phone')) db.exec(`ALTER TABLE orders ADD COLUMN customer_phone TEXT`);
+  if (!orderColNames.includes('customer_id'))    db.exec(`ALTER TABLE orders ADD COLUMN customer_id INTEGER`);
 
   // order_items (for checkout)
   db.exec(`
@@ -267,6 +280,13 @@ function ensureCoreQrMenuTables(): void {
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )
   `);
+
+  const itemCols = db.prepare("PRAGMA table_info(order_items)").all() as Array<{ name: string }>;
+  if (!itemCols.some(c => c.name === 'notes')) db.exec(`ALTER TABLE order_items ADD COLUMN notes TEXT`);
+
+  // products table remote_id
+  const prodCols = db.prepare("PRAGMA table_info(products)").all() as Array<{ name: string }>;
+  if (!prodCols.some(c => c.name === 'remote_id')) db.exec(`ALTER TABLE products ADD COLUMN remote_id INTEGER`);
 
   // users (needed by seedAdmin and some protected routes)
   db.exec(`
