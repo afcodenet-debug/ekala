@@ -24,7 +24,7 @@ interface TableStore {
 
   // Actions
   setUserContext: (userId: number, role: string) => void;
-  fetchTables: () => Promise<void>;
+  fetchTables: (silent?: boolean) => Promise<void>;
   createTable: (tableData: Omit<Table, 'id' | 'created_at' | 'updated_at'>) => Promise<Table | null>;
   updateTable: (id: number, updates: Partial<Table>) => Promise<void>;
   deleteTable: (id: number) => Promise<boolean>;
@@ -47,11 +47,11 @@ export const useTableStore = create<TableStore>((set, get) => ({
 
   setUserContext: (userId, role) => set({ userId, role }),
 
-  fetchTables: async () => {
+  fetchTables: async (silent = false) => {
     const { userId, role } = get();
     if (!userId || !role) return;
 
-    set({ isLoading: true, error: null });
+    if (!silent) set({ isLoading: true, error: null });
     try {
       const params: Record<string, string | number> = { role };
       if (role === 'waiter') {

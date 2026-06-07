@@ -52,12 +52,12 @@ export const DataLoader = () => {
     let orderPolling: NodeJS.Timeout | null = null;
     if (isAuthenticated && user) {
       orderPolling = setInterval(() => {
-        // We only poll orders as they are the most volatile data (QR orders, status updates)
-        useOrderStore.getState().fetchActiveOrders();
-        useOrderStore.getState().fetchAllOrders();
+        // Use 'silent' mode (true) to refresh data WITHOUT triggering UI loading flickers
+        useOrderStore.getState().fetchActiveOrders(true);
+        useOrderStore.getState().fetchAllOrders(true);
         
         // Also poll tables occasionally to see status changes (occupied/free)
-        useTableStore.getState().fetchTables();
+        useTableStore.getState().fetchTables(true);
       }, 10000); // Poll every 10 seconds
     }
 

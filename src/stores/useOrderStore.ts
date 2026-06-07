@@ -56,8 +56,8 @@ interface OrderStore {
   pendingQrCount: number;
   setUserContext: (userId: number, role: string) => void;
   setFilters: (filters: Partial<OrderStore['filters']>) => void;
-  fetchActiveOrders: () => Promise<void>;
-  fetchAllOrders: () => Promise<void>;
+  fetchActiveOrders: (silent?: boolean) => Promise<void>;
+  fetchAllOrders: (silent?: boolean) => Promise<void>;
   createOrder: (order: Omit<Order, 'id' | 'created_at'>) => Promise<Order | null>;
   updateOrderItems: (id: number, items: OrderItem[]) => Promise<void>;
   updateOrderStatus: (id: number, status: Order['status']) => Promise<void>;
@@ -86,7 +86,7 @@ export const useOrderStore = create<OrderStore>((set, get) => ({
     filters: { ...state.filters, ...newFilters }
   })),
 
-  fetchActiveOrders: async () => {
+  fetchActiveOrders: async (silent = false) => {
     const { userId, role } = get();
     try {
       const params: Record<string, string | number> = {};
@@ -94,6 +94,7 @@ export const useOrderStore = create<OrderStore>((set, get) => ({
         params.waiter_id = userId;
         params.role = role;
       }
+      if (!silent) console.log('[OrderStore] Fetching active orders...');
       const orders = await api.orders.getAll(params);
       set({ activeOrders: Array.isArray(orders) ? orders : [] });
     } catch (err) {
@@ -102,7 +103,7 @@ export const useOrderStore = create<OrderStore>((set, get) => ({
     }
   },
 
-  fetchAllOrders: async () => {
+  fetchAllOrders: async (silent = false) => {
     const { userId, role, filters } = get();
     try {
       const params: Record<string, string | number> = {};
@@ -115,11 +116,11 @@ export const useOrderStore = create<OrderStore>((set, get) => ({
       if (filters.table_id) params.table_id = filters.table_id;
       if (filters.search) params.search = filters.search;
 
-      console.log('[OrderStore] Fetching orders with params:', params);
+      if (!silent) console.log('[OrderStore] Fetching orders with params:', params);
       const response: any = await api.orders.getAllOrders(params);
 
       if (response && typeof response === 'object' && Array.isArray(response.orders)) {
-        console.log('[OrderStore] Received orders:', response.orders.length);
+        if (!silent) console.log('[OrderStore] Received orders:', response.orders.length);
 
         const orders = response.orders as Order[];
         // Centralised pending QR detection (used by Sidebar badge + global toast)
