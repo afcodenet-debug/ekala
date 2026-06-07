@@ -700,7 +700,8 @@ export class OrderService {
           items: this.getItemsForOrder(id, updatedOrder.items)
         };
 
-        // Queue for sync
+        // Queue for sync - CRITICAL for real-time status consistency
+        console.log(`[OrderService] Queuing sync for order ${id} with status ${status}`);
         getOrderSyncService().queueOrderChange('update', result, businessId);
 
         if (!wasPaid && status === 'paid') {

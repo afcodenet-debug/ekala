@@ -186,6 +186,7 @@ export class ProductSyncService {
           else if (entity === 'order') {
             const cols = ['table_id', 'waiter_id', 'customer_id', 'status', 'total', 'items', 'version', 'created_at', 'notes'];
             cols.forEach(c => { if (payload[c] !== undefined) safeUpdate[c] = payload[c]; });
+            console.log(`[Sync] Pushing order ${recordId} (remote=${safeUpdate.id}) status=${safeUpdate.status} to Supabase`);
           } 
           else if (entity === 'order_item') {
             // order_items table in Supabase does NOT have a 'name' column
