@@ -202,11 +202,15 @@ else if (entity === 'restaurant_table') {
               // For new tables, don't include id - let Supabase auto-generate
               // The unique key is table_number, so we upsert on table_number
               delete safeUpdate.id;
+              
+              // Include business_id if available to ensure correct ownership on Supabase
+              if (_businessId) safeUpdate.business_id = _businessId;
+
               // Use table_number as the conflict resolution key
               const { data, error } = await this.supabase
                 .from(table)
                 .upsert(safeUpdate, { onConflict: 'table_number' })
-                .select('id, remote_id')
+                .select('id')
                 .single();
 
               if (error) {
@@ -216,11 +220,13 @@ else if (entity === 'restaurant_table') {
               } else if (data?.id) {
                 // Save remote_id locally
                 this.db.prepare(`UPDATE ${table} SET remote_id = ? WHERE id = ?`).run(data.id, recordId);
+                console.log(`[Sync] Table "${safeUpdate.table_number}" pushed to Supabase (remote_id=${data.id})`);
               }
               continue; // Skip the generic upsert below
             } else if (item.operation === 'update') {
-              // For updates, use the local id
-              safeUpdate.id = recordId;
+              // For updates, use the remote_id if we have it, otherwise fallback to recordId (dangerous if mismatched)
+              safeUpdate.id = payload.remote_id || recordId;
+              if (_businessId) safeUpdate.business_id = _businessId;
             }
           }
 

@@ -1,6 +1,6 @@
 import db from '../db/database';
 import crypto from 'crypto';
-import { getProductSyncService } from '../../sync';
+import { getProductSyncService, withOutboxTransaction } from '../../sync';
 
 export type TableStatus = 'available' | 'active' | 'reserved' | 'cleaning' | 'out_of_service';
 
@@ -169,44 +169,55 @@ export class TableService {
     }
 
     try {
-      // Check if table number already exists locally
-      const existing = db.prepare('SELECT id FROM restaurant_tables WHERE table_number = ?').get(tableData.table_number);
-      if (existing) {
-        throw new Error(`Le numéro de table "${tableData.table_number}" existe déjà.`);
-      }
+      const businessId = process.env.SYNC_BUSINESS_ID || 'default-business';
 
-      const now = new Date().toISOString();
-      const qrToken = crypto.randomUUID().replace(/-/g, '');
-      const result = db.prepare(`
-        INSERT INTO restaurant_tables (table_number, capacity, status, assigned_waiter_id, qr_token, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-      `).run(
-        String(tableData.table_number),
-        tableData.capacity,
-        tableData.status,
-        tableData.assigned_waiter_id,
-        qrToken,
-        now,
-        now
-      );
+      return withOutboxTransaction(db, businessId, () => {
+        // Check if table number already exists locally
+        const existing = db.prepare('SELECT id FROM restaurant_tables WHERE table_number = ?').get(tableData.table_number);
+        if (existing) {
+          throw new Error(`Le numéro de table "${tableData.table_number}" existe déjà.`);
+        }
 
-      if (!result.lastInsertRowid) {
-        throw new Error('Échec de la création de la table en local');
-      }
+        const now = new Date().toISOString();
+        const qrToken = crypto.randomUUID().replace(/-/g, '');
+        const result = db.prepare(`
+          INSERT INTO restaurant_tables (table_number, capacity, status, assigned_waiter_id, qr_token, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?)
+        `).run(
+          String(tableData.table_number),
+          tableData.capacity,
+          tableData.status,
+          tableData.assigned_waiter_id,
+          qrToken,
+          now,
+          now
+        );
 
-      const newTable = await this.getById(Number(result.lastInsertRowid));
-      if (!newTable) {
-        throw new Error('Échec de récupération de la table créée');
-      }
+        if (!result.lastInsertRowid) {
+          throw new Error('Échec de la création de la table en local');
+        }
 
-      // Queue for sync
-      try {
-        getProductSyncService().queueChange('restaurant_table', 'insert', newTable);
-      } catch (syncErr) {
-        console.warn('[TableService] Failed to queue table for sync:', syncErr);
-      }
+        // We can't use await inside db.transaction directly in better-sqlite3 for fetching
+        // but since it's a synchronous read, we can just call a non-async version or use db directly
+        const newTable = db.prepare(`
+          SELECT t.*, u.full_name as waiter_name
+          FROM restaurant_tables t
+          LEFT JOIN users u ON t.assigned_waiter_id = u.id
+          WHERE t.id = ?
+        `).get(Number(result.lastInsertRowid)) as Table;
 
-      return newTable;
+        if (!newTable) {
+          throw new Error('Échec de récupération de la table créée');
+        }
+
+        // Queue for sync
+        getProductSyncService().queueChangeInsideTransaction('restaurant_table', 'insert', {
+          ...newTable,
+          business_id: businessId
+        });
+
+        return newTable;
+      });
     } catch (error: any) {
       console.error('[TableService] Error creating table:', error);
       throw error;
@@ -241,57 +252,66 @@ export class TableService {
     }
 
     try {
-      const table = await this.getById(id);
-      if (!table) {
-        throw new Error('Table not found');
-      }
+      const businessId = process.env.SYNC_BUSINESS_ID || 'default-business';
 
-      // Check if table number conflict
-      if (updates.table_number && updates.table_number !== table.table_number) {
-        const existing = db.prepare('SELECT id FROM restaurant_tables WHERE table_number = ? AND id != ?')
-          .get(updates.table_number, id);
-        if (existing) {
-          throw new Error(`Table number ${updates.table_number} already exists`);
+      return withOutboxTransaction(db, businessId, () => {
+        const table = db.prepare('SELECT * FROM restaurant_tables WHERE id = ?').get(id) as Table | undefined;
+        if (!table) {
+          throw new Error('Table not found');
         }
-      }
 
-      const updateFields: string[] = [];
-      const values: any[] = [];
-
-      Object.entries(updates).forEach(([key, value]) => {
-        if (value !== undefined) {
-          updateFields.push(`${key} = ?`);
-          values.push(value);
+        // Check if table number conflict
+        if (updates.table_number && updates.table_number !== table.table_number) {
+          const existing = db.prepare('SELECT id FROM restaurant_tables WHERE table_number = ? AND id != ?')
+            .get(updates.table_number, id);
+          if (existing) {
+            throw new Error(`Table number ${updates.table_number} already exists`);
+          }
         }
+
+        const updateFields: string[] = [];
+        const values: any[] = [];
+
+        Object.entries(updates).forEach(([key, value]) => {
+          if (value !== undefined) {
+            updateFields.push(`${key} = ?`);
+            values.push(value);
+          }
+        });
+
+        if (updateFields.length === 0) {
+          return table; // No changes
+        }
+
+        updateFields.push('updated_at = ?');
+        values.push(new Date().toISOString());
+        values.push(id);
+
+        db.prepare(`
+          UPDATE restaurant_tables
+          SET ${updateFields.join(', ')}
+          WHERE id = ?
+        `).run(...values);
+
+        const updatedTable = db.prepare(`
+          SELECT t.*, u.full_name as waiter_name
+          FROM restaurant_tables t
+          LEFT JOIN users u ON t.assigned_waiter_id = u.id
+          WHERE t.id = ?
+        `).get(id) as Table;
+
+        if (!updatedTable) {
+          throw new Error('Failed to retrieve updated table');
+        }
+
+        // Queue for sync
+        getProductSyncService().queueChangeInsideTransaction('restaurant_table', 'update', {
+          ...updatedTable,
+          business_id: businessId
+        });
+
+        return updatedTable;
       });
-
-      if (updateFields.length === 0) {
-        return table; // No changes
-      }
-
-      updateFields.push('updated_at = ?');
-      values.push(new Date().toISOString());
-      values.push(id);
-
-      db.prepare(`
-        UPDATE restaurant_tables
-        SET ${updateFields.join(', ')}
-        WHERE id = ?
-      `).run(...values);
-
-      const updatedTable = await this.getById(id);
-      if (!updatedTable) {
-        throw new Error('Failed to retrieve updated table');
-      }
-
-      // Queue for sync
-      try {
-        getProductSyncService().queueChange('restaurant_table', 'update', updatedTable);
-      } catch (syncErr) {
-        console.warn('[TableService] Failed to queue table update for sync:', syncErr);
-      }
-
-      return updatedTable;
     } catch (error: any) {
       console.error('[TableService] Error updating table:', error);
       throw error;
@@ -389,34 +409,37 @@ export class TableService {
     }
 
     try {
-      const table = await this.getById(id);
-      if (!table) {
-        return false;
-      }
+      const businessId = process.env.SYNC_BUSINESS_ID || 'default-business';
 
-      // Check if table has active orders
-      const activeOrders = db.prepare(`
-        SELECT COUNT(*) as count
-        FROM orders
-        WHERE table_id = ? AND status IN ('pending', 'confirmed', 'preparing', 'ready')
-      `).get(id) as { count: number };
-
-      if (activeOrders.count > 0) {
-        throw new Error('Cannot delete table with active orders');
-      }
-
-      const result = db.prepare('DELETE FROM restaurant_tables WHERE id = ?').run(id);
-      
-      if (result.changes > 0) {
-        // Queue for sync
-        try {
-          getProductSyncService().queueChange('restaurant_table', 'delete', { id });
-        } catch (syncErr) {
-          console.warn('[TableService] Failed to queue table deletion for sync:', syncErr);
+      return withOutboxTransaction(db, businessId, () => {
+        const table = db.prepare('SELECT id FROM restaurant_tables WHERE id = ?').get(id) as { id: number } | undefined;
+        if (!table) {
+          return false;
         }
-      }
 
-      return result.changes > 0;
+        // Check if table has active orders
+        const activeOrders = db.prepare(`
+          SELECT COUNT(*) as count
+          FROM orders
+          WHERE table_id = ? AND status IN ('pending', 'confirmed', 'preparing', 'ready')
+        `).get(id) as { count: number };
+
+        if (activeOrders.count > 0) {
+          throw new Error('Cannot delete table with active orders');
+        }
+
+        const result = db.prepare('DELETE FROM restaurant_tables WHERE id = ?').run(id);
+        
+        if (result.changes > 0) {
+          // Queue for sync
+          getProductSyncService().queueChangeInsideTransaction('restaurant_table', 'delete', { 
+            id,
+            business_id: businessId 
+          });
+        }
+
+        return result.changes > 0;
+      });
     } catch (error: any) {
       console.error('[TableService] Error deleting table:', error);
       throw error;
@@ -424,32 +447,41 @@ export class TableService {
   }
 
   static async regenerateQrToken(id: number): Promise<Table> {
-    const table = await this.getById(id);
-    if (!table) {
-      throw new Error('Table not found');
-    }
+    const businessId = process.env.SYNC_BUSINESS_ID || 'default-business';
 
-    const newToken = crypto.randomUUID().replace(/-/g, '');
-    const now = new Date().toISOString();
+    return withOutboxTransaction(db, businessId, () => {
+      const table = db.prepare('SELECT * FROM restaurant_tables WHERE id = ?').get(id) as Table | undefined;
+      if (!table) {
+        throw new Error('Table not found');
+      }
 
-    db.prepare(`
-      UPDATE restaurant_tables
-      SET qr_token = ?, updated_at = ?
-      WHERE id = ?
-    `).run(newToken, now, id);
+      const newToken = crypto.randomUUID().replace(/-/g, '');
+      const now = new Date().toISOString();
 
-    const updated = await this.getById(id);
-    if (!updated) {
-      throw new Error('Failed to retrieve updated table after regenerating QR token');
-    }
+      db.prepare(`
+        UPDATE restaurant_tables
+        SET qr_token = ?, updated_at = ?
+        WHERE id = ?
+      `).run(newToken, now, id);
 
-    // Queue for sync
-    try {
-      getProductSyncService().queueChange('restaurant_table', 'update', updated);
-    } catch (syncErr) {
-      console.warn('[TableService] Failed to queue table update for sync:', syncErr);
-    }
+      const updated = db.prepare(`
+        SELECT t.*, u.full_name as waiter_name
+        FROM restaurant_tables t
+        LEFT JOIN users u ON t.assigned_waiter_id = u.id
+        WHERE t.id = ?
+      `).get(id) as Table;
 
-    return updated;
+      if (!updated) {
+        throw new Error('Failed to retrieve updated table after regenerating QR token');
+      }
+
+      // Queue for sync
+      getProductSyncService().queueChangeInsideTransaction('restaurant_table', 'update', {
+        ...updated,
+        business_id: businessId
+      });
+
+      return updated;
+    });
   }
 }
