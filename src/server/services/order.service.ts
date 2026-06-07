@@ -177,21 +177,21 @@ export class OrderService {
     const { waiter_id, role, table_id, status } = params;
 
     // Cloud mode guard: db might be null (SQLite disabled on Render)
-    // CRITICAL FIX: If Supabase pull sync is enabled, we MUST use SQLite as source of truth
-    // to avoid double-counting (Supabase may have stale QR orders that haven't been pulled yet)
+    // CRITICAL: In cloud mode, we use Supabase directly as the source of truth
     const pullEnabled = process.env.ENABLE_SUPABASE_PULL === 'true' || process.env.ENABLE_SUPABASE_PULL === '1';
+    const cloudMode = process.env.RENDER_CLOUD_MODE === 'true' || process.env.RENDER_CLOUD_MODE === '1';
     
-    if (!db) {
-      // If pull sync is enabled but db is null, this is a misconfiguration
-      if (pullEnabled) {
-        console.error('[OrderService] CRITICAL: ENABLE_SUPABASE_PULL=true but db is null. Cannot serve orders.');
-        throw new Error('Database misconfiguration: Pull sync requires SQLite');
-      }
-      
-      console.log('[OrderService] SQLite disabled (db is null). Falling back to Supabase for getAll');
+    console.log(`[OrderService] getAll - db=${db ? 'available' : 'null'}, pullEnabled=${pullEnabled}, cloudMode=${cloudMode}`);
+    console.log(`[OrderService] getAll - params:`, params);
+    
+    if (!db || cloudMode) {
+      // In cloud mode or when db is null, use Supabase directly
+      console.log('[OrderService] Using Supabase as source of truth (cloud mode or db null)');
       try {
         const { getSupabaseClient } = require('../database/supabase.client');
         const supabase = getSupabaseClient();
+        
+        console.log('[OrderService] Supabase client created successfully');
 
         let query = supabase
           .from('orders')
@@ -207,10 +207,15 @@ export class OrderService {
           query = query.eq('status', status);
         }
 
+        console.log('[OrderService] Executing Supabase query with filters:', { role, waiter_id, table_id, status });
         const { data, error } = await query.order('created_at', { ascending: false });
 
-        if (error) throw error;
+        if (error) {
+          console.error('[OrderService] Supabase query error:', error);
+          throw error;
+        }
 
+        console.log(`[OrderService] Supabase returned ${data?.length || 0} orders`);
         return (data || []).map((order: any) => ({
           ...order,
           table_number: order.table?.table_number,
@@ -220,14 +225,12 @@ export class OrderService {
         }));
       } catch (err: any) {
         console.error('[OrderService] Supabase getAll failed:', err?.message || err);
-        throw new Error('Failed to fetch orders via Supabase');
+        console.error('[OrderService] Stack:', err?.stack);
+        throw new Error('Failed to fetch orders via Supabase: ' + (err?.message || String(err)));
       }
-    }
-    
-    // CRITICAL: If pull sync is enabled, ensure we're using SQLite (source of truth)
-    // This prevents the frontend from seeing stale/duplicate orders from Supabase
-    if (pullEnabled && db) {
-      console.log('[OrderService] Using SQLite as source of truth (pull sync enabled)');
+    } else {
+      // Use SQLite as source of truth (local development or pull sync mode)
+      console.log('[OrderService] Using SQLite as source of truth');
     }
 
     let query = `
