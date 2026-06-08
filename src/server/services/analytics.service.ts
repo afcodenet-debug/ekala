@@ -31,7 +31,7 @@ export class AnalyticsService {
         });
 
         const [productsResult, saleItemsResult, salesResult, movementsResult, categoriesResult] = await Promise.all([
-          supabase.from('products').select('id, name, category_id, price, cost_price, stock_quantity, minimum_stock, is_available'),
+          supabase.from('products').select('id, name, category_id, price:selling_price, cost_price:buying_price, stock_quantity, minimum_stock, is_available'),
           supabase.from('sale_items').select('sale_id, product_id, quantity, unit_price, total_price'),
           supabase.from('sales').select('id, created_at'),
           supabase.from('inventory_movements').select('movement_type, quantity_changed, total_value'),
