@@ -52,7 +52,33 @@ router.get('/stock-levels', async (req, res) => {
 });
 
 // Get all products (legacy /api/inventory compatibility)
-router.get('/', (req, res) => {
+router.get('/', async (req, res) => {
+  if (env.RENDER_CLOUD_MODE || env.USE_SUPABASE_PRODUCTS) {
+    try {
+      if (!env.SUPABASE_URL || !env.SUPABASE_SERVICE_ROLE_KEY) {
+        return res.status(500).json({ error: 'Supabase not configured' });
+      }
+      const supabase = createClient(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false } });
+      const { data, error } = await supabase
+        .from('products')
+        .select('id, name, barcode, price:selling_price, quantity:stock_quantity, categories(name), created_at, updated_at')
+        .eq('is_available', true)
+        .order('name', { ascending: true });
+      
+      if (error) throw error;
+      
+      const items = (data || []).map((p: any) => ({
+        ...p,
+        category: p.categories?.name,
+        categories: undefined
+      }));
+      return res.json(items);
+    } catch (error) {
+      console.error('[INVENTORY_ROUTE_ERROR] Supabase error:', error);
+      return res.status(500).json({ error: 'Failed to fetch inventory' });
+    }
+  }
+
   try {
     const items = db.prepare(`
       SELECT p.id, p.name, p.barcode, p.selling_price as price, p.stock_quantity as quantity,
@@ -76,6 +102,11 @@ router.patch('/:id/stock', (req, res) => {
 
   if (quantity === undefined || Number.isNaN(Number(quantity))) {
     return res.status(400).json({ error: 'Quantity must be a valid number' });
+  }
+
+  // Cloud mode: Not implemented yet for PATCH via direct route (should use sync or dedicated service)
+  if (!db) {
+    return res.status(501).json({ error: 'Manual stock adjustment not supported in Cloud Mode via this endpoint yet.' });
   }
 
   // ── Snapshot captured by the transaction closure ──────────────────
@@ -178,10 +209,45 @@ router.patch('/:id/stock', (req, res) => {
 // ─── Professional Inventory History ───────────────────────────────────
 // GET /inventory/movements — unified stock movement log
 // Query params: ?product_id=123&limit=50
-router.get('/movements', (req, res) => {
+router.get('/movements', async (req, res) => {
   try {
     const productId = req.query.product_id ? parseInt(req.query.product_id as string) : null;
-    const limit = Math.min(200, Math.max(10, parseInt(req.query.limit as string) || 50));
+    const limit = Math.min(1000, Math.max(1, parseInt(req.query.limit as string) || 50));
+
+    // Cloud mode: read from Supabase
+    if (env.RENDER_CLOUD_MODE || env.USE_SUPABASE_PRODUCTS) {
+      if (!env.SUPABASE_URL || !env.SUPABASE_SERVICE_ROLE_KEY) {
+        return res.status(500).json({ error: 'Supabase not configured' });
+      }
+      const supabase = createClient(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false } });
+      
+      let queryBuilder = supabase
+        .from('inventory_movements')
+        .select('*, products(name, barcode)')
+        .order('created_at', { ascending: false })
+        .limit(limit);
+
+      if (productId) {
+        queryBuilder = queryBuilder.eq('product_id', productId);
+      }
+
+      const { data, error } = await queryBuilder;
+      
+      if (error) throw error;
+      
+      const movements = (data || []).map((m: any) => ({
+        ...m,
+        product_name: m.products?.name,
+        barcode: m.products?.barcode,
+        products: undefined
+      }));
+      
+      return res.json(movements);
+    }
+
+    if (!db) {
+      return res.json([]);
+    }
 
     let query = `
       SELECT m.*, p.name as product_name, p.barcode
