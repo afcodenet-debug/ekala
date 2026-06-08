@@ -75,7 +75,9 @@ const ALLOWED_ORIGINS = new Set<string | undefined>([
   process.env.VITE_FRONTEND_URL,
   'http://localhost:5173',
   'http://localhost:3000',
+  'https://ekala.vercel.app',
   process.env.RENDER_EXTERNAL_URL,
+  ...(env.CORS_ORIGINS ? env.CORS_ORIGINS.split(',').map(o => o.trim()) : [])
 ].filter(Boolean));
 
 app.use((req, res, next) => {
