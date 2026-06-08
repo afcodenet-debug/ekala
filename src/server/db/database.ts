@@ -147,6 +147,7 @@ export function initializeDatabase(): void {
 
   // ── Safety net: ensure minimum tables for QR menu on fresh DB (Render) ───
   ensureCoreQrMenuTables();
+  ensureAdvancedTables();
 
   // ── Seed data (wrapped for fresh DB tolerance on Render) ────────────────
   try {
@@ -236,6 +237,9 @@ function ensureCoreQrMenuTables(): void {
       is_available INTEGER DEFAULT 1,
       stock_quantity INTEGER DEFAULT 0,
       minimum_stock INTEGER DEFAULT 5,
+      price REAL DEFAULT 0,
+      buying_price REAL DEFAULT 0,
+      status TEXT DEFAULT 'active',
       remote_id INTEGER,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -261,6 +265,47 @@ function ensureCoreQrMenuTables(): void {
     )
   `);
 
+  // Settings table (critical for app bootstrap)
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS settings (
+      key TEXT PRIMARY KEY,
+      value TEXT,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+
+  // Menu categories (for QR menu)
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS menu_categories (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      description TEXT,
+      display_order INTEGER DEFAULT 0,
+      is_active INTEGER DEFAULT 1,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+
+  // Menu items (for QR menu)
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS menu_items (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      category_id INTEGER NOT NULL,
+      name TEXT NOT NULL,
+      description TEXT,
+      price REAL NOT NULL DEFAULT 0,
+      currency TEXT DEFAULT 'ZMW',
+      unit TEXT DEFAULT 'pcs',
+      image_url TEXT,
+      is_available INTEGER DEFAULT 1,
+      display_order INTEGER DEFAULT 0,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (category_id) REFERENCES menu_categories(id) ON DELETE RESTRICT
+    )
+  `);
+
   // Ensure columns exist if table was already created (migration-like)
   const orderCols = db.prepare("PRAGMA table_info(orders)").all() as Array<{ name: string }>;
   const orderColNames = orderCols.map(c => c.name);
@@ -272,32 +317,11 @@ function ensureCoreQrMenuTables(): void {
   if (!orderColNames.includes('customer_phone')) db.exec(`ALTER TABLE orders ADD COLUMN customer_phone TEXT`);
   if (!orderColNames.includes('customer_id'))    db.exec(`ALTER TABLE orders ADD COLUMN customer_id INTEGER`);
 
-  // restaurant_tables enterprise columns
-  const tableCols = db.prepare("PRAGMA table_info(restaurant_tables)").all() as Array<{ name: string }>;
-  const tableColNames = tableCols.map(c => c.name);
-  if (!tableColNames.includes('remote_id')) db.exec(`ALTER TABLE restaurant_tables ADD COLUMN remote_id INTEGER`);
-  if (!tableColNames.includes('business_id')) db.exec(`ALTER TABLE restaurant_tables ADD COLUMN business_id TEXT`);
-
-  // order_items (for checkout)
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS order_items (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      order_id INTEGER NOT NULL,
-      product_id INTEGER NOT NULL,
-      quantity REAL NOT NULL,
-      unit_price REAL NOT NULL,
-      total_price REAL NOT NULL,
-      notes TEXT,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    )
-  `);
-
-  const itemCols = db.prepare("PRAGMA table_info(order_items)").all() as Array<{ name: string }>;
-  if (!itemCols.some(c => c.name === 'notes')) db.exec(`ALTER TABLE order_items ADD COLUMN notes TEXT`);
-
-  // products table remote_id
-  const prodCols = db.prepare("PRAGMA table_info(products)").all() as Array<{ name: string }>;
-  if (!prodCols.some(c => c.name === 'remote_id')) db.exec(`ALTER TABLE products ADD COLUMN remote_id INTEGER`);
+  const productCols = db.prepare("PRAGMA table_info(products)").all() as Array<{ name: string }>;
+  if (!productCols.some(c => c.name === 'status')) db.exec(`ALTER TABLE products ADD COLUMN status TEXT DEFAULT 'active'`);
+  if (!productCols.some(c => c.name === 'remote_id')) db.exec(`ALTER TABLE products ADD COLUMN remote_id INTEGER`);
+  if (!productCols.some(c => c.name === 'price')) db.exec(`ALTER TABLE products ADD COLUMN price REAL DEFAULT 0`);
+  if (!productCols.some(c => c.name === 'buying_price')) db.exec(`ALTER TABLE products ADD COLUMN buying_price REAL DEFAULT 0`);
 
   // Ensure unique indexes for remote_ids to prevent sync duplicates
   db.exec(`
@@ -329,6 +353,41 @@ function ensureCoreQrMenuTables(): void {
   try { db.prepare(`CREATE INDEX IF NOT EXISTS idx_users_business_id ON users(business_id)`).run(); } catch {}
 
   console.log('[Database] Core QR menu tables ensured (IF NOT EXISTS)');
+}
+
+function ensureAdvancedTables(): void {
+  // inventory_movements
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS inventory_movements (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      product_id INTEGER NOT NULL,
+      movement_type TEXT NOT NULL CHECK (movement_type IN ('in', 'out', 'adjustment', 'transfer')),
+      quantity_before REAL NOT NULL,
+      quantity_changed REAL NOT NULL,
+      quantity_after REAL NOT NULL,
+      reference_id TEXT,
+      reference_type TEXT,
+      status TEXT DEFAULT 'confirmed',
+      notes TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE
+    )
+  `);
+
+  // expenses
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS expenses (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      category TEXT,
+      amount REAL NOT NULL,
+      description TEXT,
+      date TEXT,
+      tenant_id INTEGER,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+
+  console.log('[Database] Advanced tables ensured');
 }
 
 function ensureTenantSyncColumns(): void {

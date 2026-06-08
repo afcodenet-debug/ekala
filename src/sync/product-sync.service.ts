@@ -413,7 +413,10 @@ else if (entity === 'restaurant_table') {
         applied++;
       }
       } catch (perProductErr: any) {
-        console.error('[Sync] Error processing one remote product in pull (continuing with others):', perProductErr?.message || perProductErr, 'product=', remoteProduct);
+        console.error('[Sync] Error processing one remote product in pull:', perProductErr?.message || perProductErr);
+        if (remoteProduct) {
+          console.error('Remote Product Data:', JSON.stringify(remoteProduct, null, 2));
+        }
       }
     }
 
