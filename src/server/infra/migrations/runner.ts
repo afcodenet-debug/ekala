@@ -64,13 +64,12 @@ export function applyMigration(filename: string, sqlPath: string): void {
     console.log(`[Migrations] ✓ Applied: ${filename}`);
   } catch (err: any) {
     const message = String(err?.message || err);
-    const isEarlyMigrationError = /^[0-1]/.test(filename) &&
-      /no such (table|column):/i.test(message);
     const isDuplicateColumnError = /duplicate column name:/i.test(message);
-    const isUnsupportedUniqueColumnError = /cannot add a unique column/i.test(message);
+    const isDuplicateTableError = /table .* already exists/i.test(message);
+    const isDuplicateIndexError = /index .* already exists/i.test(message);
 
-    if (isEarlyMigrationError || isDuplicateColumnError || isUnsupportedUniqueColumnError) {
-      console.warn(`[Migrations] Skipping non-fatal schema issue for ${filename}:`, message);
+    if (isDuplicateColumnError || isDuplicateTableError || isDuplicateIndexError) {
+      console.warn(`[Migrations] Skipping duplicate schema element for ${filename}:`, message);
       db.prepare('INSERT OR REPLACE INTO _migrations (filename) VALUES (?)').run(filename);
       return;
     }
