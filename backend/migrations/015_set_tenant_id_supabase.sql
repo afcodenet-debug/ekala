@@ -5,18 +5,18 @@
 -- ============================================================================
 
 -- 1. Ensure tenant_id column exists on tables that need it
-ALTER TABLE users ADD COLUMN IF NOT EXISTS tenant_id INTEGER REFERENCES tenants(id);
-ALTER TABLE tenant_users ADD COLUMN IF NOT EXISTS tenant_id INTEGER REFERENCES tenants(id);
-ALTER TABLE products ADD COLUMN IF NOT EXISTS tenant_id INTEGER REFERENCES tenants(id);
-ALTER TABLE tables ADD COLUMN IF NOT EXISTS tenant_id INTEGER REFERENCES tenants(id);
-ALTER TABLE orders ADD COLUMN IF NOT EXISTS tenant_id INTEGER REFERENCES tenants(id);
-ALTER TABLE order_items ADD COLUMN IF NOT EXISTS tenant_id INTEGER REFERENCES tenants(id);
-ALTER TABLE expenses ADD COLUMN IF NOT EXISTS tenant_id INTEGER REFERENCES tenants(id);
-ALTER TABLE categories ADD COLUMN IF NOT EXISTS tenant_id INTEGER REFERENCES tenants(id);
-ALTER TABLE suppliers ADD COLUMN IF NOT EXISTS tenant_id INTEGER REFERENCES tenants(id);
-ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS tenant_id INTEGER REFERENCES tenants(id);
-ALTER TABLE stock_adjustments ADD COLUMN IF NOT EXISTS tenant_id INTEGER REFERENCES tenants(id);
-ALTER TABLE inventory_movements ADD COLUMN IF NOT EXISTS tenant_id INTEGER REFERENCES tenants(id);
+ALTER TABLE users ADD COLUMN tenant_id INTEGER REFERENCES tenants(id);
+ALTER TABLE tenant_users ADD COLUMN tenant_id INTEGER REFERENCES tenants(id);
+ALTER TABLE products ADD COLUMN tenant_id INTEGER REFERENCES tenants(id);
+ALTER TABLE tables ADD COLUMN tenant_id INTEGER REFERENCES tenants(id);
+ALTER TABLE orders ADD COLUMN tenant_id INTEGER REFERENCES tenants(id);
+ALTER TABLE order_items ADD COLUMN tenant_id INTEGER REFERENCES tenants(id);
+ALTER TABLE expenses ADD COLUMN tenant_id INTEGER REFERENCES tenants(id);
+ALTER TABLE categories ADD COLUMN tenant_id INTEGER REFERENCES tenants(id);
+ALTER TABLE suppliers ADD COLUMN tenant_id INTEGER REFERENCES tenants(id);
+ALTER TABLE purchase_orders ADD COLUMN tenant_id INTEGER REFERENCES tenants(id);
+ALTER TABLE stock_adjustments ADD COLUMN tenant_id INTEGER REFERENCES tenants(id);
+ALTER TABLE inventory_movements ADD COLUMN tenant_id INTEGER REFERENCES tenants(id);
 
 -- 2. Create tenant "Default" if it doesn't exist
 INSERT OR IGNORE INTO tenants (id, name, owner_email, status, is_provisioned)

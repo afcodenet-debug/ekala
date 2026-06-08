@@ -295,17 +295,32 @@ export class UserTenantSyncService {
             }
           }
           
-          const insertCols = ['id', ...updateFields];
-          const insertParams = [remoteId, ...params];
+          // Try to insert with remote ID first (preferred for consistency)
+          // If it fails due to PK conflict, insert without ID and let SQLite assign it
           try {
+            const insertCols = ['id', ...updateFields];
+            const insertParams = [remoteId, ...params];
             this.db.prepare(
               `INSERT INTO ${table} (${insertCols.map(c => `"${c}"`).join(', ')}) VALUES (${insertParams.map(() => '?').join(', ')})`
             ).run(...insertParams);
           } catch (insertErr: any) {
-            if (insertErr?.code === 'SQLITE_CONSTRAINT_UNIQUE' && entity === 'user') {
+            if (insertErr?.code === 'SQLITE_CONSTRAINT_PRIMARYKEY') {
+              const insertCols = updateFields;
+              const insertParams = params;
+              const result = this.db.prepare(
+                `INSERT INTO ${table} (${insertCols.map(c => `"${c}"`).join(', ')}) VALUES (${insertParams.map(() => '?').join(', ')})`
+              ).run(...insertParams);
+              
+              // Ensure remote_id is set if it wasn't in updateFields
+              if (!updateFields.includes('remote_id')) {
+                this.db.prepare(`UPDATE ${table} SET remote_id = ? WHERE id = ?`).run(remoteId, result.lastInsertRowid);
+              }
+            } else if (insertErr?.code === 'SQLITE_CONSTRAINT_UNIQUE' && entity === 'user') {
+              console.warn(`[Sync] Skipping user ${remoteId} due to unique constraint (likely username conflict)`);
               continue;
+            } else {
+              throw insertErr;
             }
-            throw insertErr;
           }
         }
         applied++;

@@ -11,9 +11,9 @@
 
 -- 1) restaurant_tables
 ALTER TABLE restaurant_tables
-  ADD COLUMN IF NOT EXISTS remote_id   BIGINT;
+  ADD COLUMN remote_id   BIGINT;
 ALTER TABLE restaurant_tables
-  ADD COLUMN IF NOT EXISTS business_id TEXT;
+  ADD COLUMN business_id TEXT;
 
 -- Helpful index for the pull engine (find local row by remote_id)
 CREATE INDEX IF NOT EXISTS idx_tables_remote_id
@@ -28,7 +28,7 @@ CREATE INDEX IF NOT EXISTS idx_tables_business_id
 -- 2) orders (same problem applies, but the code already references remote_id)
 -- Make sure remote_id exists on orders too (defensive — usually already added)
 ALTER TABLE orders
-  ADD COLUMN IF NOT EXISTS remote_id BIGINT;
+  ADD COLUMN remote_id BIGINT;
 
 CREATE INDEX IF NOT EXISTS idx_orders_remote_id
   ON orders(remote_id)
