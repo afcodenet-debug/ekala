@@ -320,4 +320,63 @@ export class SupabaseInvoiceRepository implements IInvoiceRepository {
     return this.fromRow(data);
   }
 
-  async findByNumber(invoiceNumber: string): Promise<Invoice |
+  async findByNumber(invoiceNumber: string): Promise<Invoice |null> {
+    const { data, error } = await this.db
+      .from('invoices')
+      .select('*')
+      .eq('invoice_number', invoiceNumber)
+      .single();
+    if (error) {
+      if (error.code === 'PGRST116') return null; // not found
+      throw makeErr(error);
+    }
+    return this.fromRow(data);
+  }
+
+  async findById(id: number): Promise<Invoice | null> {
+    const { data, error } = await this.db
+      .from('invoices')
+      .select('*')
+      .eq('id', id)
+      .maybeSingle();
+    if (error) {
+      if (error.code === 'PGRST116') return null;
+      throw makeErr(error);
+    }
+    return data ? this.fromRow(data) : null;
+  }
+
+  async listForTenant(tenantId: number, limit: number = 50): Promise<Invoice[]> {
+    const { data, error } = await this.db
+      .from('invoices')
+      .select('*')
+      .eq('tenant_id', tenantId)
+      .order('issued_at', { ascending: false })
+      .limit(limit);
+    if (error) throw makeErr(error);
+    return (data || []).map((r: any) => this.fromRow(r));
+  }
+
+  async markPaid(id: number): Promise<Invoice> {
+    const now = new Date().toISOString();
+    const { data, error } = await this.db
+      .from('invoices')
+      .update({ status: 'paid', paid_at: now })
+      .eq('id', id)
+      .select()
+      .single();
+    if (error) throw makeErr(error);
+    return this.fromRow(data);
+  }
+
+  async generateInvoiceNumber(): Promise<string> {
+    const year = new Date().getFullYear();
+    for (let i = 0; i < 10; i++) {
+      const rand = Math.floor(10000 + Math.random() * 90000);
+      const number = `INV-${year}-${rand}`;
+      const exists = await this.findByNumber(number);
+      if (!exists) return number;
+    }
+    return `INV-${year}-${Date.now().toString(36).toUpperCase()}`;
+  }
+}

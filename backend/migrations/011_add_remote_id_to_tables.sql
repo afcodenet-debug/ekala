@@ -9,8 +9,6 @@
 -- Safe to run multiple times (uses IF NOT EXISTS).
 -- ============================================================================
 
-BEGIN;
-
 -- 1) restaurant_tables
 ALTER TABLE restaurant_tables
   ADD COLUMN IF NOT EXISTS remote_id   BIGINT;
@@ -45,5 +43,3 @@ CREATE INDEX IF NOT EXISTS idx_orders_remote_id
 -- 4) Mark migration as applied
 INSERT INTO _migrations (filename) VALUES ('011_add_remote_id_to_tables.sql')
   ON CONFLICT (filename) DO NOTHING;
-
-COMMIT;

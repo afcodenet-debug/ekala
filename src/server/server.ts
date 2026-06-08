@@ -26,6 +26,7 @@ import stockAdjustmentsRoutes from './routes/stock-adjustments';
 import inventoryRoutes from './routes/inventory';
 import reportsRoutes from './routes/reports';
 import authRoutes from './routes/auth';
+import authSetupRoutes from './routes/auth-setup';
 import settingsRoutes from './routes/settings';
 import logsRoutes from './routes/logs';
 import customersRoutes from './routes/customers';
@@ -35,9 +36,11 @@ import scheduledReportsLogRoutes from './routes/scheduled_reports_log';
 import db, { initializeDatabase } from './db/database';
 import { startSupabasePullWorker, getPullSyncStatus } from './services/supabase-pull-sync.service';
 import { startScheduledReports } from './services/scheduled-reports.service';
-import { initializeProductSync, getOrderSyncService, SyncOrchestrator } from '../sync';
+import { initializeProductSync, getOrderSyncService, SyncOrchestrator, UserTenantSyncService } from '../sync';
 import { env } from './config/env';
 import { createSaaSRouter } from './saas/saas.routes';
+import { createSaaSPaymentRouter } from './saas/saas-payment.routes';
+import { startSubscriptionExpirationCron } from './saas/cron/subscription-expiration.cron';
 
 const app = express();
 
@@ -65,16 +68,30 @@ app.use((req, res, next) => {
 });
 
 // =============================================
-// EXPRESS CORS HARDENING - BEFORE ALL ROUTES
-// Temporarily allow '*' for debugging the QR Menu
+// CORS - reflechit les origines autorisées au lieu de "*"
 // =============================================
+const ALLOWED_ORIGINS = new Set<string | undefined>([
+  process.env.FRONTEND_BASE_URL,
+  process.env.VITE_FRONTEND_URL,
+  'http://localhost:5173',
+  'http://localhost:3000',
+  process.env.RENDER_EXTERNAL_URL,
+].filter(Boolean));
+
 app.use((req, res, next) => {
-  res.header('Access-Control-Allow-Origin', '*');
-  res.header('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
-  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization, x-user-role');
+  const origin = req.headers.origin;
+  const allowOrigin = origin && ALLOWED_ORIGINS.has(origin) ? origin : undefined;
+
+  res.setHeader('Vary', 'Origin');
+  if (allowOrigin) {
+    res.setHeader('Access-Control-Allow-Origin', allowOrigin);
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
+  }
+  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization, x-user-role');
 
   if (req.method === 'OPTIONS') {
-    return res.sendStatus(200);
+    return res.sendStatus(204);
   }
 
   next();
@@ -138,6 +155,7 @@ app.use('/api/stock-adjustments', stockAdjustmentsRoutes);
 app.use('/api/inventory', inventoryRoutes);
 app.use('/api/reports', reportsRoutes);
 app.use('/api/auth', authRoutes);
+app.use('/api/auth', authSetupRoutes);
 app.use('/api/settings', settingsRoutes);
 app.use('/api/logs', logsRoutes);
 app.use('/api/customers', customersRoutes);
@@ -146,9 +164,11 @@ app.use('/api/notification_preferences', notificationPreferencesRoutes);
 app.use('/api/scheduled_reports_log', scheduledReportsLogRoutes);
 
 // =============================================================================
-// SaaS Multi-Tenant Routes (Phase 1)
+// SaaS Multi-Tenant Routes (Phase 1 + 3)
 // =============================================================================
 app.use('/api', createSaaSRouter());
+app.use('/api', createSaaSPaymentRouter());
+startSubscriptionExpirationCron();
 
 app.listen(PORT, () => {
   console.log(`[RENDER BOOT] Express listening on port ${PORT}`);
@@ -191,7 +211,8 @@ app.listen(PORT, () => {
       try {
         const syncService = initializeProductSync(db, supabaseUrl, supabaseKey);
         const orderService = getOrderSyncService();
-        const orchestrator = new SyncOrchestrator(syncService, orderService, db, businessId);
+        const userTenantService = new UserTenantSyncService(db, supabaseUrl, supabaseKey);
+        const orchestrator = new SyncOrchestrator(syncService, orderService, userTenantService, db, businessId);
         orchestrator.startScheduler(30000);           // PUSH + PULL every 30s
         orchestrator.triggerSync().catch(() => {});   // kick off immediately
 

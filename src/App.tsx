@@ -25,6 +25,12 @@ import UsersPage from './pages/users/UsersPage';
 import InventoryAnalyticsPage from './features/products/components/InventoryAnalytics';
 import CategoriesPage from './pages/CategoriesPage';
 import PublicMenuPage from './pages/PublicMenuPage';
+import PricingPage from './pages/saas/PricingPage';
+import SignupPage from './pages/saas/SignupPage';
+import BillingPage from './pages/saas/BillingPage';
+import CheckoutPage from './pages/saas/CheckoutPage';
+import SetupAccountPage from './pages/saas/SetupAccountPage';
+import SubscriptionExpirationBanner from './components/SubscriptionExpirationBanner';
 import GlobalQrOrderNotifier from './components/GlobalQrOrderNotifier';
 import { GlobalNotificationToast } from './components/GlobalNotificationToast';
 import { NotificationCenter } from './components/NotificationCenter';
@@ -78,6 +84,10 @@ function App() {
         <I18nProvider lang={language}>
           <Routes>
             <Route path="/login" element={<LoginPage />} />
+            <Route path="/pricing" element={<PricingPage />} />
+            <Route path="/signup" element={<SignupPage />} />
+            <Route path="/checkout" element={<CheckoutPage />} />
+            <Route path="/setup-account" element={<SetupAccountPage />} />
             {/* Public QR menu - always accessible without auth */}
             <Route path="/menu" element={<PublicMenuPage />} />
             {/* Protected staff area: Dashboard on root for authenticated users */}
@@ -141,7 +151,7 @@ function App() {
                       onClose={() => useNotificationStore.getState().closeCenter()} 
                     />
 
-                    <main style={{ 
+                    <main style={{
                       flex: 1, 
                       overflowY: 'auto', 
                       position: 'relative',
@@ -198,13 +208,15 @@ function App() {
                             <UsersPage />
                           </ProtectedRoute>
                         } />
-                        <Route path="/settings" element={
-                          <ProtectedRoute roles={['admin']}>
-                            <SettingsPage />
-                          </ProtectedRoute>
-                        } />
+                         <Route path="/settings" element={
+                           <ProtectedRoute roles={['admin']}>
+                             <SettingsPage />
+                           </ProtectedRoute>
+                         } />
+                         <Route path="/billing" element={<BillingPage />} />
                       </Routes>
                     </main>
+                    <SubscriptionExpirationBanner />
                   </div>
                 </ProtectedRoute>
               }

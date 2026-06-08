@@ -4,11 +4,13 @@
 
 import { ProductSyncService } from './product-sync.service';
 import { OrderSyncService } from './order-sync.service';
+import { UserTenantSyncService } from './user-tenant-sync.service';
 import type Database from 'better-sqlite3';
 
 export class SyncOrchestrator {
   private syncService: ProductSyncService;
   private orderService: OrderSyncService;
+  private userTenantService: UserTenantSyncService;
   private db: Database.Database;
   private businessId: string;
   private isSyncing = false;
@@ -18,11 +20,13 @@ export class SyncOrchestrator {
   constructor(
     syncService: ProductSyncService,
     orderService: OrderSyncService,
+    userTenantService: UserTenantSyncService,
     db: Database.Database,
     businessId: string
   ) {
     this.syncService = syncService;
     this.orderService = orderService;
+    this.userTenantService = userTenantService;
     this.db = db;
     this.businessId = businessId;
 
@@ -62,7 +66,7 @@ export class SyncOrchestrator {
   /**
    * Crash recovery: resume any unfinished outbox items
    */
-  private readonly SYNC_ENTITIES = ['product', 'order', 'order_item', 'restaurant_table'] as const;
+  private readonly SYNC_ENTITIES = ['product', 'order', 'order_item', 'restaurant_table', 'user', 'tenant', 'tenant_user'] as const;
 
   private recoverUnfinishedSync() {
     for (const entity of this.SYNC_ENTITIES) {
@@ -176,8 +180,11 @@ export class SyncOrchestrator {
         this.setLastPullTimestamp('restaurant_table', new Date().toISOString());
       }
 
-      const totalPushed = productResult.pushed + ordersPushed + tablesPushed;
-      const totalPulled = productResult.pulled + ordersPulled + tablesPulled;
+      // 4. Sync Users/Tenants (Push + Pull)
+      const userTenantResult = await this.userTenantService.syncNow(this.businessId);
+
+      const totalPushed = productResult.pushed + ordersPushed + tablesPushed + userTenantResult.pushed;
+      const totalPulled = productResult.pulled + ordersPulled + tablesPulled + userTenantResult.pulled;
 
       if (totalPushed > 0 || totalPulled > 0) {
         console.log(`[SyncOrchestrator] Sync completed - Pushed: ${totalPushed}, Pulled: ${totalPulled}`);
@@ -292,7 +299,11 @@ export class SyncOrchestrator {
   async forceFullResync(): Promise<void> {
     this.setLastPullTimestamp('product', null);
     this.setLastPullTimestamp('order', null);
+    this.setLastPullTimestamp('user', null);
+    this.setLastPullTimestamp('tenant', null);
+    this.setLastPullTimestamp('tenant_user', null);
     this.syncService.resetPullCursor();
+    this.userTenantService.resetPullCursor();
     await this.triggerSync();
   }
 }

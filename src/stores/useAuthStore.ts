@@ -2,7 +2,7 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { api } from '../lib/api-client';
 
-export type UserRole = 'admin' | 'manager' | 'cashier'| 'waiter';
+export type UserRole = 'super_admin' | 'admin' | 'manager' | 'cashier' | 'waiter';
 
 export interface User {
   id: number;
@@ -13,6 +13,10 @@ export interface User {
   pin_code: string;
   role: UserRole;
   is_active?: boolean;
+  // Phase 4 — SaaS multi-tenant
+  tenant_id?: number;
+  tenant_name?: string;
+  tenant_slug?: string;
 }
 
 interface AuthStore {
@@ -22,6 +26,7 @@ interface AuthStore {
   login: (pin: string, identity?: string) => Promise<boolean>;
   logout: () => void;
   checkServer: () => Promise<void>;
+  setUser: (user: User | null) => void;
 }
 
 export const useAuthStore = create<AuthStore>()(
@@ -56,8 +61,13 @@ export const useAuthStore = create<AuthStore>()(
       logout: () => {
         console.log('[AuthStore] Logging out');
         set({ user: null, isAuthenticated: false });
-      }
+      },
+
+      setUser: (user) => set({ user, isAuthenticated: !!user }),
     }),
-    { name: 'olive-pos-auth' }
+    {
+      name: 'olive-pos-auth',
+      partialize: (state) => ({ user: state.user, isAuthenticated: state.isAuthenticated }),
+    }
   )
 );

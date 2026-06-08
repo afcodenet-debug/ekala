@@ -168,6 +168,7 @@ export function initializeDatabase(): void {
 
     ensureEmailSettingsDefaults();
     ensureNotificationTables(); // Phase 3 - Notifications & Reports tables
+    ensureTenantTables(); // Multi-tenant sync tables
 
     // Add email column to users (nullable + unique)
     try {
@@ -310,12 +311,82 @@ function ensureCoreQrMenuTables(): void {
       role TEXT DEFAULT 'waiter',
       is_active INTEGER DEFAULT 1,
       email TEXT,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      remote_id INTEGER,
+      business_id TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )
   `);
+  
+  try { db.prepare(`ALTER TABLE users ADD COLUMN updated_at DATETIME DEFAULT CURRENT_TIMESTAMP`).run(); } catch {}
+  try { db.prepare(`ALTER TABLE users ADD COLUMN remote_id INTEGER`).run(); } catch {}
+  try { db.prepare(`ALTER TABLE users ADD COLUMN business_id TEXT`).run(); } catch {}
+  try { db.prepare(`CREATE INDEX IF NOT EXISTS idx_users_remote_id ON users(remote_id) WHERE remote_id IS NOT NULL`).run(); } catch {}
+  try { db.prepare(`CREATE INDEX IF NOT EXISTS idx_users_business_id ON users(business_id)`).run(); } catch {}
 
   console.log('[Database] Core QR menu tables ensured (IF NOT EXISTS)');
+}
 
+function ensureTenantTables(): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS tenants (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      slug TEXT UNIQUE,
+      name TEXT NOT NULL,
+      legal_name TEXT,
+      owner_email TEXT NOT NULL,
+      owner_phone TEXT,
+      contact_email TEXT,
+      contact_phone TEXT,
+      country TEXT NOT NULL DEFAULT 'ZM',
+      city TEXT,
+      address TEXT,
+      logo_url TEXT,
+      primary_color TEXT DEFAULT '#D4AF37',
+      default_currency TEXT NOT NULL DEFAULT 'ZMW',
+      default_locale TEXT NOT NULL DEFAULT 'en',
+      timezone TEXT NOT NULL DEFAULT 'Africa/Lusaka',
+      status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','suspended','cancelled','trial')),
+      is_provisioned INTEGER NOT NULL DEFAULT 0,
+      provisioned_at TEXT,
+      internal_notes TEXT,
+      remote_id INTEGER,
+      business_id TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+  
+  try { db.prepare(`ALTER TABLE tenants ADD COLUMN remote_id INTEGER`).run(); } catch {}
+  try { db.prepare(`ALTER TABLE tenants ADD COLUMN business_id TEXT`).run(); } catch {}
+  try { db.prepare(`CREATE INDEX IF NOT EXISTS idx_tenants_remote_id ON tenants(remote_id) WHERE remote_id IS NOT NULL`).run(); } catch {}
+  try { db.prepare(`CREATE INDEX IF NOT EXISTS idx_tenants_business_id ON tenants(business_id)`).run(); } catch {}
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS tenant_users (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      tenant_id INTEGER NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      role TEXT NOT NULL DEFAULT 'staff' CHECK (role IN ('owner','admin','manager','cashier','waiter','staff')),
+      is_default INTEGER NOT NULL DEFAULT 0,
+      is_active INTEGER NOT NULL DEFAULT 1,
+      invited_at TEXT,
+      joined_at TEXT,
+      remote_id INTEGER,
+      business_id TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(tenant_id, user_id)
+    )
+  `);
+  
+  try { db.prepare(`ALTER TABLE tenant_users ADD COLUMN remote_id INTEGER`).run(); } catch {}
+  try { db.prepare(`ALTER TABLE tenant_users ADD COLUMN business_id TEXT`).run(); } catch {}
+  try { db.prepare(`CREATE INDEX IF NOT EXISTS idx_tenant_users_remote_id ON tenant_users(remote_id) WHERE remote_id IS NOT NULL`).run(); } catch {}
+  try { db.prepare(`CREATE INDEX IF NOT EXISTS idx_tenant_users_business_id ON tenant_users(business_id)`).run(); } catch {}
+}
+
+function seedDemoData(): void {
   // Seed a demo table with a predictable token for easy testing on fresh deploy
   try {
     const hasDemo = db.prepare(

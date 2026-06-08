@@ -8,14 +8,13 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { env } from '../../../config/env';
 import {
-  IPlanRepository, ITenantRepository, ISubscriptionRepository,
-  IPaymentRepository, ITenantUserRepository, IInvoiceRepository, ISaaSRepository,
+  IPlanRepository, ITenantRepository,
 } from '../saas.repository.interface';
 import type {
-  Plan, Tenant, Subscription, Payment, TenantUser, Invoice,
-  CreateTenantDto, CreatePaymentDto, CreateSubscriptionDto, UpdateSubscriptionDto,
+  Plan, Tenant, Subscription,
+  CreateTenantDto,
 } from '../../types/saas.types';
-import { PlanNotFoundError, TenantNotFoundError, SaaSError } from '../../types/saas.types';
+import { TenantNotFoundError, SaaSError } from '../../types/saas.types';
 
 let _supabase: SupabaseClient | null = null;
 function db(): SupabaseClient {

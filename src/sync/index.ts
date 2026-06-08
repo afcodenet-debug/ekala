@@ -81,3 +81,4 @@ export function startPeriodicSync(businessId: string, intervalMs = 30000) {
 
 export { SyncOrchestrator } from './sync-orchestrator';
 export { withOutboxTransaction } from './with-outbox-transaction';
+export { UserTenantSyncService } from './user-tenant-sync.service';

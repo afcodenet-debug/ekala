@@ -3,9 +3,7 @@
 // =============================================================================
 
 import { Router } from 'express';
-import { createClient, SupabaseClient } from '@supabase/supabase-js';
-import { env } from '../config/env';
-import { SaaSError, PlanNotFoundError } from './types/saas.types';
+import { PlanNotFoundError } from './types/saas.types';
 import type { ISaaSRepository } from './repositories/saas.repository.interface';
 import {
   SupabasePlanRepository, SupabaseTenantRepository,
@@ -17,15 +15,6 @@ import {
 // =============================================================================
 let _repo: Partial<ISaaSRepository> | null = null;
 
-function db(): SupabaseClient {
-  if (!env.SUPABASE_URL || !env.SUPABASE_SERVICE_ROLE_KEY) {
-    throw new SaaSError('Supabase not configured', 500, 'SUPABASE_NOT_CONFIGURED');
-  }
-  return createClient(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, {
-    auth: { autoRefreshToken: false, persistSession: false },
-    db: { schema: 'public' },
-  });
-}
 
 export function getSaaSRepository(): Partial<ISaaSRepository> {
   if (_repo) return _repo;
@@ -112,14 +101,47 @@ export function createSaaSRouter(): Router {
     }
   });
 
-  // GET /api/tenants/:id — get a tenant by ID (public for now)
+  // GET /api/tenants/:id — get a tenant by ID enriched with subscription + plan + payments
   router.get('/tenants/:id', async (req, res) => {
     try {
-      if (!r().tenants) return res.status(503).json({ error: 'SaaS not initialized' });
       const id = Number(req.params.id);
-      const tenant = await r().tenants!.findById(id);
-      if (!tenant) return res.status(404).json({ error: 'TENANT_NOT_FOUND' });
-      res.json({ tenant });
+      const { createClient } = await import('@supabase/supabase-js');
+      const { env } = await import('../config/env');
+      if (!env.SUPABASE_URL || !env.SUPABASE_SERVICE_ROLE_KEY) {
+        return res.status(503).json({ error: 'SaaS not initialized' });
+      }
+      const supabase = createClient(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, {
+        auth: { persistSession: false },
+        db: { schema: 'public' },
+      });
+
+      const { data: tenant, error: tErr } = await supabase
+        .from('tenants')
+        .select('*')
+        .eq('id', id)
+        .maybeSingle();
+      if (tErr || !tenant) return res.status(404).json({ error: 'TENANT_NOT_FOUND' });
+
+      const { data: subs, error: sErr } = await supabase
+        .from('subscriptions')
+        .select('*, plans(*)')
+        .eq('tenant_id', id)
+        .order('current_period_start', { ascending: false });
+      if (sErr) console.error('[SaaS] tenant subscriptions load error:', sErr);
+
+      const { data: pays, error: pErr } = await supabase
+        .from('payments')
+        .select('*')
+        .eq('tenant_id', id)
+        .order('created_at', { ascending: false })
+        .limit(50);
+      if (pErr) console.error('[SaaS] tenant payments load error:', pErr);
+
+      res.json({
+        tenant,
+        subscriptions: subs || [],
+        payments: pays || [],
+      });
     } catch (e: any) {
       res.status(500).json({ error: 'GET_TENANT_FAILED', message: e.message });
     }
