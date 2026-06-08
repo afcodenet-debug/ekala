@@ -248,6 +248,7 @@ function ensureCoreQrMenuTables(): void {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       table_id INTEGER,
       waiter_id INTEGER,
+      items TEXT,
       status TEXT DEFAULT 'pending',
       total REAL DEFAULT 0,
       customer_phone TEXT,
@@ -264,6 +265,7 @@ function ensureCoreQrMenuTables(): void {
   const orderCols = db.prepare("PRAGMA table_info(orders)").all() as Array<{ name: string }>;
   const orderColNames = orderCols.map(c => c.name);
   if (!orderColNames.includes('waiter_id'))  db.exec(`ALTER TABLE orders ADD COLUMN waiter_id INTEGER`);
+  if (!orderColNames.includes('items'))      db.exec(`ALTER TABLE orders ADD COLUMN items TEXT`);
   if (!orderColNames.includes('remote_id')) db.exec(`ALTER TABLE orders ADD COLUMN remote_id INTEGER`);
   if (!orderColNames.includes('source'))     db.exec(`ALTER TABLE orders ADD COLUMN source TEXT DEFAULT 'local'`);
   if (!orderColNames.includes('notes'))      db.exec(`ALTER TABLE orders ADD COLUMN notes TEXT`);
