@@ -247,6 +247,7 @@ function ensureCoreQrMenuTables(): void {
     CREATE TABLE IF NOT EXISTS orders (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       table_id INTEGER,
+      waiter_id INTEGER,
       status TEXT DEFAULT 'pending',
       total REAL DEFAULT 0,
       customer_phone TEXT,
@@ -262,6 +263,7 @@ function ensureCoreQrMenuTables(): void {
   // Ensure columns exist if table was already created (migration-like)
   const orderCols = db.prepare("PRAGMA table_info(orders)").all() as Array<{ name: string }>;
   const orderColNames = orderCols.map(c => c.name);
+  if (!orderColNames.includes('waiter_id'))  db.exec(`ALTER TABLE orders ADD COLUMN waiter_id INTEGER`);
   if (!orderColNames.includes('remote_id')) db.exec(`ALTER TABLE orders ADD COLUMN remote_id INTEGER`);
   if (!orderColNames.includes('source'))     db.exec(`ALTER TABLE orders ADD COLUMN source TEXT DEFAULT 'local'`);
   if (!orderColNames.includes('notes'))      db.exec(`ALTER TABLE orders ADD COLUMN notes TEXT`);

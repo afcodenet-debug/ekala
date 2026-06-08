@@ -47,6 +47,18 @@ export class UserTenantSyncService {
     console.log(`[Sync] ${entity} ${operation} queued for ${record.id}`);
   }
 
+  private getLocalId(table: string, remoteId: any): number | null {
+    if (remoteId === null || remoteId === undefined) return null;
+    try {
+      const row = this.db.prepare(
+        `SELECT id FROM ${table} WHERE remote_id = ? OR id = ?`
+      ).get(remoteId, remoteId) as { id: number } | undefined;
+      return row ? row.id : null;
+    } catch {
+      return null;
+    }
+  }
+
   queueUserChange(operation: 'insert' | 'update' | 'delete', user: Partial<any>) {
     this.queueChange('user', operation, user);
   }
@@ -221,6 +233,19 @@ export class UserTenantSyncService {
         };
 
         cols.forEach(c => { if (remote[c] !== undefined) fields[c] = remote[c]; });
+
+        // Map remote FKs to local IDs to prevent FK constraint failures
+        if (entity === 'tenant_user') {
+          const localTenantId = this.getLocalId('tenants', remote.tenant_id);
+          const localUserId = this.getLocalId('users', remote.user_id);
+          
+          if (!localTenantId || !localUserId) {
+            console.warn(`[Sync] Skipping tenant_user ${remoteId}: Missing local tenant (${remote.tenant_id} -> ${localTenantId}) or user (${remote.user_id} -> ${localUserId})`);
+            continue;
+          }
+          fields.tenant_id = localTenantId;
+          fields.user_id = localUserId;
+        }
 
         const byRemote = this.db.prepare(
           `SELECT id, updated_at FROM ${table} WHERE remote_id = ?`

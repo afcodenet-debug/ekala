@@ -28,6 +28,18 @@ export class OrderSyncService {
     this.db = db;
   }
 
+  private getLocalId(table: string, remoteId: any): number | null {
+    if (remoteId === null || remoteId === undefined) return null;
+    try {
+      const row = this.db.prepare(
+        `SELECT id FROM ${table} WHERE remote_id = ? OR id = ?`
+      ).get(remoteId, remoteId) as { id: number } | undefined;
+      return row ? row.id : null;
+    } catch {
+      return null;
+    }
+  }
+
   /**
    * Queue an order + its items for sync.
    * MUST be called from inside a withOutboxTransaction callback so that
@@ -133,8 +145,8 @@ export class OrderSyncService {
       created_at: remote.created_at,
       status: remote.status,
       total: remote.total,
-      table_id: remote.table_id,
-      waiter_id: remote.waiter_id,
+      table_id: this.getLocalId('restaurant_tables', remote.table_id),
+      waiter_id: this.getLocalId('users', remote.waiter_id),
       notes: remote.notes,
       customer_id: remote.customer_id,
       source: remote.source || 'qr',
@@ -181,9 +193,15 @@ export class OrderSyncService {
       `);
 
       for (const item of remote.order_items) {
+        const localProductId = this.getLocalId('products', item.product_id);
+        if (!localProductId) {
+          console.warn(`[Sync] Skipping order item for remote product ${item.product_id}: No local product found`);
+          continue;
+        }
+
         itemStmt.run(
           localOrderId,
-          item.product_id,
+          localProductId,
           item.quantity,
           item.unit_price,
           item.total_price,
