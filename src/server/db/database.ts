@@ -168,7 +168,7 @@ export function initializeDatabase(): void {
 
     ensureEmailSettingsDefaults();
     ensureNotificationTables(); // Phase 3 - Notifications & Reports tables
-    ensureTenantTables(); // Multi-tenant sync tables
+    ensureTenantSyncColumns(); // Ensure sync columns exist for users/tenants/tenant_users
 
     // Add email column to users (nullable + unique)
     try {
@@ -327,99 +327,72 @@ function ensureCoreQrMenuTables(): void {
   console.log('[Database] Core QR menu tables ensured (IF NOT EXISTS)');
 }
 
-function ensureTenantTables(): void {
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS tenants (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      slug TEXT UNIQUE,
-      name TEXT NOT NULL,
-      legal_name TEXT,
-      owner_email TEXT NOT NULL,
-      owner_phone TEXT,
-      contact_email TEXT,
-      contact_phone TEXT,
-      country TEXT NOT NULL DEFAULT 'ZM',
-      city TEXT,
-      address TEXT,
-      logo_url TEXT,
-      primary_color TEXT DEFAULT '#D4AF37',
-      default_currency TEXT NOT NULL DEFAULT 'ZMW',
-      default_locale TEXT NOT NULL DEFAULT 'en',
-      timezone TEXT NOT NULL DEFAULT 'Africa/Lusaka',
-      status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','suspended','cancelled','trial')),
-      is_provisioned INTEGER NOT NULL DEFAULT 0,
-      provisioned_at TEXT,
-      internal_notes TEXT,
-      remote_id INTEGER,
-      business_id TEXT,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    )
-  `);
+function ensureTenantSyncColumns(): void {
+  const needsTenants = !db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='tenants'").get();
+  if (needsTenants) {
+    console.log('[Database] Creating tenants table (missing from migrations)');
+    db.exec(`
+      CREATE TABLE tenants (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        slug TEXT UNIQUE,
+        name TEXT NOT NULL,
+        legal_name TEXT,
+        owner_email TEXT NOT NULL,
+        owner_phone TEXT,
+        contact_email TEXT,
+        contact_phone TEXT,
+        country TEXT NOT NULL DEFAULT 'ZM',
+        city TEXT,
+        address TEXT,
+        logo_url TEXT,
+        primary_color TEXT DEFAULT '#D4AF37',
+        default_currency TEXT NOT NULL DEFAULT 'ZMW',
+        default_locale TEXT NOT NULL DEFAULT 'en',
+        timezone TEXT NOT NULL DEFAULT 'Africa/Lusaka',
+        status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','suspended','cancelled','trial')),
+        is_provisioned INTEGER NOT NULL DEFAULT 0,
+        provisioned_at TEXT,
+        internal_notes TEXT,
+        remote_id INTEGER,
+        business_id TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+  }
   
   try { db.prepare(`ALTER TABLE tenants ADD COLUMN remote_id INTEGER`).run(); } catch {}
   try { db.prepare(`ALTER TABLE tenants ADD COLUMN business_id TEXT`).run(); } catch {}
   try { db.prepare(`CREATE INDEX IF NOT EXISTS idx_tenants_remote_id ON tenants(remote_id) WHERE remote_id IS NOT NULL`).run(); } catch {}
   try { db.prepare(`CREATE INDEX IF NOT EXISTS idx_tenants_business_id ON tenants(business_id)`).run(); } catch {}
 
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS tenant_users (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      tenant_id INTEGER NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
-      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-      role TEXT NOT NULL DEFAULT 'staff' CHECK (role IN ('owner','admin','manager','cashier','waiter','staff')),
-      is_default INTEGER NOT NULL DEFAULT 0,
-      is_active INTEGER NOT NULL DEFAULT 1,
-      invited_at TEXT,
-      joined_at TEXT,
-      remote_id INTEGER,
-      business_id TEXT,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      UNIQUE(tenant_id, user_id)
-    )
-  `);
+  const needsTenantUsers = !db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='tenant_users'").get();
+  if (needsTenantUsers) {
+    console.log('[Database] Creating tenant_users table (missing from migrations)');
+    db.exec(`
+      CREATE TABLE tenant_users (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        tenant_id INTEGER NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        role TEXT NOT NULL DEFAULT 'staff' CHECK (role IN ('owner','admin','manager','cashier','waiter','staff')),
+        is_default INTEGER NOT NULL DEFAULT 0,
+        is_active INTEGER NOT NULL DEFAULT 1,
+        invited_at TEXT,
+        joined_at TEXT,
+        remote_id INTEGER,
+        business_id TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(tenant_id, user_id)
+      )
+    `);
+  }
   
   try { db.prepare(`ALTER TABLE tenant_users ADD COLUMN remote_id INTEGER`).run(); } catch {}
   try { db.prepare(`ALTER TABLE tenant_users ADD COLUMN business_id TEXT`).run(); } catch {}
   try { db.prepare(`CREATE INDEX IF NOT EXISTS idx_tenant_users_remote_id ON tenant_users(remote_id) WHERE remote_id IS NOT NULL`).run(); } catch {}
   try { db.prepare(`CREATE INDEX IF NOT EXISTS idx_tenant_users_business_id ON tenant_users(business_id)`).run(); } catch {}
 }
-
-function seedDemoData(): void {
-  // Seed a demo table with a predictable token for easy testing on fresh deploy
-  try {
-    const hasDemo = db.prepare(
-      `SELECT 1 FROM restaurant_tables WHERE qr_token = ?`
-    ).get('e98fec05c08940318dd90aa02b6b85f5');
-
-    if (!hasDemo) {
-      db.prepare(`
-        INSERT INTO restaurant_tables (table_number, capacity, status, qr_token)
-        VALUES ('TEST-1', 4, 'available', 'e98fec05c08940318dd90aa02b6b85f5')
-      `).run();
-
-      // Add a couple of demo products if none exist
-      const productCount = db.prepare(`SELECT COUNT(*) as c FROM products`).get() as { c: number };
-      if (productCount.c === 0) {
-        db.prepare(`
-          INSERT INTO products (name, description, selling_price, unit, is_available, category_id)
-          VALUES 
-            ('Coca Cola', 'Boisson gazeuse 33cl', 25, 'pcs', 1, 1),
-            ('Eau Minérale 50cl', 'Eau plate', 15, 'pcs', 1, 1),
-            ('Café Express', 'Café court', 30, 'pcs', 1, 2)
-        `).run();
-        console.log('[Database] Demo table + products seeded for testing');
-      }
-    }
-  } catch (e) {
-    console.warn('[Database] Demo seed skipped:', e);
-  }
-}
-
-// ───────────────────────────────────────────────────────────────────────────────
-// Seed helpers — idempotent guards inside each function
-// ───────────────────────────────────────────────────────────────────────────────
 
 function seedAdmin(): void {
   db.prepare(`

@@ -40,6 +40,9 @@ CREATE INDEX IF NOT EXISTS idx_orders_remote_id
 --   local 'out_of_service' -> remote 'available'
 -- The CHECK already includes the four values used remotely. Nothing to do.
 
--- 4) Mark migration as applied
+-- 4) Note: sync columns (remote_id, business_id) for users/tenants/tenant_users
+--    are added in migration 012_saas_multitenant_schema.sql when those tables are created.
+
+-- 5) Mark migration as applied
 INSERT INTO _migrations (filename) VALUES ('011_add_remote_id_to_tables.sql')
   ON CONFLICT (filename) DO NOTHING;
