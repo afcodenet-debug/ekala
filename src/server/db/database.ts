@@ -220,7 +220,9 @@ function ensureCoreQrMenuTables(): void {
       description TEXT,
       display_order INTEGER DEFAULT 0,
       is_active INTEGER DEFAULT 1,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      remote_id INTEGER
     )
   `);
 
@@ -322,6 +324,14 @@ function ensureCoreQrMenuTables(): void {
   if (!productCols.some(c => c.name === 'remote_id')) db.exec(`ALTER TABLE products ADD COLUMN remote_id INTEGER`);
   if (!productCols.some(c => c.name === 'price')) db.exec(`ALTER TABLE products ADD COLUMN price REAL DEFAULT 0`);
   if (!productCols.some(c => c.name === 'buying_price')) db.exec(`ALTER TABLE products ADD COLUMN buying_price REAL DEFAULT 0`);
+
+  // Ensure categories has updated_at and remote_id for sync
+  const categoryCols = db.prepare("PRAGMA table_info(categories)").all() as Array<{ name: string }>;
+  if (!categoryCols.some(c => c.name === 'updated_at')) db.exec(`ALTER TABLE categories ADD COLUMN updated_at DATETIME DEFAULT CURRENT_TIMESTAMP`);
+  if (!categoryCols.some(c => c.name === 'remote_id')) db.exec(`ALTER TABLE categories ADD COLUMN remote_id INTEGER`);
+
+  // Ensure unique index for categories remote_id
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_categories_remote_id ON categories(remote_id) WHERE remote_id IS NOT NULL`);
 
   // Ensure unique indexes for remote_ids to prevent sync duplicates
   db.exec(`

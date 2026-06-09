@@ -8,7 +8,34 @@ import { getProductSyncService, withOutboxTransaction } from '../../sync';
 const router = express.Router();
 
 // ── GET /api/categories ──────────────────────────────────────────────
-// ... (rest of GET) ...
+router.get('/', async (req, res) => {
+  try {
+    if (env.USE_SUPABASE_PRODUCTS || env.RENDER_CLOUD_MODE) {
+      const supabase = createClient(env.SUPABASE_URL!, env.SUPABASE_SERVICE_ROLE_KEY!, {
+        auth: { persistSession: false },
+      });
+      const { data, error } = await supabase
+        .from('categories')
+        .select('id, name, description, created_at, updated_at')
+        .order('name', { ascending: true });
+
+      if (error) {
+        console.error('[Categories] Supabase error:', error.message);
+        return res.status(500).json({ error: error.message });
+      }
+      return res.json(data || []);
+    }
+
+    const categories = db.prepare(
+      'SELECT id, name, description, created_at, updated_at FROM categories ORDER BY name ASC'
+    ).all();
+    res.json(categories);
+  } catch (error: any) {
+    console.error('[Categories] GET error:', error.message);
+    res.status(500).json({ error: 'Failed to fetch categories' });
+  }
+});
+
 // ── POST /api/categories ─────────────────────────────────────────────
 // Create a new category.
 // Body: { name: string, description?: string }

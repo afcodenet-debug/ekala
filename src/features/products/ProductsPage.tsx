@@ -23,7 +23,7 @@ import { useInventoryMovements } from './hooks/useInventoryMovements';
 import { Product } from './types';
 import { useLocation } from 'react-router-dom';
 
-const { colors, shadows, radius } = EnterpriseTokens;
+const { colors } = EnterpriseTokens;
 
 // ─── Design tokens premium ────────────────────────────────────────────────────
 const dt = {

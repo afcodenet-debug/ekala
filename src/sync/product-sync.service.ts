@@ -121,12 +121,22 @@ export class ProductSyncService {
 
     try {
       // 0. Sync Categories (Pull then Push to ensure IDs exist locally first)
-      pulled += await this.pullByEntityFromSupabase('category', _businessId);
-      pushed += await this.pushPendingByEntity('category', _businessId);
+      try {
+        pulled += await this.pullByEntityFromSupabase('category', _businessId);
+        pushed += await this.pushPendingByEntity('category', _businessId);
+      } catch (e: any) {
+        console.error('[Sync] Category sync failed (continuing):', e?.message || e);
+        errors++;
+      }
 
       // 1. Sync Products (Push + Pull)
-      pushed += await this.pushPendingByEntity('product', _businessId);
-      pulled += await this.pullByEntityFromSupabase('product', _businessId);
+      try {
+        pushed += await this.pushPendingByEntity('product', _businessId);
+        pulled += await this.pullByEntityFromSupabase('product', _businessId);
+      } catch (e: any) {
+        console.error('[Sync] Product sync failed (continuing):', e?.message || e);
+        errors++;
+      }
 
     } catch (err: any) {
       console.error('[Sync] Sync cycle failed:', err);
@@ -346,13 +356,29 @@ else if (entity === 'restaurant_table') {
     // For now we use the general cursor to maintain compatibility with existing state
     const since = this.lastPullTimestamp || new Date(0).toISOString();
 
-    const { data, error } = await this.supabase
+    let query = this.supabase
       .from(table)
       .select('*')
       .gt('updated_at', since)
       .order('updated_at', { ascending: true });
 
-    if (error) throw error;
+    let { data, error } = await query;
+
+    // If updated_at column doesn't exist in Supabase, try with created_at as fallback
+    if (error && error.message?.includes('updated_at')) {
+      console.warn(`[Sync] Pulling ${entity} without updated_at column (using created_at fallback)...`);
+      query = this.supabase
+        .from(table)
+        .select('*')
+        .gt('created_at', since)
+        .order('created_at', { ascending: true });
+      ({ data, error } = await query);
+    }
+
+    if (error) {
+      console.error(`[Sync] Failed to pull ${entity} from Supabase:`, error.message);
+      return 0;
+    }
 
     let applied = 0;
     const allowedFields = this.getAllowedFields(entity);

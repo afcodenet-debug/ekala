@@ -36,7 +36,30 @@ BEGIN
 END
 $$;
 
--- 2) Helpful indexes (CREATE INDEX IF NOT EXISTS is supported by PostgreSQL 9.5+)
+-- 2) Add remote_id + updated_at to categories if missing (for sync engine)
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'categories'
+      AND column_name = 'remote_id'
+  ) THEN
+    ALTER TABLE categories ADD COLUMN remote_id BIGINT;
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'categories'
+      AND column_name = 'updated_at'
+  ) THEN
+    ALTER TABLE categories ADD COLUMN updated_at TIMESTAMPTZ DEFAULT NOW();
+  END IF;
+END
+$$;
+
+-- 3) Helpful indexes (CREATE INDEX IF NOT EXISTS is supported by PostgreSQL 9.5+)
 CREATE INDEX IF NOT EXISTS idx_tables_remote_id
   ON restaurant_tables(remote_id)
   WHERE remote_id IS NOT NULL;
@@ -45,7 +68,11 @@ CREATE INDEX IF NOT EXISTS idx_tables_business_id
   ON restaurant_tables(business_id)
   WHERE business_id IS NOT NULL;
 
--- 3) Defensive: ensure orders.remote_id exists (idempotent via DO block)
+CREATE INDEX IF NOT EXISTS idx_categories_remote_id
+  ON categories(remote_id)
+  WHERE remote_id IS NOT NULL;
+
+-- 4) Defensive: ensure orders.remote_id exists (idempotent via DO block)
 DO $$
 BEGIN
   IF NOT EXISTS (
