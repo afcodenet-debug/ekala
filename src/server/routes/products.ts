@@ -202,6 +202,17 @@ router.post('/', requireRole(['admin', 'manager']), async (req, res) => {
 
       const newProduct = { id: result.lastInsertRowid, ...data };
 
+      // Queue for sync (outbox pattern)
+      try {
+        const sync = getProductSyncService();
+        sync.queueChangeInsideTransaction('product', 'insert', {
+          ...newProduct,
+          updated_at: new Date().toISOString(),
+        });
+      } catch (syncErr) {
+        console.warn('[Sync] Could not queue new product for sync:', syncErr);
+      }
+
       // ── Send new product notification (role-driven, non-blocking) ─────
       setImmediate(async () => {
         try {
@@ -341,7 +352,16 @@ router.delete('/:id', requireRole(['admin', 'manager']), (req, res) => {
 
     if (result.changes > 0) {
       // Queue for sync
-      // syncService.queueChange('products', 'DELETE', parseInt(id), { id });
+      try {
+        const sync = getProductSyncService();
+        sync.queueChangeInsideTransaction('product', 'update', { 
+          id: Number(id), 
+          is_available: 0,
+          updated_at: new Date().toISOString()
+        });
+      } catch (syncErr) {
+        console.warn('[Sync] Could not queue product deletion for sync:', syncErr);
+      }
 
       res.json({ success: true });
     } else {

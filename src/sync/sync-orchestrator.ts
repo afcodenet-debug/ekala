@@ -43,6 +43,21 @@ export class SyncOrchestrator {
         value TEXT
       )
     `);
+
+    // Ensure categories has remote_id and updated_at for bidirectional sync
+    try {
+      const catCols = this.db.prepare("PRAGMA table_info(categories)").all() as any[];
+      const catColNames = catCols.map(c => c.name);
+      if (!catColNames.includes('remote_id')) {
+        this.db.exec(`ALTER TABLE categories ADD COLUMN remote_id INTEGER`);
+      }
+      if (!catColNames.includes('updated_at')) {
+        this.db.exec(`ALTER TABLE categories ADD COLUMN updated_at DATETIME DEFAULT CURRENT_TIMESTAMP`);
+      }
+      this.db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_categories_remote_id ON categories(remote_id) WHERE remote_id IS NOT NULL`);
+    } catch (e) {
+      console.warn('[SyncOrchestrator] Failed to ensure categories schema:', e);
+    }
   }
 
   private getLastPullTimestamp(entity: string): string | null {
@@ -66,7 +81,7 @@ export class SyncOrchestrator {
   /**
    * Crash recovery: resume any unfinished outbox items
    */
-  private readonly SYNC_ENTITIES = ['product', 'order', 'order_item', 'restaurant_table', 'user', 'tenant', 'tenant_user'] as const;
+  private readonly SYNC_ENTITIES = ['product', 'category', 'order', 'order_item', 'restaurant_table', 'user', 'tenant', 'tenant_user'] as const;
 
   private recoverUnfinishedSync() {
     for (const entity of this.SYNC_ENTITIES) {

@@ -149,6 +149,18 @@ router.patch('/:id/stock', (req, res) => {
       WHERE id = ?
     `).run(qtyAfter, id);
 
+    // Queue for sync
+    try {
+      const { getProductSyncService } = require('../../sync');
+      getProductSyncService().queueChangeInsideTransaction('product', 'update', {
+        id: Number(id),
+        stock_quantity: qtyAfter,
+        updated_at: new Date().toISOString()
+      });
+    } catch (syncErr) {
+      console.warn('[Sync] Could not queue stock adjustment for sync:', syncErr);
+    }
+
     db.prepare(`
       INSERT INTO inventory_movements (
         product_id, movement_type,
