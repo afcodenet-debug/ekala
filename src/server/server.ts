@@ -46,14 +46,9 @@ const app = express();
 
 // Initialize the local database schema (Forward migrations + safety net columns + seeding)
 // This is critical to ensure columns like remote_id exist before sync workers start.
-if (db) {
-  try {
-    initializeDatabase();
-    console.log('[RENDER BOOT] Database schema initialized/verified.');
-  } catch (err: any) {
-    console.error('[RENDER BOOT] CRITICAL: Database initialization failed:', err?.message || err);
-  }
-}
+// IMPORTANT: Must be called BEFORE any other module imports db or uses database functions.
+initializeDatabase();
+console.log('[RENDER BOOT] Database schema initialized/verified.');
 
 const PORT = process.env.PORT || 3001;
 

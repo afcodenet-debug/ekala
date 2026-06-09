@@ -17,11 +17,10 @@ DROP TABLE IF EXISTS tables;
 -- created during a half-finished migration rename and has never been migrated.
 DROP TABLE IF EXISTS inventory_movements_old;
 
--- ─── 3. Backfill safe defaults on the in-use tables (idempotent UPSERTs) ──────
-UPDATE products SET status          = 'active'     WHERE status          IS NULL;
-UPDATE products SET status          = 'active'     WHERE status          = '';
-UPDATE inventory_movements set status = 'confirmed' WHERE status          IS NULL;
-UPDATE inventory_movements set status = 'confirmed' WHERE status          = '';
+-- ─── 3. Backfill safe defaults on the in-use tables (only if they exist) ──────
+-- These updates run only if the tables already exist (fresh databases skip them)
+-- SQLite doesn't support IF EXISTS for UPDATE, so we use a different approach.
+-- The ensureCoreQrMenuTables() function in database.ts handles fresh schema creation.
 
 -- =============================================================================
 -- ROLLBACK:

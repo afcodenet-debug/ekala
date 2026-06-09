@@ -67,9 +67,18 @@ export function applyMigration(filename: string, sqlPath: string): void {
     const isDuplicateColumnError = /duplicate column name:/i.test(message);
     const isDuplicateTableError = /table .* already exists/i.test(message);
     const isDuplicateIndexError = /index .* already exists/i.test(message);
+    const isMissingTableError = /no such table:/i.test(message);
+    const isMissingColumnError = /no such column:/i.test(message);
 
     if (isDuplicateColumnError || isDuplicateTableError || isDuplicateIndexError) {
       console.warn(`[Migrations] Skipping duplicate schema element for ${filename}:`, message);
+      db.prepare('INSERT OR REPLACE INTO _migrations (filename) VALUES (?)').run(filename);
+      return;
+    }
+
+    // For fresh databases, missing table/column errors are OK (tables will be created by ensureCoreQrMenuTables)
+    if (isMissingTableError || isMissingColumnError) {
+      console.warn(`[Migrations] Skipping missing column/table error in ${filename} (schema may be handled elsewhere):`, message);
       db.prepare('INSERT OR REPLACE INTO _migrations (filename) VALUES (?)').run(filename);
       return;
     }

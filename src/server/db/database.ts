@@ -142,12 +142,21 @@ function seedQrTokensForTables(): void {
 }
 
 export function initializeDatabase(): void {
-  // ── Migrations (forward-only, sequential, idempotent) ────────────────────
-  runMigrations();
+  // ── Create migrations bookkeeping table FIRST (before migrations run) ─────
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS _migrations (
+      filename TEXT PRIMARY KEY,
+      applied_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
 
   // ── Safety net: ensure minimum tables for QR menu on fresh DB (Render) ───
+  // This MUST run BEFORE migrations to avoid "no such table" errors
   ensureCoreQrMenuTables();
   ensureAdvancedTables();
+
+  // ── Migrations (forward-only, sequential, idempotent) ────────────────────
+  runMigrations();
 
   // ── Seed data (wrapped for fresh DB tolerance on Render) ────────────────
   try {
@@ -157,6 +166,7 @@ export function initializeDatabase(): void {
     seedCashier();
     seedTables();
     seedCategories();
+    seedProducts();
 
     // Purge simple des produits "demo/test" existants dans la BD
     disableDemoTestProducts();
@@ -244,7 +254,11 @@ function ensureCoreQrMenuTables(): void {
       status TEXT DEFAULT 'active',
       remote_id INTEGER,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      barcode TEXT,
+      sku TEXT,
+      cost_method TEXT DEFAULT 'average',
+      archived_at DATETIME
     )
   `);
 
@@ -309,35 +323,51 @@ function ensureCoreQrMenuTables(): void {
   `);
 
   // Ensure columns exist if table was already created (migration-like)
-  const orderCols = db.prepare("PRAGMA table_info(orders)").all() as Array<{ name: string }>;
-  const orderColNames = orderCols.map(c => c.name);
-  if (!orderColNames.includes('waiter_id'))  db.exec(`ALTER TABLE orders ADD COLUMN waiter_id INTEGER`);
-  if (!orderColNames.includes('items'))      db.exec(`ALTER TABLE orders ADD COLUMN items TEXT`);
-  if (!orderColNames.includes('remote_id')) db.exec(`ALTER TABLE orders ADD COLUMN remote_id INTEGER`);
-  if (!orderColNames.includes('source'))     db.exec(`ALTER TABLE orders ADD COLUMN source TEXT DEFAULT 'local'`);
-  if (!orderColNames.includes('notes'))      db.exec(`ALTER TABLE orders ADD COLUMN notes TEXT`);
-  if (!orderColNames.includes('customer_phone')) db.exec(`ALTER TABLE orders ADD COLUMN customer_phone TEXT`);
-  if (!orderColNames.includes('customer_id'))    db.exec(`ALTER TABLE orders ADD COLUMN customer_id INTEGER`);
+  try {
+    const orderCols = db.prepare("PRAGMA table_info(orders)").all() as Array<{ name: string }>;
+    const orderColNames = orderCols.map(c => c.name);
+    if (!orderColNames.includes('waiter_id'))  db.exec(`ALTER TABLE orders ADD COLUMN waiter_id INTEGER`);
+    if (!orderColNames.includes('items'))      db.exec(`ALTER TABLE orders ADD COLUMN items TEXT`);
+    if (!orderColNames.includes('remote_id')) db.exec(`ALTER TABLE orders ADD COLUMN remote_id INTEGER`);
+    if (!orderColNames.includes('source'))     db.exec(`ALTER TABLE orders ADD COLUMN source TEXT DEFAULT 'local'`);
+    if (!orderColNames.includes('notes'))      db.exec(`ALTER TABLE orders ADD COLUMN notes TEXT`);
+    if (!orderColNames.includes('customer_phone')) db.exec(`ALTER TABLE orders ADD COLUMN customer_phone TEXT`);
+    if (!orderColNames.includes('customer_id'))    db.exec(`ALTER TABLE orders ADD COLUMN customer_id INTEGER`);
 
-  const productCols = db.prepare("PRAGMA table_info(products)").all() as Array<{ name: string }>;
-  if (!productCols.some(c => c.name === 'status')) db.exec(`ALTER TABLE products ADD COLUMN status TEXT DEFAULT 'active'`);
-  if (!productCols.some(c => c.name === 'remote_id')) db.exec(`ALTER TABLE products ADD COLUMN remote_id INTEGER`);
-  if (!productCols.some(c => c.name === 'price')) db.exec(`ALTER TABLE products ADD COLUMN price REAL DEFAULT 0`);
-  if (!productCols.some(c => c.name === 'buying_price')) db.exec(`ALTER TABLE products ADD COLUMN buying_price REAL DEFAULT 0`);
+    const productCols = db.prepare("PRAGMA table_info(products)").all() as Array<{ name: string }>;
+    if (!productCols.some(c => c.name === 'status')) db.exec(`ALTER TABLE products ADD COLUMN status TEXT DEFAULT 'active'`);
+    if (!productCols.some(c => c.name === 'remote_id')) db.exec(`ALTER TABLE products ADD COLUMN remote_id INTEGER`);
+    if (!productCols.some(c => c.name === 'price')) db.exec(`ALTER TABLE products ADD COLUMN price REAL DEFAULT 0`);
+    if (!productCols.some(c => c.name === 'buying_price')) db.exec(`ALTER TABLE products ADD COLUMN buying_price REAL DEFAULT 0`);
+  } catch (e) {
+    console.warn('[Database] Column migration skipped (tables may be fresh):', e);
+  }
 
   // Ensure categories has updated_at and remote_id for sync
-  const categoryCols = db.prepare("PRAGMA table_info(categories)").all() as Array<{ name: string }>;
-  if (!categoryCols.some(c => c.name === 'updated_at')) db.exec(`ALTER TABLE categories ADD COLUMN updated_at DATETIME DEFAULT CURRENT_TIMESTAMP`);
-  if (!categoryCols.some(c => c.name === 'remote_id')) db.exec(`ALTER TABLE categories ADD COLUMN remote_id INTEGER`);
+  try {
+    const categoryCols = db.prepare("PRAGMA table_info(categories)").all() as Array<{ name: string }>;
+    if (!categoryCols.some(c => c.name === 'updated_at')) db.exec(`ALTER TABLE categories ADD COLUMN updated_at DATETIME DEFAULT CURRENT_TIMESTAMP`);
+    if (!categoryCols.some(c => c.name === 'remote_id')) db.exec(`ALTER TABLE categories ADD COLUMN remote_id INTEGER`);
+  } catch (e) {
+    console.warn('[Database] Categories column migration skipped:', e);
+  }
 
   // Ensure unique index for categories remote_id
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_categories_remote_id ON categories(remote_id) WHERE remote_id IS NOT NULL`);
+  try {
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_categories_remote_id ON categories(remote_id) WHERE remote_id IS NOT NULL`);
+  } catch (e) {
+    console.warn('[Database] Categories index skipped:', e);
+  }
 
   // Ensure unique indexes for remote_ids to prevent sync duplicates
-  db.exec(`
-    CREATE INDEX IF NOT EXISTS idx_tables_remote_id ON restaurant_tables(remote_id) WHERE remote_id IS NOT NULL;
-    CREATE INDEX IF NOT EXISTS idx_products_remote_id ON products(remote_id) WHERE remote_id IS NOT NULL;
-  `);
+  try {
+    db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_tables_remote_id ON restaurant_tables(remote_id) WHERE remote_id IS NOT NULL;
+      CREATE INDEX IF NOT EXISTS idx_products_remote_id ON products(remote_id) WHERE remote_id IS NOT NULL;
+    `);
+  } catch (e) {
+    console.warn('[Database] Remote ID indexes skipped:', e);
+  }
 
   // users (needed by seedAdmin and some protected routes)
   db.exec(`
@@ -530,6 +560,39 @@ function seedCategories(): void {
       INSERT INTO categories (name, description) VALUES (?, ?)
     `);
     for (const [name, desc] of seedData) stmt.run(name, desc);
+  }
+}
+
+function seedProducts(): void {
+  const { count } = db.prepare(`
+    SELECT COUNT(*) AS count FROM products
+  `).get() as { count: number };
+
+  if (count === 0) {
+    const catStmt = db.prepare('SELECT id, name FROM categories');
+    const categories = catStmt.all() as Array<{ id: number; name: string }>;
+    
+    const products = [
+      { name: 'Mosi', selling_price: 23.0, category: 'Beers', unit: 'bottle', stock_quantity: 10 },
+      { name: 'Castle Lite', selling_price: 36.0, category: 'Beers', unit: 'bottle', stock_quantity: 10 },
+      { name: 'Hunters', selling_price: 30.0, category: 'Beers', unit: 'bottle', stock_quantity: 10 },
+      { name: 'Budweiser', selling_price: 40.0, category: 'Beers', unit: 'bottle', stock_quantity: 10 },
+      { name: 'Coc Cola', selling_price: 15.0, category: 'Soft Drinks', unit: 'bottle', stock_quantity: 10 },
+      { name: 'Fanta Orange', selling_price: 15.0, category: 'Soft Drinks', unit: 'bottle', stock_quantity: 10 },
+      { name: 'Sprite', selling_price: 15.0, category: 'Soft Drinks', unit: 'bottle', stock_quantity: 10 },
+      { name: 'Water Bottle', selling_price: 5.0, category: 'Soft Drinks', unit: 'bottle', stock_quantity: 10 },
+    ];
+
+    const stmt = db.prepare(`
+      INSERT INTO products (category_id, name, selling_price, buying_price, stock_quantity, minimum_stock, is_available, description, unit)
+      VALUES (?, ?, ?, ?, ?, 5, 1, '', ?)
+    `);
+    
+    for (const p of products) {
+      const cat = categories.find(c => c.name === p.category);
+      stmt.run(cat?.id || 1, p.name, p.selling_price, p.selling_price * 0.7, p.stock_quantity, p.unit || 'bottle');
+    }
+    console.log(`[Database] Seeded ${products.length} products`);
   }
 }
 
