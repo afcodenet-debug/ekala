@@ -212,7 +212,8 @@ export class UserTenantSyncService {
     let applied = 0;
     const tx = this.db.transaction((rows: any[]) => {
       for (const remote of rows) {
-        if (remote.business_id && remote.business_id !== businessId) continue;
+        // Support both tenant_id (new) and business_id (legacy)
+        if (remote.tenant_id && remote.tenant_id !== businessId) continue;
 
         const remoteId = Number(remote?.id);
         if (isNaN(remoteId)) continue;
@@ -227,6 +228,7 @@ export class UserTenantSyncService {
 
         const fields: Record<string, any> = {
           remote_id: remoteId,
+          tenant_id: remote.tenant_id || remote.business_id,
           business_id: remote.business_id,
           updated_at: remote.updated_at,
           created_at: remote.created_at,

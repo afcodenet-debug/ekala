@@ -335,20 +335,31 @@ function ensureCoreQrMenuTables(): void {
   // Ensure columns exist if table was already created (migration-like)
   try {
     const orderCols = dbInstance.prepare("PRAGMA table_info(orders)").all() as Array<{ name: string }>;
-    const orderColNames = orderCols.map(c => c.name);
-    if (!orderColNames.includes('waiter_id'))  dbInstance.exec(`ALTER TABLE orders ADD COLUMN waiter_id INTEGER`);
-    if (!orderColNames.includes('items'))      dbInstance.exec(`ALTER TABLE orders ADD COLUMN items TEXT`);
-    if (!orderColNames.includes('remote_id')) dbInstance.exec(`ALTER TABLE orders ADD COLUMN remote_id INTEGER`);
-    if (!orderColNames.includes('source'))     dbInstance.exec(`ALTER TABLE orders ADD COLUMN source TEXT DEFAULT 'local'`);
-    if (!orderColNames.includes('notes'))      dbInstance.exec(`ALTER TABLE orders ADD COLUMN notes TEXT`);
-    if (!orderColNames.includes('customer_phone')) dbInstance.exec(`ALTER TABLE orders ADD COLUMN customer_phone TEXT`);
-    if (!orderColNames.includes('customer_id'))    dbInstance.exec(`ALTER TABLE orders ADD COLUMN customer_id INTEGER`);
+    if (!orderCols.some(c => c.name === 'waiter_id'))  dbInstance.exec(`ALTER TABLE orders ADD COLUMN waiter_id INTEGER`);
+    if (!orderCols.some(c => c.name === 'items'))      dbInstance.exec(`ALTER TABLE orders ADD COLUMN items TEXT`);
+    if (!orderCols.some(c => c.name === 'remote_id')) dbInstance.exec(`ALTER TABLE orders ADD COLUMN remote_id INTEGER`);
+    if (!orderCols.some(c => c.name === 'source'))     dbInstance.exec(`ALTER TABLE orders ADD COLUMN source TEXT DEFAULT 'local'`);
+    if (!orderCols.some(c => c.name === 'notes'))      dbInstance.exec(`ALTER TABLE orders ADD COLUMN notes TEXT`);
+    if (!orderCols.some(c => c.name === 'customer_phone')) dbInstance.exec(`ALTER TABLE orders ADD COLUMN customer_phone TEXT`);
+    if (!orderCols.some(c => c.name === 'customer_id'))    dbInstance.exec(`ALTER TABLE orders ADD COLUMN customer_id INTEGER`);
+    if (!orderCols.some(c => c.name === 'tenant_id'))     dbInstance.exec(`ALTER TABLE orders ADD COLUMN tenant_id TEXT`);
+    if (!orderCols.some(c => c.name === 'business_id'))   dbInstance.exec(`ALTER TABLE orders ADD COLUMN business_id TEXT`);
 
     const productCols = dbInstance.prepare("PRAGMA table_info(products)").all() as Array<{ name: string }>;
     if (!productCols.some(c => c.name === 'status')) dbInstance.exec(`ALTER TABLE products ADD COLUMN status TEXT DEFAULT 'active'`);
     if (!productCols.some(c => c.name === 'remote_id')) dbInstance.exec(`ALTER TABLE products ADD COLUMN remote_id INTEGER`);
     if (!productCols.some(c => c.name === 'price')) dbInstance.exec(`ALTER TABLE products ADD COLUMN price REAL DEFAULT 0`);
     if (!productCols.some(c => c.name === 'buying_price')) dbInstance.exec(`ALTER TABLE products ADD COLUMN buying_price REAL DEFAULT 0`);
+    if (!productCols.some(c => c.name === 'tenant_id')) dbInstance.exec(`ALTER TABLE products ADD COLUMN tenant_id TEXT`);
+    if (!productCols.some(c => c.name === 'business_id')) dbInstance.exec(`ALTER TABLE products ADD COLUMN business_id TEXT`);
+
+    const categoryCols = dbInstance.prepare("PRAGMA table_info(categories)").all() as Array<{ name: string }>;
+    if (!categoryCols.some(c => c.name === 'tenant_id')) dbInstance.exec(`ALTER TABLE categories ADD COLUMN tenant_id TEXT`);
+    if (!categoryCols.some(c => c.name === 'business_id')) dbInstance.exec(`ALTER TABLE categories ADD COLUMN business_id TEXT`);
+
+    const tableCols = dbInstance.prepare("PRAGMA table_info(restaurant_tables)").all() as Array<{ name: string }>;
+    if (!tableCols.some(c => c.name === 'tenant_id')) dbInstance.exec(`ALTER TABLE restaurant_tables ADD COLUMN tenant_id TEXT`);
+    if (!tableCols.some(c => c.name === 'business_id')) dbInstance.exec(`ALTER TABLE restaurant_tables ADD COLUMN business_id TEXT`);
   } catch (e) {
     console.warn('[Database] Column migration skipped (tables may be fresh):', e);
   }

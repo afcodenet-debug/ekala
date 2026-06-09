@@ -243,7 +243,8 @@ export class SyncOrchestrator {
     const transaction = this.db.transaction((tables: any[]) => {
       for (const remote of tables) {
         // Business filter (manual if column wasn't in SQL query)
-        if (remote.business_id && remote.business_id !== this.businessId) continue;
+        // Uses tenant_id for filtering (architecture: tenant_id, not business_id)
+        if (remote.tenant_id && remote.tenant_id !== this.businessId) continue;
 
         // Status mapping: remote 'occupied' -> local 'active'
         let mappedStatus = remote.status;
@@ -251,7 +252,8 @@ export class SyncOrchestrator {
 
         const fields: Record<string, any> = {
           remote_id: remote.id,
-          business_id: remote.business_id,
+          tenant_id: remote.tenant_id || remote.business_id,  // Support both tenant_id and business_id
+          business_id: remote.business_id,  // Legacy support
           updated_at: remote.updated_at,
           created_at: remote.created_at,
           table_number: String(remote.table_number),

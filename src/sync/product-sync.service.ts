@@ -386,22 +386,41 @@ else if (entity === 'restaurant_table') {
 
     for (const remote of (data || []) as Array<{ id: any; [key: string]: any }>) {
       try {
+        // Support both tenant_id (new) and business_id (legacy) for filtering
+        if (remote.tenant_id && remote.tenant_id !== _businessId) continue;
+        if (remote.business_id && remote.business_id !== _businessId) continue;
+
         const remoteId = Number(remote?.id);
         if (isNaN(remoteId)) continue;
 
-        const local = this.db
-          .prepare(`SELECT updated_at, description, image_url FROM ${table} WHERE id = ?`)
-          .get(remoteId) as { updated_at?: string; description?: string; image_url?: string } | undefined;
+        let local: { updated_at?: string; description?: string; image_url?: string } | undefined;
+        try {
+          local = this.db
+            .prepare(`SELECT updated_at, description${entity === 'product' ? ', image_url' : ''} FROM ${table} WHERE id = ?`)
+            .get(remoteId) as { updated_at?: string; description?: string; image_url?: string } | undefined;
+        } catch (e) {
+          // If the query fails (e.g., image_url column doesn't exist in categories), try without it
+          try {
+            local = this.db
+              .prepare(`SELECT updated_at, description FROM ${table} WHERE id = ?`)
+              .get(remoteId) as { updated_at?: string; description?: string; image_url?: string } | undefined;
+          } catch (e2) {
+            local = undefined;
+          }
+        }
 
         const remoteUpdatedAt = remote.updated_at;
         
         // Force update if critical data is missing locally (e.g., after seed)
-        const isMissingCriticalData = entity === 'product' && local && (!local.description || !local.image_url) && (remote.description || remote.image_url);
+        const isMissingCriticalData = entity === 'product' && local && (!local.description || !local.image_url) && remote.description;
         
         const shouldApply = !local || !local.updated_at || (remoteUpdatedAt && remoteUpdatedAt > local.updated_at) || isMissingCriticalData;
 
         if (shouldApply) {
-          const safeFields: Record<string, any> = {};
+          const safeFields: Record<string, any> = {
+            tenant_id: remote.tenant_id || remote.business_id,
+            business_id: remote.business_id,
+          };
 
           // Ensure updated_at is properly formatted
           safeFields.updated_at = remoteUpdatedAt

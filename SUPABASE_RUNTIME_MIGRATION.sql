@@ -13,7 +13,7 @@
 
 BEGIN;
 
--- 1) Add remote_id + business_id to restaurant_tables if missing
+-- 1) Add remote_id + business_id + tenant_id to restaurant_tables if missing
 DO $$
 BEGIN
   IF NOT EXISTS (
@@ -33,10 +33,19 @@ BEGIN
   ) THEN
     ALTER TABLE restaurant_tables ADD COLUMN business_id TEXT;
   END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'restaurant_tables'
+      AND column_name = 'tenant_id'
+  ) THEN
+    ALTER TABLE restaurant_tables ADD COLUMN tenant_id TEXT;
+  END IF;
 END
 $$;
 
--- 2) Add remote_id + updated_at to categories if missing (for sync engine)
+-- 2) Add remote_id + updated_at + tenant_id to categories if missing (for sync engine)
 DO $$
 BEGIN
   IF NOT EXISTS (
@@ -56,6 +65,15 @@ BEGIN
   ) THEN
     ALTER TABLE categories ADD COLUMN updated_at TIMESTAMPTZ DEFAULT NOW();
   END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'categories'
+      AND column_name = 'tenant_id'
+  ) THEN
+    ALTER TABLE categories ADD COLUMN tenant_id TEXT;
+  END IF;
 END
 $$;
 
@@ -72,7 +90,7 @@ CREATE INDEX IF NOT EXISTS idx_categories_remote_id
   ON categories(remote_id)
   WHERE remote_id IS NOT NULL;
 
--- 4) Defensive: ensure orders.remote_id exists (idempotent via DO block)
+-- 4) Defensive: ensure orders.remote_id + tenant_id exists (idempotent via DO block)
 DO $$
 BEGIN
   IF NOT EXISTS (
@@ -83,6 +101,15 @@ BEGIN
   ) THEN
     ALTER TABLE orders ADD COLUMN remote_id BIGINT;
   END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'orders'
+      AND column_name = 'tenant_id'
+  ) THEN
+    ALTER TABLE orders ADD COLUMN tenant_id TEXT;
+  END IF;
 END
 $$;
 
@@ -90,7 +117,53 @@ CREATE INDEX IF NOT EXISTS idx_orders_remote_id
   ON orders(remote_id)
   WHERE remote_id IS NOT NULL;
 
--- 4) The Supabase CHECK for status is:
+-- 5) Add tenant_id to products if missing (for sync engine)
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'products'
+      AND column_name = 'tenant_id'
+  ) THEN
+    ALTER TABLE products ADD COLUMN tenant_id TEXT;
+  END IF;
+END
+$$;
+
+-- 6) Add tenant_id to users, tenants, tenant_users if missing (for sync engine)
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'users'
+      AND column_name = 'tenant_id'
+  ) THEN
+    ALTER TABLE users ADD COLUMN tenant_id TEXT;
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'tenants'
+      AND column_name = 'tenant_id'
+  ) THEN
+    ALTER TABLE tenants ADD COLUMN tenant_id TEXT;
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'tenant_users'
+      AND column_name = 'tenant_id'
+  ) THEN
+    ALTER TABLE tenant_users ADD COLUMN tenant_id TEXT;
+  END IF;
+END
+$$;
+
+-- 7) The Supabase CHECK for status is:
 --    CHECK (status IN ('available','occupied','cleaning','reserved'))
 --    The local app uses 'active' (mapped to 'occupied') and 'out_of_service'
 --    (mapped to 'available'). No CHECK change is required.
