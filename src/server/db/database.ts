@@ -100,6 +100,7 @@ export const db = dbInstance;
 // --- public factory --------------------------------------------------------
 
 function seedQrTokensForTables(): void {
+  if (!db) return;
   // Seed uniquement si la colonne existe (après migration)
   try {
     const hasColumn = db.prepare(`
@@ -142,6 +143,7 @@ function seedQrTokensForTables(): void {
 }
 
 export function initializeDatabase(): void {
+  if (!db) return;
   // ── Create migrations bookkeeping table FIRST (before migrations run) ─────
   db.exec(`
     CREATE TABLE IF NOT EXISTS _migrations (
@@ -584,15 +586,15 @@ function seedProducts(): void {
     ];
 
     const stmt = db.prepare(`
-      INSERT INTO products (category_id, name, selling_price, buying_price, stock_quantity, minimum_stock, is_available, description, unit)
-      VALUES (?, ?, ?, ?, ?, 5, 1, '', ?)
+      INSERT INTO products (category_id, name, selling_price, buying_price, stock_quantity, minimum_stock, is_available, description, unit, price, updated_at)
+      VALUES (?, ?, ?, ?, ?, 5, 1, '', ?, ?, '1970-01-01 00:00:00')
     `);
     
     for (const p of products) {
       const cat = categories.find(c => c.name === p.category);
-      stmt.run(cat?.id || 1, p.name, p.selling_price, p.selling_price * 0.7, p.stock_quantity, p.unit || 'bottle');
+      stmt.run(cat?.id || 1, p.name, p.selling_price, p.selling_price * 0.7, p.stock_quantity, p.unit || 'bottle', p.selling_price);
     }
-    console.log(`[Database] Seeded ${products.length} products`);
+    console.log(`[Database] Seeded ${products.length} products with past updated_at`);
   }
 }
 

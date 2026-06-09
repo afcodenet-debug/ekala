@@ -47,7 +47,8 @@ export class ProductSyncService {
       return [
         'name', 'stock_quantity', 'selling_price', 'buying_price', 'is_available', 
         'category_id', 'barcode', 'description', 'unit', 'image_url', 
-        'minimum_stock', 'sku', 'status', 'cost_method', 'archived_at', 'updated_at'
+        'minimum_stock', 'sku', 'status', 'cost_method', 'archived_at', 'updated_at',
+        'price'
       ];
     }
     if (entity === 'category') {
@@ -389,11 +390,15 @@ else if (entity === 'restaurant_table') {
         if (isNaN(remoteId)) continue;
 
         const local = this.db
-          .prepare(`SELECT updated_at FROM ${table} WHERE id = ?`)
-          .get(remoteId) as { updated_at?: string } | undefined;
+          .prepare(`SELECT updated_at, description, image_url FROM ${table} WHERE id = ?`)
+          .get(remoteId) as { updated_at?: string; description?: string; image_url?: string } | undefined;
 
         const remoteUpdatedAt = remote.updated_at;
-        const shouldApply = !local || !local.updated_at || (remoteUpdatedAt && remoteUpdatedAt > local.updated_at);
+        
+        // Force update if critical data is missing locally (e.g., after seed)
+        const isMissingCriticalData = entity === 'product' && local && (!local.description || !local.image_url) && (remote.description || remote.image_url);
+        
+        const shouldApply = !local || !local.updated_at || (remoteUpdatedAt && remoteUpdatedAt > local.updated_at) || isMissingCriticalData;
 
         if (shouldApply) {
           const safeFields: Record<string, any> = {};
@@ -415,6 +420,10 @@ else if (entity === 'restaurant_table') {
             // Map 'price' -> 'selling_price' if selling_price is missing in remote payload but price is there
             if (remote.price !== undefined && remote.selling_price === undefined) {
               safeFields.selling_price = remote.price;
+            }
+            // Map 'selling_price' -> 'price' for legacy local column
+            if (remote.selling_price !== undefined && safeFields.price === undefined) {
+              safeFields.price = remote.selling_price;
             }
             // Map 'cost_price' -> 'buying_price'
             if (remote.cost_price !== undefined && remote.buying_price === undefined) {
