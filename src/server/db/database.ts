@@ -100,16 +100,19 @@ export const db = dbInstance;
 // --- public factory --------------------------------------------------------
 
 function seedQrTokensForTables(): void {
-  if (!db) return;
+  if (!dbInstance) {
+    console.log('[Database] seedQrTokensForTables: skipping (dbInstance is null)');
+    return;
+  }
   // Seed uniquement si la colonne existe (après migration)
   try {
-    const hasColumn = db.prepare(`
+    const hasColumn = dbInstance.prepare(`
       PRAGMA table_info(restaurant_tables);
     `).all().some((c: any) => c.name === 'qr_token');
 
     if (!hasColumn) return;
 
-    const needs = db.prepare(`
+    const needs = dbInstance.prepare(`
       SELECT COUNT(*) AS cnt
       FROM restaurant_tables
       WHERE qr_token IS NULL OR qr_token = ''
@@ -121,13 +124,13 @@ function seedQrTokensForTables(): void {
     // Node >= 14 supporte crypto.randomUUID()
     const crypto = require('crypto') as typeof import('crypto');
 
-    const rows = db.prepare(`
+    const rows = dbInstance.prepare(`
       SELECT id
       FROM restaurant_tables
       WHERE qr_token IS NULL OR qr_token = ''
     `).all() as Array<{ id: number }>;
 
-    const update = db.prepare(`
+    const update = dbInstance.prepare(`
       UPDATE restaurant_tables
       SET qr_token = ?
       WHERE id = ?
@@ -143,9 +146,13 @@ function seedQrTokensForTables(): void {
 }
 
 export function initializeDatabase(): void {
-  if (!db) return;
+  console.log('[Database] initializeDatabase starting. dbInstance is null?', !dbInstance);
+  if (!dbInstance) {
+    console.log('[Database] Cloud mode or SQLite disabled — skipping initializeDatabase.');
+    return;
+  }
   // ── Create migrations bookkeeping table FIRST (before migrations run) ─────
-  db.exec(`
+  dbInstance.exec(`
     CREATE TABLE IF NOT EXISTS _migrations (
       filename TEXT PRIMARY KEY,
       applied_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -210,8 +217,9 @@ export function initializeDatabase(): void {
 // This runs after migrations so it acts as a safety net when early migrations are skipped.
 // ───────────────────────────────────────────────────────────────────────────────
 function ensureCoreQrMenuTables(): void {
+  if (!dbInstance) return;
   // restaurant_tables (needed for /api/menu/table/:qr_token)
-  db.exec(`
+  dbInstance.exec(`
     CREATE TABLE IF NOT EXISTS restaurant_tables (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       table_number TEXT NOT NULL,
@@ -225,7 +233,7 @@ function ensureCoreQrMenuTables(): void {
   `);
 
   // categories (modern)
-  db.exec(`
+  dbInstance.exec(`
     CREATE TABLE IF NOT EXISTS categories (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT NOT NULL,
@@ -239,7 +247,7 @@ function ensureCoreQrMenuTables(): void {
   `);
 
   // products (the table actually used by the public menu now)
-  db.exec(`
+  dbInstance.exec(`
     CREATE TABLE IF NOT EXISTS products (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       category_id INTEGER,
@@ -265,7 +273,7 @@ function ensureCoreQrMenuTables(): void {
   `);
 
   // Basic orders table (needed for checkout flow)
-  db.exec(`
+  dbInstance.exec(`
     CREATE TABLE IF NOT EXISTS orders (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       table_id INTEGER,
@@ -284,7 +292,7 @@ function ensureCoreQrMenuTables(): void {
   `);
 
   // Settings table (critical for app bootstrap)
-  db.exec(`
+  dbInstance.exec(`
     CREATE TABLE IF NOT EXISTS settings (
       key TEXT PRIMARY KEY,
       value TEXT,
@@ -293,7 +301,7 @@ function ensureCoreQrMenuTables(): void {
   `);
 
   // Menu categories (for QR menu)
-  db.exec(`
+  dbInstance.exec(`
     CREATE TABLE IF NOT EXISTS menu_categories (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT NOT NULL,
@@ -306,7 +314,7 @@ function ensureCoreQrMenuTables(): void {
   `);
 
   // Menu items (for QR menu)
-  db.exec(`
+  dbInstance.exec(`
     CREATE TABLE IF NOT EXISTS menu_items (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       category_id INTEGER NOT NULL,
@@ -326,44 +334,44 @@ function ensureCoreQrMenuTables(): void {
 
   // Ensure columns exist if table was already created (migration-like)
   try {
-    const orderCols = db.prepare("PRAGMA table_info(orders)").all() as Array<{ name: string }>;
+    const orderCols = dbInstance.prepare("PRAGMA table_info(orders)").all() as Array<{ name: string }>;
     const orderColNames = orderCols.map(c => c.name);
-    if (!orderColNames.includes('waiter_id'))  db.exec(`ALTER TABLE orders ADD COLUMN waiter_id INTEGER`);
-    if (!orderColNames.includes('items'))      db.exec(`ALTER TABLE orders ADD COLUMN items TEXT`);
-    if (!orderColNames.includes('remote_id')) db.exec(`ALTER TABLE orders ADD COLUMN remote_id INTEGER`);
-    if (!orderColNames.includes('source'))     db.exec(`ALTER TABLE orders ADD COLUMN source TEXT DEFAULT 'local'`);
-    if (!orderColNames.includes('notes'))      db.exec(`ALTER TABLE orders ADD COLUMN notes TEXT`);
-    if (!orderColNames.includes('customer_phone')) db.exec(`ALTER TABLE orders ADD COLUMN customer_phone TEXT`);
-    if (!orderColNames.includes('customer_id'))    db.exec(`ALTER TABLE orders ADD COLUMN customer_id INTEGER`);
+    if (!orderColNames.includes('waiter_id'))  dbInstance.exec(`ALTER TABLE orders ADD COLUMN waiter_id INTEGER`);
+    if (!orderColNames.includes('items'))      dbInstance.exec(`ALTER TABLE orders ADD COLUMN items TEXT`);
+    if (!orderColNames.includes('remote_id')) dbInstance.exec(`ALTER TABLE orders ADD COLUMN remote_id INTEGER`);
+    if (!orderColNames.includes('source'))     dbInstance.exec(`ALTER TABLE orders ADD COLUMN source TEXT DEFAULT 'local'`);
+    if (!orderColNames.includes('notes'))      dbInstance.exec(`ALTER TABLE orders ADD COLUMN notes TEXT`);
+    if (!orderColNames.includes('customer_phone')) dbInstance.exec(`ALTER TABLE orders ADD COLUMN customer_phone TEXT`);
+    if (!orderColNames.includes('customer_id'))    dbInstance.exec(`ALTER TABLE orders ADD COLUMN customer_id INTEGER`);
 
-    const productCols = db.prepare("PRAGMA table_info(products)").all() as Array<{ name: string }>;
-    if (!productCols.some(c => c.name === 'status')) db.exec(`ALTER TABLE products ADD COLUMN status TEXT DEFAULT 'active'`);
-    if (!productCols.some(c => c.name === 'remote_id')) db.exec(`ALTER TABLE products ADD COLUMN remote_id INTEGER`);
-    if (!productCols.some(c => c.name === 'price')) db.exec(`ALTER TABLE products ADD COLUMN price REAL DEFAULT 0`);
-    if (!productCols.some(c => c.name === 'buying_price')) db.exec(`ALTER TABLE products ADD COLUMN buying_price REAL DEFAULT 0`);
+    const productCols = dbInstance.prepare("PRAGMA table_info(products)").all() as Array<{ name: string }>;
+    if (!productCols.some(c => c.name === 'status')) dbInstance.exec(`ALTER TABLE products ADD COLUMN status TEXT DEFAULT 'active'`);
+    if (!productCols.some(c => c.name === 'remote_id')) dbInstance.exec(`ALTER TABLE products ADD COLUMN remote_id INTEGER`);
+    if (!productCols.some(c => c.name === 'price')) dbInstance.exec(`ALTER TABLE products ADD COLUMN price REAL DEFAULT 0`);
+    if (!productCols.some(c => c.name === 'buying_price')) dbInstance.exec(`ALTER TABLE products ADD COLUMN buying_price REAL DEFAULT 0`);
   } catch (e) {
     console.warn('[Database] Column migration skipped (tables may be fresh):', e);
   }
 
   // Ensure categories has updated_at and remote_id for sync
   try {
-    const categoryCols = db.prepare("PRAGMA table_info(categories)").all() as Array<{ name: string }>;
-    if (!categoryCols.some(c => c.name === 'updated_at')) db.exec(`ALTER TABLE categories ADD COLUMN updated_at DATETIME DEFAULT CURRENT_TIMESTAMP`);
-    if (!categoryCols.some(c => c.name === 'remote_id')) db.exec(`ALTER TABLE categories ADD COLUMN remote_id INTEGER`);
+    const categoryCols = dbInstance.prepare("PRAGMA table_info(categories)").all() as Array<{ name: string }>;
+    if (!categoryCols.some(c => c.name === 'updated_at')) dbInstance.exec(`ALTER TABLE categories ADD COLUMN updated_at DATETIME DEFAULT CURRENT_TIMESTAMP`);
+    if (!categoryCols.some(c => c.name === 'remote_id')) dbInstance.exec(`ALTER TABLE categories ADD COLUMN remote_id INTEGER`);
   } catch (e) {
     console.warn('[Database] Categories column migration skipped:', e);
   }
 
   // Ensure unique index for categories remote_id
   try {
-    db.exec(`CREATE INDEX IF NOT EXISTS idx_categories_remote_id ON categories(remote_id) WHERE remote_id IS NOT NULL`);
+    dbInstance.exec(`CREATE INDEX IF NOT EXISTS idx_categories_remote_id ON categories(remote_id) WHERE remote_id IS NOT NULL`);
   } catch (e) {
     console.warn('[Database] Categories index skipped:', e);
   }
 
   // Ensure unique indexes for remote_ids to prevent sync duplicates
   try {
-    db.exec(`
+    dbInstance.exec(`
       CREATE INDEX IF NOT EXISTS idx_tables_remote_id ON restaurant_tables(remote_id) WHERE remote_id IS NOT NULL;
       CREATE INDEX IF NOT EXISTS idx_products_remote_id ON products(remote_id) WHERE remote_id IS NOT NULL;
     `);
@@ -372,7 +380,7 @@ function ensureCoreQrMenuTables(): void {
   }
 
   // users (needed by seedAdmin and some protected routes)
-  db.exec(`
+  dbInstance.exec(`
     CREATE TABLE IF NOT EXISTS users (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       full_name TEXT,
@@ -388,18 +396,19 @@ function ensureCoreQrMenuTables(): void {
     )
   `);
   
-  try { db.prepare(`ALTER TABLE users ADD COLUMN updated_at DATETIME DEFAULT CURRENT_TIMESTAMP`).run(); } catch {}
-  try { db.prepare(`ALTER TABLE users ADD COLUMN remote_id INTEGER`).run(); } catch {}
-  try { db.prepare(`ALTER TABLE users ADD COLUMN business_id TEXT`).run(); } catch {}
-  try { db.prepare(`CREATE INDEX IF NOT EXISTS idx_users_remote_id ON users(remote_id) WHERE remote_id IS NOT NULL`).run(); } catch {}
-  try { db.prepare(`CREATE INDEX IF NOT EXISTS idx_users_business_id ON users(business_id)`).run(); } catch {}
+  try { dbInstance.prepare(`ALTER TABLE users ADD COLUMN updated_at DATETIME DEFAULT CURRENT_TIMESTAMP`).run(); } catch {}
+  try { dbInstance.prepare(`ALTER TABLE users ADD COLUMN remote_id INTEGER`).run(); } catch {}
+  try { dbInstance.prepare(`ALTER TABLE users ADD COLUMN business_id TEXT`).run(); } catch {}
+  try { dbInstance.prepare(`CREATE INDEX IF NOT EXISTS idx_users_remote_id ON users(remote_id) WHERE remote_id IS NOT NULL`).run(); } catch {}
+  try { dbInstance.prepare(`CREATE INDEX IF NOT EXISTS idx_users_business_id ON users(business_id)`).run(); } catch {}
 
   console.log('[Database] Core QR menu tables ensured (IF NOT EXISTS)');
 }
 
 function ensureAdvancedTables(): void {
+  if (!dbInstance) return;
   // inventory_movements
-  db.exec(`
+  dbInstance.exec(`
     CREATE TABLE IF NOT EXISTS inventory_movements (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       product_id INTEGER NOT NULL,
@@ -417,7 +426,7 @@ function ensureAdvancedTables(): void {
   `);
 
   // expenses
-  db.exec(`
+  dbInstance.exec(`
     CREATE TABLE IF NOT EXISTS expenses (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       category TEXT,
@@ -433,10 +442,11 @@ function ensureAdvancedTables(): void {
 }
 
 function ensureTenantSyncColumns(): void {
-  const needsTenants = !db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='tenants'").get();
+  if (!dbInstance) return;
+  const needsTenants = !dbInstance.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='tenants'").get();
   if (needsTenants) {
     console.log('[Database] Creating tenants table (missing from migrations)');
-    db.exec(`
+    dbInstance.exec(`
       CREATE TABLE tenants (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         slug TEXT UNIQUE,
@@ -466,15 +476,15 @@ function ensureTenantSyncColumns(): void {
     `);
   }
   
-  try { db.prepare(`ALTER TABLE tenants ADD COLUMN remote_id INTEGER`).run(); } catch {}
-  try { db.prepare(`ALTER TABLE tenants ADD COLUMN business_id TEXT`).run(); } catch {}
-  try { db.prepare(`CREATE INDEX IF NOT EXISTS idx_tenants_remote_id ON tenants(remote_id) WHERE remote_id IS NOT NULL`).run(); } catch {}
-  try { db.prepare(`CREATE INDEX IF NOT EXISTS idx_tenants_business_id ON tenants(business_id)`).run(); } catch {}
+  try { dbInstance.prepare(`ALTER TABLE tenants ADD COLUMN remote_id INTEGER`).run(); } catch {}
+  try { dbInstance.prepare(`ALTER TABLE tenants ADD COLUMN business_id TEXT`).run(); } catch {}
+  try { dbInstance.prepare(`CREATE INDEX IF NOT EXISTS idx_tenants_remote_id ON tenants(remote_id) WHERE remote_id IS NOT NULL`).run(); } catch {}
+  try { dbInstance.prepare(`CREATE INDEX IF NOT EXISTS idx_tenants_business_id ON tenants(business_id)`).run(); } catch {}
 
-  const needsTenantUsers = !db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='tenant_users'").get();
+  const needsTenantUsers = !dbInstance.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='tenant_users'").get();
   if (needsTenantUsers) {
     console.log('[Database] Creating tenant_users table (missing from migrations)');
-    db.exec(`
+    dbInstance.exec(`
       CREATE TABLE tenant_users (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         tenant_id INTEGER NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
@@ -493,14 +503,15 @@ function ensureTenantSyncColumns(): void {
     `);
   }
   
-  try { db.prepare(`ALTER TABLE tenant_users ADD COLUMN remote_id INTEGER`).run(); } catch {}
-  try { db.prepare(`ALTER TABLE tenant_users ADD COLUMN business_id TEXT`).run(); } catch {}
-  try { db.prepare(`CREATE INDEX IF NOT EXISTS idx_tenant_users_remote_id ON tenant_users(remote_id) WHERE remote_id IS NOT NULL`).run(); } catch {}
-  try { db.prepare(`CREATE INDEX IF NOT EXISTS idx_tenant_users_business_id ON tenant_users(business_id)`).run(); } catch {}
+  try { dbInstance.prepare(`ALTER TABLE tenant_users ADD COLUMN remote_id INTEGER`).run(); } catch {}
+  try { dbInstance.prepare(`ALTER TABLE tenant_users ADD COLUMN business_id TEXT`).run(); } catch {}
+  try { dbInstance.prepare(`CREATE INDEX IF NOT EXISTS idx_tenant_users_remote_id ON tenant_users(remote_id) WHERE remote_id IS NOT NULL`).run(); } catch {}
+  try { dbInstance.prepare(`CREATE INDEX IF NOT EXISTS idx_tenant_users_business_id ON tenant_users(business_id)`).run(); } catch {}
 }
 
 function seedAdmin(): void {
-  db.prepare(`
+  if (!dbInstance) return;
+  dbInstance.prepare(`
     INSERT INTO users (full_name, username, pin_code, role, is_active)
     SELECT 'Administrator', 'admin', '1234', 'admin', 1
     WHERE NOT EXISTS (SELECT 1 FROM users WHERE role = 'admin')
@@ -508,7 +519,8 @@ function seedAdmin(): void {
 }
 
 function seedManager(): void {
-  db.prepare(`
+  if (!dbInstance) return;
+  dbInstance.prepare(`
     INSERT INTO users (full_name, username, pin_code, role, is_active)
     SELECT 'Manager', 'manager', '5678', 'manager', 1
     WHERE NOT EXISTS (SELECT 1 FROM users WHERE username = 'manager')
@@ -516,7 +528,8 @@ function seedManager(): void {
 }
 
 function seedWaiter(): void {
-  db.prepare(`
+  if (!dbInstance) return;
+  dbInstance.prepare(`
     INSERT INTO users (full_name, username, pin_code, role, is_active)
     SELECT 'Waiter', 'waiter', '1111', 'waiter', 1
     WHERE NOT EXISTS (SELECT 1 FROM users WHERE username = 'waiter')
@@ -524,7 +537,8 @@ function seedWaiter(): void {
 }
 
 function seedCashier(): void {
-  db.prepare(`
+  if (!dbInstance) return;
+  dbInstance.prepare(`
     INSERT INTO users (full_name, username, pin_code, role, is_active)
     SELECT 'Cashier', 'cashier', '2222', 'cashier', 1
     WHERE NOT EXISTS (SELECT 1 FROM users WHERE username = 'cashier')
@@ -532,12 +546,13 @@ function seedCashier(): void {
 }
 
 function seedTables(): void {
-  const { count } = db.prepare(`
+  if (!dbInstance) return;
+  const { count } = dbInstance.prepare(`
     SELECT COUNT(*) AS count FROM restaurant_tables
   `).get() as { count: number };
 
   if (count === 0) {
-    const stmt = db.prepare(`
+    const stmt = dbInstance.prepare(`
       INSERT INTO restaurant_tables (table_number, capacity) VALUES (?, 4)
     `);
     ['T1', 'T2', 'T3', 'T4', 'T5', 'Bar 1', 'Bar 2'].forEach(n => stmt.run(n));
@@ -545,7 +560,8 @@ function seedTables(): void {
 }
 
 function seedCategories(): void {
-  const { count } = db.prepare(`
+  if (!dbInstance) return;
+  const { count } = dbInstance.prepare(`
     SELECT COUNT(*) AS count FROM categories
   `).get() as { count: number };
 
@@ -558,7 +574,7 @@ function seedCategories(): void {
       ['Cocktails',   'Mixed alcoholic drinks'],
       ['Food',        'Restaurant food items'],
     ];
-    const stmt = db.prepare(`
+    const stmt = dbInstance.prepare(`
       INSERT INTO categories (name, description) VALUES (?, ?)
     `);
     for (const [name, desc] of seedData) stmt.run(name, desc);
@@ -566,12 +582,13 @@ function seedCategories(): void {
 }
 
 function seedProducts(): void {
-  const { count } = db.prepare(`
+  if (!dbInstance) return;
+  const { count } = dbInstance.prepare(`
     SELECT COUNT(*) AS count FROM products
   `).get() as { count: number };
 
   if (count === 0) {
-    const catStmt = db.prepare('SELECT id, name FROM categories');
+    const catStmt = dbInstance.prepare('SELECT id, name FROM categories');
     const categories = catStmt.all() as Array<{ id: number; name: string }>;
     
     const products = [
@@ -585,7 +602,7 @@ function seedProducts(): void {
       { name: 'Water Bottle', selling_price: 5.0, category: 'Soft Drinks', unit: 'bottle', stock_quantity: 10 },
     ];
 
-    const stmt = db.prepare(`
+    const stmt = dbInstance.prepare(`
       INSERT INTO products (category_id, name, selling_price, buying_price, stock_quantity, minimum_stock, is_available, description, unit, price, updated_at)
       VALUES (?, ?, ?, ?, ?, 5, 1, '', ?, ?, '1970-01-01 00:00:00')
     `);
@@ -603,8 +620,9 @@ function seedProducts(): void {
  * des items fictifs ("Just for test", etc.) dans le menu QR.
  */
 function disableDemoTestProducts(): void {
+  if (!dbInstance) return;
   try {
-    const stmt = db.prepare(`
+    const stmt = dbInstance.prepare(`
       UPDATE products
       SET is_available = 0
       WHERE
@@ -630,7 +648,8 @@ function disableDemoTestProducts(): void {
 }
 
 function seedSettings(): void {
-  const rows = db.prepare(`
+  if (!dbInstance) return;
+  const rows = dbInstance.prepare(`
     SELECT COUNT(*) AS count FROM settings
   `).get() as { count: number };
 
@@ -665,40 +684,41 @@ function seedSettings(): void {
       SERVER:  { notifications: { sales: true, orderConfirm: true }, emails: [] },
     }) },
   ];
-  const stmt = db.prepare(`
+  const stmt = dbInstance.prepare(`
     INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)
   `);
   for (const s of defaults) stmt.run(s.key, s.value);
 }
 
 function seedMenuSchema(): void {
+  if (!dbInstance) return;
   // Seed minimal des menus pour que le QR menu ait du contenu tout de suite.
   // Idempotent et auto-réparateur : insère les items manquants par catégorie.
   try {
-    const { c: catCount } = db.prepare(`SELECT COUNT(*) as c FROM menu_categories`).get() as { c: number };
+    const { c: catCount } = dbInstance.prepare(`SELECT COUNT(*) as c FROM menu_categories`).get() as { c: number };
     if (catCount === 0) {
       const categories = [
         { name: 'Food', description: 'Restaurant food', display_order: 0 },
         { name: 'Drinks', description: 'Beverages', display_order: 1 },
       ];
-      const stmt = db.prepare(`
+      const stmt = dbInstance.prepare(`
         INSERT INTO menu_categories (name, description, display_order, is_active)
         VALUES (?, ?, ?, 1)
       `);
       for (const cat of categories) stmt.run(cat.name, cat.description, cat.display_order);
     }
 
-    const foodCatId = db
+    const foodCatId = dbInstance
       .prepare(`SELECT id FROM menu_categories WHERE name = 'Food' LIMIT 1`)
       .get() as any;
-    const drinksCatId = db
+    const drinksCatId = dbInstance
       .prepare(`SELECT id FROM menu_categories WHERE name = 'Drinks' LIMIT 1`)
       .get() as any;
 
     const resolvedFoodId = foodCatId?.id ?? null;
     const resolvedDrinksId = drinksCatId?.id ?? null;
 
-    const insertItemStmt = db.prepare(`
+    const insertItemStmt = dbInstance.prepare(`
       INSERT INTO menu_items (category_id, name, description, price, currency, unit, image_url, is_available, display_order)
       VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)
     `);
@@ -711,7 +731,7 @@ function seedMenuSchema(): void {
     }>) => {
       if (!categoryId) return;
 
-      const { c: cnt } = db
+      const { c: cnt } = dbInstance
         .prepare(`SELECT COUNT(*) as c FROM menu_items WHERE category_id = ?`)
         .get(categoryId) as { c: number };
 
@@ -748,6 +768,7 @@ function seedMenuSchema(): void {
 }
 
 function ensureEmailSettingsDefaults(): void {
+  if (!dbInstance) return;
   const defaults: Array<{ key: string; value: string }> = [
     { key: 'email_notifications_enabled',    value: 'true' },
     { key: 'email_provider',                 value: 'gmail' },
@@ -765,7 +786,7 @@ function ensureEmailSettingsDefaults(): void {
     { key: 'notify_product_deleted',         value: 'true' },
     { key: 'notify_sales',                   value: 'true' },
   ];
-  const stmt = db.prepare(`
+  const stmt = dbInstance.prepare(`
     INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)
   `);
   for (const s of defaults) stmt.run(s.key, s.value);
@@ -773,7 +794,8 @@ function ensureEmailSettingsDefaults(): void {
 
 // ── Analytics Performance Indexes ─────────────────────────────────────────────
 function createAnalyticsIndexes() {
-  db.exec(`
+  if (!dbInstance) return;
+  dbInstance.exec(`
     CREATE INDEX IF NOT EXISTS idx_inventory_movements_product ON inventory_movements(product_id);
     CREATE INDEX IF NOT EXISTS idx_inventory_movements_created ON inventory_movements(created_at);
     CREATE INDEX IF NOT EXISTS idx_sales_created ON sales(created_at);
@@ -784,8 +806,9 @@ function createAnalyticsIndexes() {
 
 // ── Phase 3: Notifications Tables (SQLite + Supabase compatible) ───────────────
 function ensureNotificationTables(): void {
+  if (!dbInstance) return;
   try {
-    db.exec(`
+    dbInstance.exec(`
       CREATE TABLE IF NOT EXISTS notifications (
         id                  TEXT PRIMARY KEY,
         type                TEXT NOT NULL,
@@ -842,7 +865,7 @@ function ensureNotificationTables(): void {
 
     // Default preferences for roles (idempotent)
     const roles = ['admin', 'manager', 'cashier', 'waiter'];
-    const insertPref = db.prepare(`
+    const insertPref = dbInstance.prepare(`
       INSERT OR IGNORE INTO notification_preferences (role) VALUES (?)
     `);
     roles.forEach(r => insertPref.run(r));
