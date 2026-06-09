@@ -52,7 +52,8 @@ export class SyncOrchestrator {
         this.db.exec(`ALTER TABLE categories ADD COLUMN remote_id INTEGER`);
       }
       if (!catColNames.includes('updated_at')) {
-        this.db.exec(`ALTER TABLE categories ADD COLUMN updated_at DATETIME DEFAULT CURRENT_TIMESTAMP`);
+        this.db.exec(`ALTER TABLE categories ADD COLUMN updated_at DATETIME`);
+        this.db.exec(`UPDATE categories SET updated_at = CURRENT_TIMESTAMP WHERE updated_at IS NULL`);
       }
       this.db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_categories_remote_id ON categories(remote_id) WHERE remote_id IS NOT NULL`);
     } catch (e) {
