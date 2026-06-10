@@ -216,7 +216,7 @@ export class TableService {
 
     // ===== Local mode: SQLite + outbox =====
     try {
-      return withOutboxTransaction(db, businessId, () => {
+      return withOutboxTransaction(db, String(businessId), () => {
         const existing = db.prepare('SELECT id FROM restaurant_tables WHERE table_number = ?').get(tableData.table_number);
         if (existing) {
           throw new Error(`Le numéro de table "${tableData.table_number}" existe déjà.`);
@@ -325,7 +325,7 @@ export class TableService {
 
     // ===== Local mode: SQLite + outbox =====
     try {
-      return withOutboxTransaction(db, businessId, () => {
+      return withOutboxTransaction(db, String(businessId), () => {
         const table = db.prepare('SELECT * FROM restaurant_tables WHERE id = ?').get(id) as Table | undefined;
         if (!table) {
           throw new Error('Table not found');
@@ -481,7 +481,7 @@ export class TableService {
 
     // ===== Local mode: SQLite + outbox =====
     try {
-      return withOutboxTransaction(db, businessId, () => {
+      return withOutboxTransaction(db, String(businessId), () => {
         const table = db.prepare('SELECT id FROM restaurant_tables WHERE id = ?').get(id) as { id: number } | undefined;
         if (!table) {
           return false;
@@ -553,7 +553,7 @@ export class TableService {
 
     // ===== Local mode: SQLite + outbox =====
     try {
-      return withOutboxTransaction(db, businessId, () => {
+      return withOutboxTransaction(db, String(businessId), () => {
         const table = db.prepare('SELECT * FROM restaurant_tables WHERE id = ?').get(id) as Table | undefined;
         if (!table) {
           throw new Error('Table not found');

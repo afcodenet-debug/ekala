@@ -20,7 +20,7 @@ router.post('/login', async (req, res) => {
       });
 
       let query = supabase
-        .from('users')
+        .from('user')
         .select('id, full_name, role, is_active, username, phone')
         .eq('is_active', true)
         .eq('pin_code', pin_code);

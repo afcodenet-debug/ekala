@@ -45,6 +45,9 @@ BEGIN
 END
 $$;
 
+-- Set tenant_id = '5' for existing rows where tenant_id is NULL
+UPDATE restaurant_tables SET tenant_id = '5' WHERE tenant_id IS NULL;
+
 -- 2) Add remote_id + updated_at + tenant_id to categories if missing (for sync engine)
 DO $$
 BEGIN
@@ -76,6 +79,9 @@ BEGIN
   END IF;
 END
 $$;
+
+-- Set tenant_id = '5' for existing rows where tenant_id is NULL
+UPDATE categories SET tenant_id = '5' WHERE tenant_id IS NULL;
 
 -- 3) Helpful indexes (CREATE INDEX IF NOT EXISTS is supported by PostgreSQL 9.5+)
 CREATE INDEX IF NOT EXISTS idx_tables_remote_id
@@ -113,9 +119,8 @@ BEGIN
 END
 $$;
 
-CREATE INDEX IF NOT EXISTS idx_orders_remote_id
-  ON orders(remote_id)
-  WHERE remote_id IS NOT NULL;
+-- Set tenant_id = '5' for existing rows where tenant_id is NULL
+UPDATE orders SET tenant_id = '5' WHERE tenant_id IS NULL;
 
 -- 5) Add tenant_id to products if missing (for sync engine)
 DO $$
@@ -131,7 +136,12 @@ BEGIN
 END
 $$;
 
+-- Set tenant_id = '5' for existing rows where tenant_id is NULL
+UPDATE products SET tenant_id = '5' WHERE tenant_id IS NULL;
+
 -- 6) Add tenant_id to users, tenants, tenant_users if missing (for sync engine)
+-- Note: users table in Supabase uses Supabase Auth, so we only add tenant_id
+-- The business_id column is only for tenants and tenant_users tables
 DO $$
 BEGIN
   IF NOT EXISTS (
@@ -162,6 +172,11 @@ BEGIN
   END IF;
 END
 $$;
+
+-- Set tenant_id = '5' for existing rows where tenant_id is NULL
+UPDATE users SET tenant_id = '5' WHERE tenant_id IS NULL AND id IN (SELECT id FROM users LIMIT 100);
+UPDATE tenants SET tenant_id = '5' WHERE tenant_id IS NULL;
+UPDATE tenant_users SET tenant_id = '5' WHERE tenant_id IS NULL;
 
 -- 7) The Supabase CHECK for status is:
 --    CHECK (status IN ('available','occupied','cleaning','reserved'))

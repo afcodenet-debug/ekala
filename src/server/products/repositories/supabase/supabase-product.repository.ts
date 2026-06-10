@@ -8,15 +8,15 @@ export class SupabaseProductRepository implements IProductRepository {
     auth: { persistSession: false },
   });
 
-  async findById(id: string, businessId?: string): Promise<ProductEntity | null> {
+  async findById(id: string, tenantId?: string): Promise<ProductEntity | null> {
     let qb = this.supabase
       .from('products')
       .select('*')
       .eq('id', id)
       .is('deleted_at', null);
 
-    if (businessId) {
-      qb = qb.eq('business_id', businessId);
+    if (tenantId) {
+      qb = qb.eq('tenant_id', tenantId);
     }
 
     const { data, error } = await qb.maybeSingle();
@@ -26,7 +26,7 @@ export class SupabaseProductRepository implements IProductRepository {
   }
 
   async findAll(
-    businessId?: string,
+    tenantId?: string,
     query?: {
       page?: number;
       limit?: number;
@@ -53,8 +53,8 @@ export class SupabaseProductRepository implements IProductRepository {
       .select('*', { count: 'exact' })
       .is('deleted_at', null);
 
-    if (businessId) {
-      qb = qb.eq('business_id', businessId);
+    if (tenantId) {
+      qb = qb.eq('tenant_id', tenantId);
     }
 
     if (query?.search) {
@@ -91,11 +91,10 @@ export class SupabaseProductRepository implements IProductRepository {
     };
   }
 
-  async create(dto: any, businessId?: string, userId?: string): Promise<ProductEntity> {
+  async create(dto: any, tenantId?: string, userId?: string): Promise<ProductEntity> {
     const payload: any = {
       ...dto,
-      // Only include business_id if provided (single-tenant mode may not have the column)
-      ...(businessId ? { business_id: businessId } : {}),
+      ...(tenantId ? { tenant_id: tenantId } : {}),
       ...(userId ? { created_by: userId, updated_by: userId } : {}),
     };
 
@@ -104,7 +103,7 @@ export class SupabaseProductRepository implements IProductRepository {
     return this.map(data);
   }
 
-  async update(id: string, dto: any, businessId?: string): Promise<ProductEntity> {
+  async update(id: string, dto: any, tenantId?: string): Promise<ProductEntity> {
     const payload = { ...dto };
 
     let qb = this.supabase
@@ -113,8 +112,8 @@ export class SupabaseProductRepository implements IProductRepository {
       .eq('id', id)
       .is('deleted_at', null);
 
-    if (businessId) {
-      qb = qb.eq('business_id', businessId);
+    if (tenantId) {
+      qb = qb.eq('tenant_id', tenantId);
     }
 
     const { data, error } = await qb.select('*').single();
@@ -123,15 +122,15 @@ export class SupabaseProductRepository implements IProductRepository {
     return this.map(data);
   }
 
-  async softDelete(id: string, businessId?: string): Promise<void> {
+  async softDelete(id: string, tenantId?: string): Promise<void> {
     let qb = this.supabase
       .from('products')
       .update({ deleted_at: new Date().toISOString() })
       .eq('id', id)
       .is('deleted_at', null);
 
-    if (businessId) {
-      qb = qb.eq('business_id', businessId);
+    if (tenantId) {
+      qb = qb.eq('tenant_id', tenantId);
     }
 
     const { error } = await qb;
@@ -142,7 +141,7 @@ export class SupabaseProductRepository implements IProductRepository {
   private map(row: any): ProductEntity {
     return {
       id: row.id,
-      business_id: row.business_id,
+      tenant_id: row.tenant_id ?? null,
       branch_id: row.branch_id ?? null,
       category_id: row.category_id,
       name: row.name,

@@ -3,10 +3,14 @@
 
 import { ProductSyncService } from './product-sync.service';
 import { OrderSyncService } from './order-sync.service';
+import { SaleSyncService } from './sale-sync.service';
+import { UserTenantSyncService } from './user-tenant-sync.service';
 import type Database from 'better-sqlite3';
 
 let productSyncService: ProductSyncService | null = null;
 let orderSyncService: OrderSyncService | null = null;
+let saleSyncService: SaleSyncService | null = null;
+let userTenantSyncService: UserTenantSyncService | null = null;
 let database: Database.Database | null = null;
 
 function ensureOutboxTable(db: Database.Database) {
@@ -59,6 +63,34 @@ export function getOrderSyncService(): OrderSyncService {
     orderSyncService = new OrderSyncService(core, database);
   }
   return orderSyncService;
+}
+
+export function getSaleSyncService(): SaleSyncService {
+  if (!saleSyncService) {
+    const core = getProductSyncService();
+    if (!database) {
+      throw new Error('Database not initialized for sync. Call initializeProductSync first.');
+    }
+    saleSyncService = new SaleSyncService(core, database);
+  }
+  return saleSyncService;
+}
+
+export function initializeUserTenantSync(
+  db: Database.Database,
+  supabaseUrl: string,
+  supabaseAnonKey: string
+): UserTenantSyncService {
+  if (!userTenantSyncService) {
+    ensureOutboxTable(db);
+    userTenantSyncService = new UserTenantSyncService(db, supabaseUrl, supabaseAnonKey);
+    console.log('[Sync] UserTenantSyncService initialized (outbox table ensured)');
+  }
+  return userTenantSyncService;
+}
+
+export function getUserTenantSyncService(): UserTenantSyncService | null {
+  return userTenantSyncService;
 }
 
 // Helper pour lancer la sync périodiquement (à appeler depuis le main process)

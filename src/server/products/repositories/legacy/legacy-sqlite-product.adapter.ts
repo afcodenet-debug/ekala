@@ -311,7 +311,7 @@ export class LegacySQLiteProductAdapter implements IProductRepository {
   private map(row: any): ProductEntity {
     return {
       id: String(row.id),
-      business_id: row.business_id ?? businessIdFallback(),
+      tenant_id: row.business_id ?? row.tenant_id ?? businessIdFallback(),
       branch_id: row.branch_id ?? null,
       category_id: row.category_id ?? null,
       name: row.name,

@@ -13,7 +13,7 @@ export type ProductSyncStatus = (typeof PRODUCT_SYNC_STATUS)[number];
  */
 export interface ProductEntity {
   id: UUID;
-  business_id: UUID;
+  tenant_id: number | string;
   branch_id: UUID | null;           // Future multi-branch support
   category_id: UUID | null;
   name: string;

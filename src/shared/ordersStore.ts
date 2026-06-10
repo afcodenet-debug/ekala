@@ -12,7 +12,7 @@ export interface Order {
   id: number;
   table_id: number;
   waiter_id: number;
-   status: 'pending' | 'confirmed' | 'preparing' | 'ready' | 'served' | 'paid' | 'cancelled' | 'rejected';
+  status: 'pending' | 'confirmed' | 'preparing' | 'ready' | 'served' | 'paid' | 'cancelled' | 'rejected';
   items: OrderItem[];
   subtotal: number;
   tax: number;
@@ -22,6 +22,8 @@ export interface Order {
   payment_status: 'unpaid' | 'paid' | 'refunded';
   created_at: string;
   updated_at: string;
+  table_number?: string;
+  waiter_name?: string;
 }
 
 interface OrdersStore {
@@ -40,7 +42,9 @@ export const useOrdersStore = create<OrdersStore>((set, get) => ({
 
   fetchOrders: async () => {
     try {
-      const orders = await api.orders.getAll();
+      const response = await api.orders.getAll() as any;
+      // API returns { orders: [...] } for the management view
+      const orders = Array.isArray(response) ? response : (response?.orders || []);
       set({ orders });
     } catch (error) {
       console.error('Failed to fetch orders:', error);

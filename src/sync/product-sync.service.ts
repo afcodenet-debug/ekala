@@ -1,11 +1,12 @@
 import type Database from 'better-sqlite3';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
-import { ProductEntity } from '../server/products/types/product.types'; // Réutilisation des types backend
+import { ProductEntity } from '../server/products/types/product.types';
+import { SyncPersistedCursor } from './core/sync-persisted-cursor';
+import { ConflictResolver } from './core/conflict-resolver';
+import { DeadLetterQueue } from './core/dead-letter-queue';
 
 function newId(): string {
-  // Node >= 19: randomUUID exists; fallback to crypto.randomUUID-like.
   if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) return crypto.randomUUID();
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
   const { randomUUID } = require('crypto') as { randomUUID: () => string };
   return randomUUID();
 }
@@ -18,13 +19,19 @@ interface OutboxItem {
   payload: string;
   version: number;
   status: string;
+  retry_count: number;
+  last_error: string | null;
+  created_at: string;
+  updated_at: string;
 }
 
 export class ProductSyncService {
   private db: Database.Database;
   private supabase: SupabaseClient;
   private isRunning = false;
-  private lastPullTimestamp: string | null = null;
+  private cursor: SyncPersistedCursor;
+  private conflictResolver: ConflictResolver;
+  private dlq: DeadLetterQueue;
 
   private readonly ENTITY_TABLE: Record<string, string> = {
     product: 'products',
@@ -37,50 +44,43 @@ export class ProductSyncService {
   constructor(db: Database.Database, supabaseUrl: string, supabaseAnonKey: string) {
     this.db = db;
     this.supabase = createClient(supabaseUrl, supabaseAnonKey);
+    this.cursor = new SyncPersistedCursor(db, 'last_pull_');
+    this.conflictResolver = new ConflictResolver(db);
+    this.dlq = new DeadLetterQueue(db);
   }
 
-  /**
-   * Helper pour obtenir le mapping des colonnes par entité pour le PULL
-   */
-  private getAllowedFields(entity: string): string[] {
-    if (entity === 'product') {
-      return [
-        'name', 'stock_quantity', 'selling_price', 'buying_price', 'is_available', 
-        'category_id', 'barcode', 'description', 'unit', 'image_url', 
-        'minimum_stock', 'sku', 'status', 'cost_method', 'archived_at', 'updated_at',
-        'price'
-      ];
-    }
-    if (entity === 'category') {
-      return ['name', 'description', 'updated_at', 'created_at'];
-    }
-    return ['updated_at'];
+  /* ------------------------------------------------------------------ */
+  /*  Public helpers                                                     */
+  /* ------------------------------------------------------------------ */
+
+  getConflictResolver(): ConflictResolver {
+    return this.conflictResolver;
   }
 
-  /**
-   * Enregistre une modification produit dans l'outbox.
-   */
+  getDeadLetterQueue(): DeadLetterQueue {
+    return this.dlq;
+  }
+
+  resetPullCursor() {
+    this.cursor.reset();
+  }
+
+  /* ------------------------------------------------------------------ */
+  /*  Queue helpers                                                      */
+  /* ------------------------------------------------------------------ */
+
   queueProductChange(operation: 'insert' | 'update' | 'delete', product: Partial<ProductEntity>) {
     this.queueChange('product', operation, product);
   }
 
-  /**
-   * Enregistre une modification catégorie dans l'outbox.
-   */
   queueCategoryChange(operation: 'insert' | 'update' | 'delete', category: any) {
     this.queueChange('category', operation, category);
   }
 
-  /**
-   * Version interne à utiliser uniquement à l'intérieur d'une transaction déjà ouverte.
-   */
   queueProductChangeInsideTransaction(operation: 'insert' | 'update' | 'delete', product: Partial<ProductEntity>) {
     this.queueChangeInsideTransaction('product', operation, product);
   }
 
-  /**
-   * Generic queue for any supported entity
-   */
   queueChange(entity: string, operation: 'insert' | 'update' | 'delete', record: any) {
     const id = newId();
     const payload = JSON.stringify(record);
@@ -94,9 +94,6 @@ export class ProductSyncService {
     console.log(`[Sync] ${entity} ${operation} queued for ${record.id}`);
   }
 
-  /**
-   * Generic queue to be called ONLY from inside an already-open SQLite transaction.
-   */
   queueChangeInsideTransaction(entity: string, operation: 'insert' | 'update' | 'delete', record: any) {
     const id = newId();
     const payload = JSON.stringify(record);
@@ -108,10 +105,11 @@ export class ProductSyncService {
     `).run(id, entity, operation, record.id, payload, version);
   }
 
-  /**
-   * Lance le cycle de synchronisation complet (PUSH + PULL)
-   */
-  async syncNow(_businessId: string): Promise<{ pushed: number; pulled: number; errors: number }> {
+  /* ------------------------------------------------------------------ */
+  /*  Main sync cycle                                                     */
+  /* ------------------------------------------------------------------ */
+
+  async syncNow(tenantId: string): Promise<{ pushed: number; pulled: number; errors: number }> {
     if (this.isRunning) {
       console.log('[Sync] Sync already in progress');
       return { pushed: 0, pulled: 0, errors: 0 };
@@ -121,19 +119,19 @@ export class ProductSyncService {
     let pushed = 0, pulled = 0, errors = 0;
 
     try {
-      // 0. Sync Categories (Pull then Push to ensure IDs exist locally first)
+      // Catégories : Pull d'abord (pour avoir les remote_ids), puis Push
       try {
-        pulled += await this.pullByEntityFromSupabase('category', _businessId);
-        pushed += await this.pushPendingByEntity('category', _businessId);
+        pulled += await this.pullByEntityFromSupabase('category', tenantId);
+        pushed += await this.pushPendingByEntity('category', tenantId);
       } catch (e: any) {
         console.error('[Sync] Category sync failed (continuing):', e?.message || e);
         errors++;
       }
 
-      // 1. Sync Products (Push + Pull)
+      // Produits : Push d'abord (pour envoyer les modifs locales), puis Pull
       try {
-        pushed += await this.pushPendingByEntity('product', _businessId);
-        pulled += await this.pullByEntityFromSupabase('product', _businessId);
+        pushed += await this.pushPendingByEntity('product', tenantId);
+        pulled += await this.pullByEntityFromSupabase('product', tenantId);
       } catch (e: any) {
         console.error('[Sync] Product sync failed (continuing):', e?.message || e);
         errors++;
@@ -149,10 +147,11 @@ export class ProductSyncService {
     return { pushed, pulled, errors };
   }
 
-  /**
-   * Generic PUSH for any entity using outbox + version-safe upsert
-   */
-  async pushPendingByEntity(entity: string, _businessId: string): Promise<number> {
+  /* ------------------------------------------------------------------ */
+  /*  PUSH – Outbox → Supabase                                           */
+  /* ------------------------------------------------------------------ */
+
+  async pushPendingByEntity(entity: string, tenantId: string): Promise<number> {
     const table = this.ENTITY_TABLE[entity] || `${entity}s`;
     const items: OutboxItem[] = this.db
       .prepare(
@@ -166,196 +165,220 @@ export class ProductSyncService {
     let successCount = 0;
 
     for (const item of items) {
-      // Mark as in_progress for crash detection + partial failure safety
       this.db.prepare(`UPDATE sync_outbox SET status = 'in_progress' WHERE id = ?`).run(item.id);
 
       try {
         const payload = JSON.parse(item.payload);
-
-        // Normalize record_id (outbox stores it as TEXT, Supabase products.id is bigint)
         const recordId = Number(item.record_id);
         if (isNaN(recordId)) {
-          console.warn(`[Sync] Skipping invalid record_id in outbox: ${item.record_id} for ${entity}`);
           this.db.prepare(`UPDATE sync_outbox SET status = 'failed', last_error = 'invalid record_id' WHERE id = ?`).run(item.id);
           continue;
         }
 
         if (item.operation === 'insert' || item.operation === 'update') {
-          const safeUpdate: Record<string, any> = {
-            updated_at: new Date().toISOString()
-          };
-
-          // Use remote_id if available
-          if (payload.remote_id) {
-            safeUpdate.id = Number(payload.remote_id);
-          } else if (item.operation === 'update') {
-            safeUpdate.id = recordId;
-          }
-
-          // Strict column filtering based on entity
-          if (entity === 'product') {
-            const cols = ['name', 'stock_quantity', 'selling_price', 'buying_price', 'is_available', 'category_id', 'barcode', 'description', 'unit', 'image_url', 'minimum_stock', 'sku', 'status', 'cost_method', 'archived_at'];
-            cols.forEach(c => { 
-              if (payload[c] !== undefined) safeUpdate[c] = payload[c]; 
-              // Map cost_price to buying_price if needed
-              if (c === 'buying_price' && payload.cost_price !== undefined) safeUpdate.buying_price = payload.cost_price;
-              // Map price to selling_price if needed
-              if (c === 'selling_price' && payload.price !== undefined) safeUpdate.selling_price = payload.price;
-            });
-            
-            if (!safeUpdate.id || !safeUpdate.name) {
-               try {
-                 const row = this.db.prepare('SELECT name FROM products WHERE id = ?').get(recordId) as any;
-                 if (row?.name) safeUpdate.name = row.name;
-               } catch {}
-            }
-          } 
-          else if (entity === 'category') {
-            const cols = ['name', 'description', 'created_at'];
-            cols.forEach(c => { if (payload[c] !== undefined) safeUpdate[c] = payload[c]; });
-          }
-          else if (entity === 'order') {
-            const cols = ['table_id', 'waiter_id', 'customer_id', 'status', 'total', 'items', 'version', 'created_at', 'notes'];
-            cols.forEach(c => { if (payload[c] !== undefined) safeUpdate[c] = payload[c]; });
-            console.log(`[Sync] Pushing order ${recordId} (remote=${safeUpdate.id}) status=${safeUpdate.status} to Supabase`);
-          } 
-          else if (entity === 'order_item') {
-            // order_items table in Supabase does NOT have a 'name' column
-            const cols = ['order_id', 'product_id', 'quantity', 'unit_price', 'total_price', 'notes', 'created_at'];
-            cols.forEach(c => { if (payload[c] !== undefined) safeUpdate[c] = payload[c]; });
-          }
-else if (entity === 'restaurant_table') {
-            const cols = ['table_number', 'capacity', 'status', 'assigned_waiter_id', 'qr_token', 'created_at'];
-            cols.forEach(c => { if (payload[c] !== undefined) safeUpdate[c] = payload[c]; });
-            
-            // Status mapping: local 'active' -> remote 'occupied' (Supabase CHECK constraint)
-            if (safeUpdate.status === 'active') safeUpdate.status = 'occupied';
-            // local 'out_of_service' -> remote 'available' (or keep if Supabase supports it, but migration says no)
-            if (safeUpdate.status === 'out_of_service') safeUpdate.status = 'available';
-
-            if (!payload.remote_id && item.operation === 'insert') {
-              // For new tables, don't include id - let Supabase auto-generate
-              // The unique key is table_number, so we upsert on table_number
-              delete safeUpdate.id;
-              
-              // Include business_id if available to ensure correct ownership on Supabase
-              if (_businessId) safeUpdate.business_id = _businessId;
-
-              console.log(`[Sync] Pushing new table "${safeUpdate.table_number}" to Supabase...`);
-              const { data, error } = await this.supabase
-                .from(table)
-                .upsert(safeUpdate, { onConflict: 'table_number' })
-                .select('id')
-                .single();
-
-              if (error) {
-                // If it's a duplicate key error, that's fine - the table exists remotely
-                if (error.code !== '23505') throw error;
-                console.log(`[Sync] Table "${safeUpdate.table_number}" already exists in Supabase, marking as done locally`);
-              } else if (data?.id) {
-                // Save remote_id locally
-                this.db.prepare(`UPDATE ${table} SET remote_id = ? WHERE id = ?`).run(data.id, recordId);
-                console.log(`[Sync] Table "${safeUpdate.table_number}" pushed to Supabase (remote_id=${data.id})`);
-              }
-
-              // Mark as successfully pushed
-              this.db.prepare(`UPDATE sync_outbox SET status = 'done' WHERE id = ?`).run(item.id);
-              successCount++;
-              continue; 
-            } else if (item.operation === 'update') {
-              // For updates, use the remote_id if we have it, otherwise fallback to recordId
-              safeUpdate.id = payload.remote_id || recordId;
-              if (_businessId) safeUpdate.business_id = _businessId;
-              
-              console.log(`[Sync] Updating table "${safeUpdate.table_number}" (id=${safeUpdate.id}) in Supabase...`);
-              const { data, error } = await this.supabase
-                .from(table)
-                .upsert(safeUpdate, { onConflict: 'table_number' })
-                .select('id')
-                .single();
-
-              if (error) {
-                console.error(`[Sync] Table update failed for "${safeUpdate.table_number}":`, error);
-                throw error;
-              }
-              
-              if (!payload.remote_id && data?.id) {
-                this.db.prepare(`UPDATE ${table} SET remote_id = ? WHERE id = ?`).run(data.id, recordId);
-              }
-
-              this.db.prepare(`UPDATE sync_outbox SET status = 'done' WHERE id = ?`).run(item.id);
-              successCount++;
-              continue;
-            }
-          }
-
-          // Use upsert to handle both insert and update
-          const { data, error } = await this.supabase
-            .from(table)
-            .upsert(safeUpdate)
-            .select('id')
-            .single();
-
-          if (error) throw error;
-
-          // Save remote_id locally if it was a new record
-          if (!payload.remote_id && data?.id) {
-            this.db.prepare(`UPDATE ${table} SET remote_id = ? WHERE id = ?`).run(data.id, recordId);
-          }
+          await this.handleUpsert(entity, table, item, payload, recordId, tenantId);
         } else if (item.operation === 'delete') {
-          if (entity === 'order_item') {
-            // Actual deletion for order items (normalized items)
-            const { error } = await this.supabase
-              .from(table)
-              .delete()
-              .eq('id', recordId);
-
-            if (error) throw error;
-          } else {
-            // Soft-delete for products and orders
-            const safeDelete: Record<string, any> = { 
-              updated_at: new Date().toISOString() 
-            };
-            if (entity === 'product') safeDelete.is_available = 0;
-            if (entity === 'order')   safeDelete.status = 'cancelled';
-
-            const { error } = await this.supabase
-              .from(table)
-              .update(safeDelete)
-              .eq('id', recordId);
-
-            if (error) throw error;
-          }
+          await this.handleDelete(entity, table, item, recordId);
         }
 
-        // Mark as successfully pushed
         this.db.prepare(`UPDATE sync_outbox SET status = 'done' WHERE id = ?`).run(item.id);
         successCount++;
       } catch (err: any) {
+        const newRetryCount = (item.retry_count || 0) + 1;
         this.db.prepare(`
           UPDATE sync_outbox 
-          SET status = 'failed', retry_count = retry_count + 1, last_error = ?
+          SET status = 'failed', retry_count = ?, last_error = ?
           WHERE id = ?
-        `).run(err?.message ?? String(err), item.id);
+        `).run(newRetryCount, err?.message ?? String(err), item.id);
 
         console.error(`[Sync] Push failed for ${entity} ${item.record_id}:`, err?.message ?? err);
+
+        // Après MAX_RETRIES, archiver dans la DLQ (Faille #7 résolue)
+        if (newRetryCount >= 5) {
+          this.dlq.archiveFailedItem(item.id, err?.message ?? String(err), newRetryCount);
+        }
       }
     }
 
     return successCount;
   }
 
-  /**
-   * PULL : Récupère les changements depuis Supabase et les applique en local
-   * Version générique pour Produits et Catégories
-   */
-  private async pullByEntityFromSupabase(entity: string, _businessId: string): Promise<number> {
+  private async handleUpsert(
+    entity: string,
+    table: string,
+    item: OutboxItem,
+    payload: any,
+    recordId: number,
+    tenantId: string
+  ) {
+    const safeUpdate: Record<string, any> = {
+      updated_at: new Date().toISOString(),
+    };
+
+    if (payload.remote_id) {
+      safeUpdate.id = Number(payload.remote_id);
+    } else if (item.operation === 'update') {
+      safeUpdate.id = recordId;
+    }
+
+    if (entity === 'product') {
+      const cols = ['name', 'stock_quantity', 'selling_price', 'buying_price', 'is_available', 'category_id', 'barcode', 'description', 'unit', 'image_url', 'minimum_stock', 'sku', 'status', 'cost_method', 'archived_at', 'tenant_id'];
+      cols.forEach(c => {
+        if (payload[c] !== undefined) safeUpdate[c] = payload[c];
+        if (c === 'buying_price' && payload.cost_price !== undefined) safeUpdate.buying_price = payload.cost_price;
+        if (c === 'selling_price' && payload.price !== undefined) safeUpdate.selling_price = payload.price;
+      });
+
+      if (!safeUpdate.id || !safeUpdate.name) {
+        try {
+          const row = this.db.prepare('SELECT name FROM products WHERE id = ?').get(recordId) as any;
+          if (row?.name) safeUpdate.name = row.name;
+        } catch { /* ignore */ }
+      }
+    } else if (entity === 'category') {
+      const cols = ['name', 'description', 'created_at', 'tenant_id'];
+      cols.forEach(c => { if (payload[c] !== undefined) safeUpdate[c] = payload[c]; });
+    } else if (entity === 'order') {
+      const cols = ['table_id', 'waiter_id', 'customer_id', 'status', 'total', 'items', 'version', 'created_at', 'tenant_id'];
+      cols.forEach(c => { if (payload[c] !== undefined) safeUpdate[c] = payload[c]; });
+      // 'notes' et 'updated_at' n'existent pas dans le schéma Supabase orders
+      delete safeUpdate.notes;
+      delete safeUpdate.updated_at;
+      console.log(`[Sync] Pushing order ${recordId} (remote=${safeUpdate.id}) status=${safeUpdate.status} to Supabase`);
+    } else if (entity === 'order_item') {
+      // Supabase order_items: id, order_id, product_id, quantity, unit_price, total_price, notes, created_at
+      const cols = ['order_id', 'product_id', 'quantity', 'unit_price', 'total_price', 'notes'];
+      cols.forEach(c => { if (payload[c] !== undefined) safeUpdate[c] = payload[c]; });
+      delete safeUpdate.updated_at;
+      delete safeUpdate.tenant_id;
+    } else if (entity === 'sale') {
+      // Supabase sales: id, invoice_number, order_id, user_id, customer_id, subtotal, discount, tax, total_amount, payment_method, version, created_at
+      const cols = ['invoice_number', 'order_id', 'user_id', 'customer_id', 'subtotal', 'discount', 'tax', 'total_amount', 'payment_method', 'version', 'created_at'];
+      cols.forEach(c => { if (payload[c] !== undefined) safeUpdate[c] = payload[c]; });
+      delete safeUpdate.updated_at;
+      delete safeUpdate.tenant_id;
+      delete safeUpdate.remote_id;
+      console.log(`[Sync] Pushing sale ${recordId} (remote=${safeUpdate.id}) to Supabase`);
+    } else if (entity === 'sale_item') {
+      // Supabase sale_items: id, sale_id, product_id, quantity, unit_price, total_price
+      const cols = ['sale_id', 'product_id', 'quantity', 'unit_price', 'total_price'];
+      cols.forEach(c => { if (payload[c] !== undefined) safeUpdate[c] = payload[c]; });
+      delete safeUpdate.updated_at;
+      delete safeUpdate.tenant_id;
+      delete safeUpdate.remote_id;
+    } else if (entity === 'restaurant_table') {
+      await this.handleTableUpsert(item, payload, recordId, tenantId);
+      return; // Le push table a sa propre logique avec continue
+    }
+
+    // Pour les inserts sans remote_id, ajouter tenant_id (sauf pour sale/sale_item qui n'ont pas cette colonne dans Supabase)
+    if (!payload.remote_id && item.operation === 'insert') {
+      if (tenantId && entity !== 'sale' && entity !== 'sale_item') {
+        safeUpdate.tenant_id = Number(tenantId);
+      }
+    }
+
+    const { data, error } = await this.supabase
+      .from(table)
+      .upsert(safeUpdate)
+      .select('id')
+      .single();
+
+    if (error) throw error;
+
+    // Sauvegarder remote_id si c'était un nouvel enregistrement
+    if (!payload.remote_id && data?.id) {
+      this.db.prepare(`UPDATE ${table} SET remote_id = ? WHERE id = ?`).run(data.id, recordId);
+    }
+  }
+
+  private async handleTableUpsert(
+    item: OutboxItem,
+    payload: any,
+    recordId: number,
+    tenantId: string
+  ) {
+    const table = 'restaurant_tables';
+    const safeUpdate: Record<string, any> = {
+      updated_at: new Date().toISOString(),
+    };
+
+    const cols = ['table_number', 'capacity', 'status', 'assigned_waiter_id', 'qr_token', 'created_at', 'tenant_id'];
+    cols.forEach(c => { if (payload[c] !== undefined) safeUpdate[c] = payload[c]; });
+
+    // Status mapping: local 'active' -> remote 'occupied'
+    if (safeUpdate.status === 'active') safeUpdate.status = 'occupied';
+    if (safeUpdate.status === 'out_of_service') safeUpdate.status = 'available';
+
+    if (!payload.remote_id && item.operation === 'insert') {
+      delete safeUpdate.id;
+      if (tenantId) safeUpdate.tenant_id = Number(tenantId);
+
+      const { data, error } = await this.supabase
+        .from(table)
+        .upsert(safeUpdate, { onConflict: 'table_number' })
+        .select('id')
+        .single();
+
+      if (error) {
+        if (error.code !== '23505') throw error;
+        console.log(`[Sync] Table "${safeUpdate.table_number}" already exists in Supabase`);
+      } else if (data?.id) {
+        this.db.prepare(`UPDATE ${table} SET remote_id = ? WHERE id = ?`).run(data.id, recordId);
+      }
+    } else {
+      safeUpdate.id = payload.remote_id || recordId;
+      if (tenantId) safeUpdate.tenant_id = Number(tenantId);
+
+      const { data, error } = await this.supabase
+        .from(table)
+        .upsert(safeUpdate, { onConflict: 'table_number' })
+        .select('id')
+        .single();
+
+      if (error) throw error;
+
+      if (!payload.remote_id && data?.id) {
+        this.db.prepare(`UPDATE ${table} SET remote_id = ? WHERE id = ?`).run(data.id, recordId);
+      }
+    }
+  }
+
+  private async handleDelete(
+    entity: string,
+    table: string,
+    item: OutboxItem,
+    recordId: number
+  ) {
+    if (entity === 'order_item') {
+      const { error } = await this.supabase
+        .from(table)
+        .delete()
+        .eq('id', recordId);
+      if (error) throw error;
+    } else {
+      const safeDelete: Record<string, any> = { updated_at: new Date().toISOString() };
+      if (entity === 'product') safeDelete.is_available = 0;
+      if (entity === 'order') safeDelete.status = 'cancelled';
+
+      const { error } = await this.supabase
+        .from(table)
+        .update(safeDelete)
+        .eq('id', recordId);
+      if (error) throw error;
+    }
+  }
+
+  /* ------------------------------------------------------------------ */
+  /*  PULL – Supabase → Outbox                                           */
+  /* ------------------------------------------------------------------ */
+
+  private async pullByEntityFromSupabase(entity: string, tenantId: string): Promise<number> {
     const table = this.ENTITY_TABLE[entity];
     if (!table) return 0;
 
-    // Use a unique cursor per entity if possible, or fallback to the general one
-    // For now we use the general cursor to maintain compatibility with existing state
-    const since = this.lastPullTimestamp || new Date(0).toISOString();
+    // Utilisation du curseur persistant (Faille #2 résolue)
+    const since = this.cursor.getOrEpoch(entity);
 
     let query = this.supabase
       .from(table)
@@ -365,7 +388,6 @@ else if (entity === 'restaurant_table') {
 
     let { data, error } = await query;
 
-    // If updated_at column doesn't exist in Supabase, try with created_at as fallback
     if (error && error.message?.includes('updated_at')) {
       console.warn(`[Sync] Pulling ${entity} without updated_at column (using created_at fallback)...`);
       query = this.supabase
@@ -386,145 +408,202 @@ else if (entity === 'restaurant_table') {
 
     for (const remote of (data || []) as Array<{ id: any; [key: string]: any }>) {
       try {
-        // Support both tenant_id (new) and business_id (legacy) for filtering
-        if (remote.tenant_id && remote.tenant_id !== _businessId) continue;
-        if (remote.business_id && remote.business_id !== _businessId) continue;
+        if (remote.tenant_id && String(remote.tenant_id) !== String(tenantId)) continue;
 
         const remoteId = Number(remote?.id);
         if (isNaN(remoteId)) continue;
 
-        let local: { updated_at?: string; description?: string; image_url?: string } | undefined;
-        try {
-          local = this.db
-            .prepare(`SELECT updated_at, description${entity === 'product' ? ', image_url' : ''} FROM ${table} WHERE id = ?`)
-            .get(remoteId) as { updated_at?: string; description?: string; image_url?: string } | undefined;
-        } catch (e) {
-          // If the query fails (e.g., image_url column doesn't exist in categories), try without it
-          try {
-            local = this.db
-              .prepare(`SELECT updated_at, description FROM ${table} WHERE id = ?`)
-              .get(remoteId) as { updated_at?: string; description?: string; image_url?: string } | undefined;
-          } catch (e2) {
-            local = undefined;
-          }
-        }
-
+        const local = this.findLocalRow(entity, table, remoteId, remote);
         const remoteUpdatedAt = remote.updated_at;
-        
-        // Force update if critical data is missing locally (e.g., after seed)
-        const isMissingCriticalData = entity === 'product' && local && (!local.description || !local.image_url) && remote.description;
-        
-        const shouldApply = !local || !local.updated_at || (remoteUpdatedAt && remoteUpdatedAt > local.updated_at) || isMissingCriticalData;
+        const localVersion = local?.version || 0;
+        const remoteVersion = remote.version || 0;
 
-        if (shouldApply) {
-          const safeFields: Record<string, any> = {
-            tenant_id: remote.tenant_id || remote.business_id,
-            business_id: remote.business_id,
-          };
+        // Détection de conflit (Faille #1 résolue)
+        if (local) {
+          const conflict = this.conflictResolver.detectConflict(
+            entity, local.id, remoteId,
+            local.updated_at || new Date(0).toISOString(),
+            remoteUpdatedAt ? (remoteUpdatedAt instanceof Date ? remoteUpdatedAt.toISOString() : String(remoteUpdatedAt)) : new Date().toISOString(),
+            localVersion, remoteVersion
+          );
 
-          // Ensure updated_at is properly formatted
-          safeFields.updated_at = remoteUpdatedAt
-            ? (remoteUpdatedAt instanceof Date ? remoteUpdatedAt.toISOString() : String(remoteUpdatedAt))
-            : new Date().toISOString();
+          if (conflict) {
+            console.warn(`[Sync] ${entity} #${remoteId} conflict detected (local v${localVersion} vs remote v${remoteVersion})`);
 
-          // Map and filter fields
-          allowedFields.forEach(field => {
-            if (remote[field] !== undefined) {
-              safeFields[field] = remote[field];
-            }
-          });
+            // Résolution automatique par Last-Writer-Wins
+            const winner = this.conflictResolver.resolveLWW(
+              localVersion, remoteVersion,
+              local.updated_at || new Date(0).toISOString(),
+              remoteUpdatedAt ? (remoteUpdatedAt instanceof Date ? remoteUpdatedAt.toISOString() : String(remoteUpdatedAt)) : new Date().toISOString()
+            );
 
-          // Special mapping for Products
-          if (entity === 'product') {
-            // Map 'price' -> 'selling_price' if selling_price is missing in remote payload but price is there
-            if (remote.price !== undefined && remote.selling_price === undefined) {
-              safeFields.selling_price = remote.price;
-            }
-            // Map 'selling_price' -> 'price' for legacy local column
-            if (remote.selling_price !== undefined && safeFields.price === undefined) {
-              safeFields.price = remote.selling_price;
-            }
-            // Map 'cost_price' -> 'buying_price'
-            if (remote.cost_price !== undefined && remote.buying_price === undefined) {
-              safeFields.buying_price = remote.cost_price;
+            if (winner === 'local_wins') {
+              console.log(`[Sync] ${entity} #${remoteId}: local wins, skipping remote update`);
+              applied++;
+              continue;
             }
           }
-
-          const sanitize = (val: any) => {
-            if (val === undefined || val === null) return null;
-            if (val instanceof Date) return val.toISOString();
-            if (typeof val === 'boolean') return val ? 1 : 0;
-            return val;
-          };
-
-          const updateFields = Object.keys(safeFields).filter(k => allowedFields.includes(k) || k === 'updated_at');
-          if (updateFields.length === 0) {
-            applied++;
-            continue;
-          }
-
-          const setClauses = updateFields.map(k => `"${k}" = ?`).join(', ');
-          const updateParams = updateFields.map(k => sanitize(safeFields[k])).concat([remoteId]);
-
-          const updateResult = this.db.prepare(`
-            UPDATE ${table} SET ${setClauses} WHERE id = ?
-          `).run(...updateParams);
-
-          if (updateResult.changes === 0) {
-            const insertKeys = ['id', ...updateFields];
-            const insertParams = [remoteId, ...updateFields.map(k => sanitize(safeFields[k]))];
-            this.db.prepare(`
-              INSERT INTO ${table} (${insertKeys.map(c => `"${c}"`).join(', ')})
-              VALUES (${insertParams.map(() => '?').join(', ')})
-            `).run(...insertParams);
-          }
-
-          applied++;
         }
+
+        // Vérifier si le remote est plus récent
+        const shouldApply = !local || !local.updated_at ||
+          (remoteUpdatedAt && remoteUpdatedAt > local.updated_at);
+
+        if (!shouldApply) continue;
+
+        const safeFields: Record<string, any> = {
+          tenant_id: remote.tenant_id,
+          updated_at: remoteUpdatedAt
+            ? (remoteUpdatedAt instanceof Date ? remoteUpdatedAt.toISOString() : String(remoteUpdatedAt))
+            : new Date().toISOString(),
+        };
+
+        // Version tracking
+        if (remote.version !== undefined) {
+          safeFields.version = remote.version;
+        }
+
+        allowedFields.forEach(field => {
+          if (remote[field] !== undefined) {
+            safeFields[field] = remote[field];
+          }
+        });
+
+        // Special mappings for Products
+        if (entity === 'product') {
+          if (remote.price !== undefined && remote.selling_price === undefined) {
+            safeFields.selling_price = remote.price;
+          }
+          if (remote.selling_price !== undefined && safeFields.price === undefined) {
+            safeFields.price = remote.selling_price;
+          }
+          if (remote.cost_price !== undefined && remote.buying_price === undefined) {
+            safeFields.buying_price = remote.cost_price;
+          }
+        }
+
+        await this.applyRemoteRow(entity, table, safeFields, local, remoteId, remoteUpdatedAt);
+        applied++;
+
       } catch (perItemErr: any) {
         console.error(`[Sync] Error processing remote ${entity} in pull:`, perItemErr?.message || perItemErr);
       }
     }
 
+    // Sauvegarder le curseur persistant (Faille #2 résolue)
     if (data && data.length > 0) {
       const lastUpdatedAt = data[data.length - 1].updated_at;
       const lastTs = lastUpdatedAt instanceof Date ? lastUpdatedAt.toISOString() : String(lastUpdatedAt || '');
-      if (!this.lastPullTimestamp || lastTs > this.lastPullTimestamp) {
-        this.lastPullTimestamp = lastTs;
-      }
+      this.cursor.set(entity, lastTs);
     }
 
     return applied;
   }
 
-  /**
-   * PUSH : Envoie les changements en attente vers Supabase (Products)
-   * Delegates to the generic implementation for DRY + future entities
-   */
-  private async pushPendingProducts(_businessId: string): Promise<number> {
-    return this.pushPendingByEntity('product', _businessId);
+  private findLocalRow(
+    entity: string,
+    table: string,
+    remoteId: number,
+    remote: any
+  ): { id: number; updated_at: string; version: number } | undefined {
+    try {
+      // 1) Chercher d'abord par remote_id (le plus fiable)
+      const byRemote = this.db.prepare(
+        `SELECT id, updated_at, version FROM ${table} WHERE remote_id = ?`
+      ).get(remoteId) as { id: number; updated_at: string; version: number } | undefined;
+
+      if (byRemote) return byRemote;
+
+      // 2) Chercher par id local
+      const byLocalId = this.db.prepare(
+        `SELECT id, updated_at, version FROM ${table} WHERE id = ?`
+      ).get(remoteId) as { id: number; updated_at: string; version: number } | undefined;
+
+      return byLocalId || undefined;
+    } catch {
+      return undefined;
+    }
   }
 
-  /**
-   * PULL : Récupère les changements depuis Supabase et les applique en local
-   * Legacy method maintained for compatibility
-   */
-  private async pullProductsFromSupabase(_businessId: string): Promise<number> {
-    return this.pullByEntityFromSupabase('product', _businessId);
+  private async applyRemoteRow(
+    entity: string,
+    table: string,
+    safeFields: Record<string, any>,
+    local: { id: number; updated_at: string; version: number } | undefined,
+    remoteId: number,
+    remoteUpdatedAt: any
+  ) {
+    const sanitize = (val: any) => {
+      if (val === undefined || val === null) return null;
+      if (val instanceof Date) return val.toISOString();
+      if (typeof val === 'boolean') return val ? 1 : 0;
+      return val;
+    };
+
+    const updateFields = Object.keys(safeFields);
+    if (updateFields.length === 0) return;
+
+    // NE PAS inclure remoteId dans les SET, il va dans WHERE
+    const setClauses = updateFields.map(k => `"${k}" = ?`).join(', ');
+    const updateValues = updateFields.map(k => sanitize(safeFields[k]));
+
+    // Déterminer la PK locale pour le WHERE
+    const pk = local ? local.id : remoteId;
+
+    // Tentative UPDATE d'abord
+    const updateResult = this.db.prepare(`
+      UPDATE ${table} SET ${setClauses} WHERE id = ?
+    `).run(...updateValues, pk);
+
+    if (updateResult.changes === 0) {
+      // Fallback: INSERT (en ignorant les erreurs de contrainte)
+      const insertKeys = ['id', ...updateFields];
+      const insertParams = [pk, ...updateValues];
+      try {
+        this.db.prepare(`
+          INSERT INTO ${table} (${insertKeys.map(c => `"${c}"`).join(', ')})
+          VALUES (${insertParams.map(() => '?').join(', ')})
+        `).run(...insertParams);
+      } catch (insertErr: any) {
+        // Si l'insert échoue (PK existe déjà mais avec id différent), tenter un UPDATE sur existing
+        if (insertErr?.code === 'SQLITE_CONSTRAINT_PRIMARYKEY') {
+          const existing = this.db.prepare(
+            `SELECT id FROM ${table} WHERE id = ? OR remote_id = ?`
+          ).get(pk, pk) as { id: number } | undefined;
+          if (existing) {
+            this.db.prepare(`UPDATE ${table} SET ${setClauses} WHERE id = ?`)
+              .run(...updateValues, existing.id);
+          }
+        } else {
+          throw insertErr;
+        }
+      }
+    }
   }
 
-  /**
-   * Méthode utilitaire pour forcer un pull complet (utile après reconnexion longue)
-   */
-  async forceFullPull(_businessId: string): Promise<number> {
-    this.lastPullTimestamp = null;
-    let pulled = await this.pullByEntityFromSupabase('category', _businessId);
-    pulled += await this.pullByEntityFromSupabase('product', _businessId);
+  /* ------------------------------------------------------------------ */
+  /*  Helpers                                                             */
+  /* ------------------------------------------------------------------ */
+
+  private getAllowedFields(entity: string): string[] {
+    if (entity === 'product') {
+      return [
+        'name', 'stock_quantity', 'selling_price', 'buying_price', 'is_available',
+        'category_id', 'barcode', 'description', 'unit', 'image_url',
+        'minimum_stock', 'sku', 'status', 'cost_method', 'archived_at', 'updated_at',
+        'price', 'version'
+      ];
+    }
+    if (entity === 'category') {
+      return ['name', 'description', 'updated_at', 'created_at'];
+    }
+    return ['updated_at'];
+  }
+
+  async forceFullPull(tenantId: string): Promise<number> {
+    this.cursor.reset();
+    let pulled = await this.pullByEntityFromSupabase('category', tenantId);
+    pulled += await this.pullByEntityFromSupabase('product', tenantId);
     return pulled;
-  }
-
-  /** Reset the in-memory pull cursor so the next sync cycle will pull everything */
-  resetPullCursor(): void {
-    this.lastPullTimestamp = null;
   }
 }

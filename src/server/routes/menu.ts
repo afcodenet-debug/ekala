@@ -486,7 +486,7 @@ router.post('/checkout', async (req, res) => {
     // Verify the waiter exists (to avoid FK violation)
     if (waiterId) {
       const { data: exists } = await supabase
-        .from('users')
+        .from('user')
         .select('id')
         .eq('id', waiterId)
         .single();
@@ -499,7 +499,7 @@ router.post('/checkout', async (req, res) => {
     if (!waiterId) {
       // Fallback: find any admin or manager
       const { data: fallbackUser } = await supabase
-        .from('users')
+        .from('user')
         .select('id')
         .in('role', ['admin', 'manager'])
         .limit(1)

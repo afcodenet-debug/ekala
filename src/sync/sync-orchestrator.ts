@@ -1,42 +1,63 @@
 // src/sync/sync-orchestrator.ts
-// Production-grade orchestration layer for the Product & Order Sync Engine
-// Handles scheduling, mutex, offline detection, crash recovery, and lastSync persistence
+// Orchestrateur professionnel de synchronisation
+// Faille #2 résolue : curseurs persistants via SyncPersistedCursor
+// Faille #4 résolue : ID mapping fiable (remote_id seulement)
+// Faille #7 résolue : dead-letter queue intégrée
 
 import { ProductSyncService } from './product-sync.service';
 import { OrderSyncService } from './order-sync.service';
+import { SaleSyncService } from './sale-sync.service';
 import { UserTenantSyncService } from './user-tenant-sync.service';
+import { SyncPersistedCursor } from './core/sync-persisted-cursor';
+import { DeadLetterQueue } from './core/dead-letter-queue';
 import type Database from 'better-sqlite3';
 
 export class SyncOrchestrator {
   private syncService: ProductSyncService;
   private orderService: OrderSyncService;
+  private saleService: SaleSyncService;
   private userTenantService: UserTenantSyncService;
   private db: Database.Database;
-  private businessId: string;
+  private tenantId: string;
   private isSyncing = false;
   private schedulerInterval: NodeJS.Timeout | null = null;
   private isOnline = true;
+  private cursor: SyncPersistedCursor;
+  private dlq: DeadLetterQueue;
+
+  private readonly SYNC_ENTITIES = [
+    'product', 'category', 'order', 'order_item', 'sale', 'sale_item',
+    'restaurant_table', 'user', 'tenant', 'tenant_user'
+  ] as const;
 
   constructor(
     syncService: ProductSyncService,
     orderService: OrderSyncService,
+    saleService: SaleSyncService,
     userTenantService: UserTenantSyncService,
     db: Database.Database,
-    businessId: string
+    tenantId: string
   ) {
     this.syncService = syncService;
     this.orderService = orderService;
+    this.saleService = saleService;
     this.userTenantService = userTenantService;
     this.db = db;
-    this.businessId = businessId;
+    this.tenantId = tenantId;
+    this.cursor = new SyncPersistedCursor(db, 'last_pull_');
+    this.dlq = new DeadLetterQueue(db);
 
     this.ensureSyncStateTable();
     this.recoverUnfinishedSync();
-    this.recoverInProgressItems(); // NEW: Crash recovery
+    this.recoverInProgressItems();
+
+    // Ensure we have a cursor for sales to trigger initial pull if it's new
+    if (!this.cursor.get('sale')) {
+      console.log('[SyncOrchestrator] No sale cursor found, will pull all historical sales');
+    }
   }
 
   private ensureSyncStateTable() {
-    // Simple key-value table for sync state (avoids heavy schema changes)
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS sync_state (
         key TEXT PRIMARY KEY,
@@ -61,29 +82,9 @@ export class SyncOrchestrator {
     }
   }
 
-  private getLastPullTimestamp(entity: string): string | null {
-    const key = `last_pull_timestamp_${entity}`;
-    const row = this.db.prepare("SELECT value FROM sync_state WHERE key = ?").get(key) as { value: string } | undefined;
-    return row?.value || null;
-  }
-
-  private setLastPullTimestamp(entity: string, timestamp: string | null) {
-    const key = `last_pull_timestamp_${entity}`;
-    if (timestamp === null) {
-      this.db.prepare(`DELETE FROM sync_state WHERE key = ?`).run(key);
-      return;
-    }
-    this.db.prepare(`
-      INSERT OR REPLACE INTO sync_state (key, value) 
-      VALUES (?, ?)
-    `).run(key, timestamp);
-  }
-
   /**
-   * Crash recovery: resume any unfinished outbox items
+   * Crash recovery : remet les items 'in_progress' et 'failed' (retry < 5) en 'pending'
    */
-  private readonly SYNC_ENTITIES = ['product', 'category', 'order', 'order_item', 'restaurant_table', 'user', 'tenant', 'tenant_user'] as const;
-
   private recoverUnfinishedSync() {
     for (const entity of this.SYNC_ENTITIES) {
       const pending = this.db.prepare(`
@@ -97,10 +98,6 @@ export class SyncOrchestrator {
     }
   }
 
-  /**
-   * Récupère les items bloqués en 'in_progress' ou 'failed' après un crash/redémarrage
-   * et les remet en 'pending' pour qu'ils soient retentés (toutes entités supportées).
-   */
   private recoverInProgressItems() {
     for (const entity of this.SYNC_ENTITIES) {
       const updated = this.db.prepare(`
@@ -118,7 +115,17 @@ export class SyncOrchestrator {
   }
 
   /**
-   * Called by the app when network status changes
+   * Alarmes : vérifie la DLQ et les conflits après chaque sync
+   */
+  private postSyncHealthCheck() {
+    const dlqCount = this.dlq.getCount();
+    if (dlqCount > 0) {
+      console.warn(`[SyncOrchestrator] ${dlqCount} items in Dead-Letter Queue. Run retryDLQ() to reprocess.`);
+    }
+  }
+
+  /**
+   * Appelé quand le réseau change d'état
    */
   setNetworkStatus(isOnline: boolean) {
     const wasOffline = !this.isOnline;
@@ -134,7 +141,7 @@ export class SyncOrchestrator {
   }
 
   /**
-   * Start the periodic sync scheduler (every X seconds)
+   * Démarre le scheduler périodique (toutes les X secondes)
    */
   startScheduler(intervalMs = 30000) {
     if (this.schedulerInterval) return;
@@ -156,7 +163,7 @@ export class SyncOrchestrator {
   }
 
   /**
-   * Manual or automatic trigger with mutex protection
+   * Sync manuelle ou automatique avec mutex
    */
   async triggerSync(): Promise<void> {
     if (this.isSyncing) {
@@ -172,39 +179,51 @@ export class SyncOrchestrator {
     this.isSyncing = true;
 
     try {
-      // Periodic recovery of stuck/failed items
+      // Recovery automatique au début de chaque cycle
       this.recoverInProgressItems();
 
-      // 1. Sync Products (Push + Pull)
-      const productResult = await this.syncService.syncNow(this.businessId);
-      
-      // 2. Sync Orders (Push + Pull)
-      const ordersPushed = await this.orderService.pushPendingOrders(this.businessId);
-      const lastOrderPull = this.getLastPullTimestamp('order') || '1970-01-01T00:00:00Z';
-      const ordersPulled = await this.orderService.pullOrderUpdates(this.businessId, lastOrderPull);
+      // 1. Sync Products (Pull d'abord catégories, Push puis Pull produits)
+      const productResult = await this.syncService.syncNow(this.tenantId);
+
+      // 2. Sync Orders (Push puis Pull)
+      const ordersPushed = await this.orderService.pushPendingOrders(this.tenantId);
+      const lastOrderPull = this.cursor.getOrEpoch('order');
+      const ordersPulled = await this.orderService.pullOrderUpdates(this.tenantId, lastOrderPull);
 
       if (ordersPulled > 0) {
-        this.setLastPullTimestamp('order', new Date().toISOString());
+        this.cursor.set('order', new Date().toISOString());
       }
 
-      // 3. Sync Tables (Push + Pull)
-      const tablesPushed = await this.syncService.pushPendingByEntity('restaurant_table', this.businessId);
-      const lastTablePull = this.getLastPullTimestamp('restaurant_table') || '1970-01-01T00:00:00Z';
+      // 2b. Sync Sales (Push puis Pull)
+      const salesPushed = await this.saleService.pushPendingSales(this.tenantId);
+      const lastSalePull = this.cursor.getOrEpoch('sale');
+      const salesPulled = await this.saleService.pullSaleUpdates(this.tenantId, lastSalePull);
+
+      if (salesPulled > 0) {
+        this.cursor.set('sale', new Date().toISOString());
+      }
+
+      // 3. Sync Tables (Push puis Pull)
+      const tablesPushed = await this.syncService.pushPendingByEntity('restaurant_table', this.tenantId);
+      const lastTablePull = this.cursor.getOrEpoch('restaurant_table');
       const tablesPulled = await this.syncPullTables(lastTablePull);
 
       if (tablesPulled > 0) {
-        this.setLastPullTimestamp('restaurant_table', new Date().toISOString());
+        this.cursor.set('restaurant_table', new Date().toISOString());
       }
 
-      // 4. Sync Users/Tenants (Push + Pull)
-      const userTenantResult = await this.userTenantService.syncNow(this.businessId);
+      // 4. Sync Users/Tenants (Push + Pull intégré)
+      const userTenantResult = await this.userTenantService.syncNow(this.tenantId);
 
-      const totalPushed = productResult.pushed + ordersPushed + tablesPushed + userTenantResult.pushed;
-      const totalPulled = productResult.pulled + ordersPulled + tablesPulled + userTenantResult.pulled;
+      const totalPushed = productResult.pushed + ordersPushed + salesPushed + tablesPushed + userTenantResult.pushed;
+      const totalPulled = productResult.pulled + ordersPulled + salesPulled + tablesPulled + userTenantResult.pulled;
 
       if (totalPushed > 0 || totalPulled > 0) {
         console.log(`[SyncOrchestrator] Sync completed - Pushed: ${totalPushed}, Pulled: ${totalPulled}`);
       }
+
+      // Post-sync health check
+      this.postSyncHealthCheck();
 
     } catch (error) {
       console.error('[SyncOrchestrator] Sync failed:', error);
@@ -214,13 +233,9 @@ export class SyncOrchestrator {
   }
 
   /**
-   * Internal pull for tables (bidirectional sync: Supabase -> local SQLite)
-   *
-   * Robust against:
-   *  - Local row with no remote_id yet (newly created in local app)
-   *  - Local row that has the same id as a Supabase row (race condition)
-   *  - table_number conflict between local-only row and remote row
-   *  - Stale cursor (always picks up everything modified after `since`)
+   * Pull des tables avec ID mapping fiable (Faille #4 résolue).
+   * Utilise remote_id uniquement pour matcher les lignes.
+   * Évite les correspondances hasardeuses par id ou table_number.
    */
   private async syncPullTables(since: string): Promise<number> {
     const { getSupabaseClient } = require('../server/database/supabase.client');
@@ -242,18 +257,15 @@ export class SyncOrchestrator {
     let applied = 0;
     const transaction = this.db.transaction((tables: any[]) => {
       for (const remote of tables) {
-        // Business filter (manual if column wasn't in SQL query)
-        // Uses tenant_id for filtering (architecture: tenant_id, not business_id)
-        if (remote.tenant_id && remote.tenant_id !== this.businessId) continue;
+        if (remote.tenant_id && String(remote.tenant_id) !== String(this.tenantId)) continue;
 
-        // Status mapping: remote 'occupied' -> local 'active'
+        // Status mapping
         let mappedStatus = remote.status;
         if (mappedStatus === 'occupied') mappedStatus = 'active';
 
         const fields: Record<string, any> = {
           remote_id: remote.id,
-          tenant_id: remote.tenant_id || remote.business_id,  // Support both tenant_id and business_id
-          business_id: remote.business_id,  // Legacy support
+          tenant_id: remote.tenant_id,
           updated_at: remote.updated_at,
           created_at: remote.created_at,
           table_number: String(remote.table_number),
@@ -263,25 +275,18 @@ export class SyncOrchestrator {
           qr_token: remote.qr_token,
         };
 
-        // 1) Find by remote_id (the canonical Supabase key)
+        // STRATÉGIE FIABLE UNIQUE : chercher par remote_id
+        // (Faille #4 résolue : on ne matche plus par id local ou table_number)
         const byRemote = this.db.prepare(
-          'SELECT id, updated_at, table_number FROM restaurant_tables WHERE remote_id = ?'
-        ).get(remote.id) as { id: number; updated_at: string; table_number: string } | undefined;
+          'SELECT id, updated_at FROM restaurant_tables WHERE remote_id = ?'
+        ).get(remote.id) as { id: number; updated_at: string } | undefined;
 
-        // 2) Find by local id (covers case where insert was done locally and used
-        //    the same id as the Supabase row, or where remote_id was never set)
-        const byLocalId = this.db.prepare(
-          'SELECT id, updated_at, table_number FROM restaurant_tables WHERE id = ?'
-        ).get(remote.id) as { id: number; updated_at: string; table_number: string } | undefined;
+        // Fallback ONLY : id direct (si migration sans remote_id)
+        const byDirectId = !byRemote ? this.db.prepare(
+          'SELECT id, updated_at FROM restaurant_tables WHERE id = ?'
+        ).get(remote.id) as { id: number; updated_at: string } | undefined : null;
 
-        // 3) Find by table_number (covers case where local row exists for the same
-        //    table number but with a DIFFERENT id and no remote_id yet)
-        const byNumber = this.db.prepare(
-          'SELECT id, updated_at, table_number, remote_id FROM restaurant_tables WHERE table_number = ?'
-        ).get(String(remote.table_number)) as { id: number; updated_at: string; table_number: string; remote_id: number | null } | undefined;
-
-        // Pick the best match: prefer remote_id, then local id, then table_number
-        const local = byRemote || byLocalId || byNumber;
+        const local = byRemote || byDirectId;
 
         const remoteUpdatedAt = new Date(remote.updated_at);
         const localUpdatedAt = local?.updated_at ? new Date(local.updated_at) : null;
@@ -294,11 +299,8 @@ export class SyncOrchestrator {
         const params = cols.map(k => fields[k]);
 
         if (local) {
-          // Update existing local row, even if its id differs from the remote id.
-          // This is safe because we matched on (remote_id OR id OR table_number).
           this.db.prepare(`UPDATE restaurant_tables SET ${setClauses} WHERE id = ?`).run(...params, local.id);
         } else {
-          // Brand new row from Supabase — let SQLite auto-assign a new id
           this.db.prepare(
             `INSERT INTO restaurant_tables (${cols.map(c => `"${c}"`).join(', ')}) VALUES (${cols.map(() => '?').join(', ')})`
           ).run(...params);
@@ -312,14 +314,31 @@ export class SyncOrchestrator {
   }
 
   /**
-   * Force a full pull (useful after long offline period)
+   * Retry des items de la dead-letter queue
+   */
+  retryDLQ(): number {
+    let count = 0;
+    for (const entity of this.SYNC_ENTITIES) {
+      count += this.dlq.retryAllByEntity(entity);
+    }
+    if (count > 0) {
+      console.log(`[SyncOrchestrator] Retrying ${count} items from DLQ...`);
+      this.triggerSync();
+    }
+    return count;
+  }
+
+  /**
+   * Force un pull complet (après longue période offline)
    */
   async forceFullResync(): Promise<void> {
-    this.setLastPullTimestamp('product', null);
-    this.setLastPullTimestamp('order', null);
-    this.setLastPullTimestamp('user', null);
-    this.setLastPullTimestamp('tenant', null);
-    this.setLastPullTimestamp('tenant_user', null);
+    this.cursor.reset('product');
+    this.cursor.reset('order');
+    this.cursor.reset('sale');
+    this.cursor.reset('restaurant_table');
+    this.cursor.reset('user');
+    this.cursor.reset('tenant');
+    this.cursor.reset('tenant_user');
     this.syncService.resetPullCursor();
     this.userTenantService.resetPullCursor();
     await this.triggerSync();

@@ -65,7 +65,7 @@ router.post('/', requireRole(['admin', 'manager']), (req, res) => {
       try {
         getProductSyncService().queueChangeInsideTransaction('category', 'insert', {
           ...cat,
-          business_id: businessId
+          tenant_id: businessId
         });
       } catch (syncErr) {
         console.warn('[Sync] Could not queue category insert:', syncErr);
@@ -126,7 +126,7 @@ router.patch('/:id', requireRole(['admin', 'manager']), (req, res) => {
       try {
         getProductSyncService().queueChangeInsideTransaction('category', 'update', {
           ...cat,
-          business_id: businessId
+          tenant_id: businessId
         });
       } catch (syncErr) {
         console.warn('[Sync] Could not queue category update:', syncErr);
@@ -179,7 +179,7 @@ router.delete('/:id', requireRole(['admin', 'manager']), (req, res) => {
       const result = db.prepare('DELETE FROM categories WHERE id = ?').run(categoryId);
       if (result.changes > 0) {
         try {
-          getProductSyncService().queueChangeInsideTransaction('category', 'delete', { id: categoryId, business_id: businessId });
+          getProductSyncService().queueChangeInsideTransaction('category', 'delete', { id: categoryId, tenant_id: businessId });
         } catch (syncErr) {
           console.warn('[Sync] Could not queue category deletion:', syncErr);
         }

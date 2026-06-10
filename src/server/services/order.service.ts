@@ -219,11 +219,12 @@ export class OrderService {
     let query = `
       SELECT
         o.*,
-        t.table_number,
+        COALESCE(t.table_number, t2.table_number) as table_number,
         u.full_name as waiter_name,
         u.role as waiter_role
       FROM orders o
       LEFT JOIN restaurant_tables t ON o.table_id = t.id
+      LEFT JOIN restaurant_tables t2 ON o.table_id = t2.remote_id AND t2.id != t.id
       LEFT JOIN users u ON o.waiter_id = u.id
       WHERE 1=1
     `;
@@ -249,6 +250,22 @@ export class OrderService {
 
     try {
       const orders = db.prepare(query).all(...queryParams) as any[];
+
+      // For orders synced from Supabase, table_id might reference a remote ID
+      // that doesn't match local restaurant_tables.id. Fix by re-resolving.
+      for (const order of orders) {
+        if (order.table_id && !order.table_number) {
+          // table_id didn't match local id, try remote_id
+          const matchByRemote = db.prepare(
+            `SELECT id, table_number FROM restaurant_tables WHERE remote_id = ?`
+          ).get(order.table_id) as any;
+          if (matchByRemote) {
+            order.table_id = matchByRemote.id;
+            order.table_number = matchByRemote.table_number;
+          }
+        }
+      }
+
       return orders.map(order => ({
         ...order,
         items: this.getItemsForOrder(order.id, order.items, !!order.remote_id)
@@ -329,10 +346,11 @@ export class OrderService {
       const order = db.prepare(`
         SELECT
           o.*,
-          t.table_number,
+          COALESCE(t.table_number, t2.table_number) as table_number,
           u.full_name as waiter_name
         FROM orders o
         LEFT JOIN restaurant_tables t ON o.table_id = t.id
+        LEFT JOIN restaurant_tables t2 ON o.table_id = t2.remote_id AND t2.id != t.id
         LEFT JOIN users u ON o.waiter_id = u.id
         WHERE o.id = ?
       `).get(id) as any;
@@ -354,7 +372,7 @@ export class OrderService {
    * Create new order with item merging logic
    */
   static async create(orderData: Omit<OrderData, 'id' | 'created_at' | 'updated_at'>): Promise<OrderData> {
-    const businessId = process.env.SYNC_BUSINESS_ID || 'default-business';
+      const tenantId = process.env.TENANT_ID || '5';
 
     // Cloud mode guard: db might be null (SQLite disabled on Render)
     if (!db) {
@@ -402,7 +420,7 @@ export class OrderService {
       }
     }
 
-    return withOutboxTransaction(db, businessId, () => {
+    return withOutboxTransaction(db, tenantId, () => {
       try {
         const { table_id, waiter_id, items, status } = orderData;
 
@@ -462,21 +480,23 @@ export class OrderService {
             `).get(existingOrder.id) as any;
 
             const finalOrder = { ...updatedOrder, items: mergedItems };
-            getOrderSyncService().queueOrderChange('update', finalOrder, businessId);
+            getOrderSyncService().queueOrderChange('update', finalOrder, tenantId);
+            getOrderSyncService().pushPendingOrders(tenantId).catch(e => console.warn('[OrderService] Sync push failed:', e));
 
             return finalOrder;
           }
         }
 
         const result = db.prepare(`
-          INSERT INTO orders (table_id, waiter_id, items, status, total, created_at, updated_at, version)
-          VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 1)
+          INSERT INTO orders (table_id, waiter_id, items, status, total, tenant_id, created_at, updated_at, version)
+          VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 1)
         `).run(
           table_id,
           waiter_id,
           JSON.stringify(normalizedItems),
           status || 'pending',
-          total
+          total,
+          Number(tenantId)
         );
 
         const orderId = Number(result.lastInsertRowid);
@@ -495,7 +515,8 @@ export class OrderService {
           items: this.getItemsForOrder(orderId, JSON.stringify(normalizedItems))
         };
         
-        getOrderSyncService().queueOrderChange('insert', finalOrder, businessId);
+        getOrderSyncService().queueOrderChange('insert', finalOrder, tenantId);
+        getOrderSyncService().pushPendingOrders(tenantId).catch(e => console.warn('[OrderService] Sync push failed:', e));
 
         return finalOrder;
       } catch (error) {
@@ -508,7 +529,7 @@ export class OrderService {
    * Update order items
    */
   static async updateItems(id: number, items: OrderItem[]): Promise<OrderData> {
-    const businessId = process.env.SYNC_BUSINESS_ID || 'default-business';
+      const tenantId = process.env.TENANT_ID || '5';
 
     // Cloud mode guard: db might be null (SQLite disabled on Render)
     if (!db) {
@@ -551,7 +572,7 @@ export class OrderService {
       }
     }
 
-    return withOutboxTransaction(db, businessId, () => {
+    return withOutboxTransaction(db, tenantId, () => {
       try {
         const existingOrder = db.prepare('SELECT id FROM orders WHERE id = ?').get(id);
         if (!existingOrder) {
@@ -592,7 +613,7 @@ export class OrderService {
           items: normalizedItems
         };
 
-        getOrderSyncService().queueOrderChange('update', result, businessId);
+        getOrderSyncService().queueOrderChange('update', result, tenantId);
 
         return result;
       } catch (error) {
@@ -605,7 +626,7 @@ export class OrderService {
    * Update order status
    */
   static async updateStatus(id: number, status: OrderData['status']): Promise<OrderData> {
-    const businessId = process.env.SYNC_BUSINESS_ID || 'default-business';
+      const tenantId = process.env.TENANT_ID || '5';
 
     // Cloud mode guard: db might be null (SQLite disabled on Render)
     if (!db) {
@@ -660,7 +681,7 @@ export class OrderService {
       }
     }
 
-    return withOutboxTransaction(db, businessId, () => {
+    return withOutboxTransaction(db, tenantId, () => {
       try {
         const wasPaid = (db.prepare('SELECT status FROM orders WHERE id = ?').get(id) as any)?.status === 'paid';
         
@@ -702,7 +723,8 @@ export class OrderService {
 
         // Queue for sync - CRITICAL for real-time status consistency
         console.log(`[OrderService] Queuing sync for order ${id} with status ${status}`);
-        getOrderSyncService().queueOrderChange('update', result, businessId);
+        getOrderSyncService().queueOrderChange('update', result, tenantId);
+        getOrderSyncService().pushPendingOrders(tenantId).catch(e => console.warn('[OrderService] Sync push failed:', e));
 
         if (!wasPaid && status === 'paid') {
           const saleExists = db.prepare('SELECT 1 FROM sales WHERE order_id = ? LIMIT 1').get(id);
@@ -778,7 +800,7 @@ export class OrderService {
    * Hard delete order + its items (used for rejecting pending QR orders)
    */
   static async deleteOrder(id: number): Promise<void> {
-    const businessId = process.env.SYNC_BUSINESS_ID || 'default-business';
+      const tenantId = process.env.TENANT_ID || '5';
 
     // Cloud mode guard: db might be null (SQLite disabled on Render)
     if (!db) {
@@ -801,7 +823,7 @@ export class OrderService {
       }
     }
 
-    return withOutboxTransaction(db, businessId, () => {
+    return withOutboxTransaction(db, tenantId, () => {
       try {
         // delete items first (FK safety)
         db.prepare('DELETE FROM order_items WHERE order_id = ?').run(id);
@@ -810,7 +832,7 @@ export class OrderService {
           throw new Error('Order not found');
         }
 
-        getOrderSyncService().queueOrderChange('delete', { id } as any, businessId);
+        getOrderSyncService().queueOrderChange('delete', { id } as any, tenantId);
       } catch (error) {
         throw error;
       }

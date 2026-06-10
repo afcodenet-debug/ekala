@@ -133,9 +133,10 @@ async function syncTableIncremental(tableName: string, since: string | null): Pr
     }
 
     const client = getSupabaseClient();
+    const supabaseTable = tableName === 'users' ? 'user' : tableName;
 
     const { error } = await client
-      .from(tableName)
+      .from(supabaseTable)
       .upsert(rows, { onConflict: 'id' });
 
     if (error) {

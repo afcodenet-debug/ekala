@@ -3,9 +3,9 @@
 // This file is meant to be imported from src/main/main.js
 
 import { app } from 'electron';
-import { initializeProductSync, getOrderSyncService } from './index';
+import { initializeProductSync, getOrderSyncService, getSaleSyncService, initializeUserTenantSync } from './index';
 import { SyncOrchestrator } from './sync-orchestrator';
-import type Database from 'better-sqlite3';
+import Database from 'better-sqlite3';
 import path from 'path';
 
 let orchestrator: SyncOrchestrator | null = null;
@@ -13,7 +13,7 @@ let orchestrator: SyncOrchestrator | null = null;
 interface SyncSetupOptions {
   supabaseUrl: string;
   supabaseAnonKey: string;
-  businessId?: string;
+  tenantId?: string;
   syncIntervalMs?: number;
 }
 
@@ -21,7 +21,7 @@ export function initializeProductionSync(options: SyncSetupOptions) {
   const {
     supabaseUrl,
     supabaseAnonKey,
-    businessId = 'default-business',
+    tenantId = 'default-tenant',
     syncIntervalMs = 30000,
   } = options;
 
@@ -51,9 +51,13 @@ export function initializeProductionSync(options: SyncSetupOptions) {
   // 1. Initialize the core sync service (with the correct db)
   const syncService = initializeProductSync(db, supabaseUrl, supabaseAnonKey);
   const orderService = getOrderSyncService();
+  const saleService = getSaleSyncService();
+
+  // 1b. Initialize the user/tenant sync service (used for bidirectional user/tenant sync)
+  const userTenantService = initializeUserTenantSync(db, supabaseUrl, supabaseAnonKey);
 
   // 2. Create the production orchestrator
-  orchestrator = new SyncOrchestrator(syncService, orderService, db, businessId);
+  orchestrator = new SyncOrchestrator(syncService, orderService, saleService, userTenantService, db, tenantId);
 
   // 3. Start the scheduler
   orchestrator.startScheduler(syncIntervalMs);

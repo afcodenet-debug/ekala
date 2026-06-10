@@ -65,6 +65,7 @@ const Orders = () => {
               <th className="px-8 py-5 text-left font-medium">{t('orders.table')}</th>
               <th className="px-8 py-5 text-left font-medium">{t('common.status')}</th>
               <th className="px-8 py-5 text-right font-medium">{t('common.total')}</th>
+              <th className="px-8 py-5 text-left font-medium">Waiter</th>
               <th className="px-8 py-5 text-left font-medium">{t('common.time')}</th>
               <th className="px-8 py-5 text-right font-medium">{t('common.actions')}</th>
             </tr>
@@ -77,7 +78,14 @@ const Orders = () => {
                     <div className="font-mono text-sm text-white">#{order.id}</div>
                   </td>
                   <td className="px-8 py-5">
-                    <div className="font-medium text-white">{t('orders.table')} {order.table_id}</div>
+                    <div className="font-medium text-white">
+                      {order.table_number 
+                        ? `${t('orders.table')} ${order.table_number}` 
+                        : order.table_id 
+                          ? `${t('orders.table')} #${order.table_id}`
+                          : 'Counter'
+                      }
+                    </div>
                   </td>
                   <td className="px-8 py-5">
                     <span className={`inline-flex items-center px-3.5 py-1 rounded-full text-xs font-medium border ${getStatusStyle(order.status)}`}>
@@ -86,6 +94,9 @@ const Orders = () => {
                   </td>
                   <td className="px-8 py-5 text-right">
                     <div className="font-semibold text-white">{formatPrice(order.total, currency, lang)}</div>
+                  </td>
+                  <td className="px-8 py-5 text-sm text-olive-400">
+                    {order.waiter_name ?? (order.waiter_id ? `Waiter #${order.waiter_id}` : '-')}
                   </td>
                   <td className="px-8 py-5 text-sm text-olive-400">
                     {new Date(order.created_at).toLocaleTimeString(timeLocale, {
@@ -107,7 +118,7 @@ const Orders = () => {
               ))
             ) : (
               <tr>
-                <td colSpan={6} className="px-8 py-20 text-center">
+                <td colSpan={7} className="px-8 py-20 text-center">
                   <div className="text-olive-500">
                     <Clock className="mx-auto mb-4" size={40} />
                     <p className="text-sm">{t('orders.noOrders')}</p>

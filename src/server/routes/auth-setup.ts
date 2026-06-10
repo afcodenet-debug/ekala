@@ -110,7 +110,7 @@ router.post('/auth/setup', authRateLimit, async (req: Request, res: Response) =>
     // Créer l'utilisateur admin
     const passwordHash = hashPassword(password);
     const pinHash = hashPin(pin_code);
-    const { data: user, error: uErr } = await supabase.from('users').insert([{
+    const { data: user, error: uErr } = await supabase.from('user').insert([{
       full_name: full_name || email.split('@')[0],
       email: email.toLowerCase(),
       username: email.split('@')[0],
@@ -177,7 +177,7 @@ router.post('/auth/login/email', async (req, res) => {
     }
 
     const { data: users, error: uErr } = await supabase
-      .from('users')
+      .from('user')
       .select('*, tenants!inner(name, slug)')
       .eq('email', email.toLowerCase())
       .eq('is_active', true);
@@ -230,7 +230,7 @@ router.post('/auth/login/pin', async (req, res) => {
 
     if (identity) {
       const { data, error } = await supabase
-        .from('users')
+        .from('user')
         .select('*, tenants!inner(name, slug)')
         .eq('is_active', true)
         .or(`username.eq.${identity},phone.eq.${identity}`);

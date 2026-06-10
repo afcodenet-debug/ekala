@@ -42,7 +42,7 @@ interface POSStore {
 
   // Table Actions
   selectTable: (tableId: number | null) => void;
-  loadOrderForTable: (tableId: number, orderId?: number) => Promise<void>;
+  loadOrderForTable: (tableId: number | null, orderId?: number) => Promise<void>;
 
   // Order Actions
   saveOrder: () => Promise<boolean>;
@@ -146,7 +146,8 @@ export const usePOSStore = create<POSStore>((set, get) => ({
         // getById always returns normalized items (including remote QR snapshot + local prices)
         try {
           existingOrder = await api.orders.getById(orderId);
-          if (existingOrder && existingOrder.table_id !== tableId) {
+          // Only validate table_id if tableId is provided
+          if (existingOrder && tableId && existingOrder.table_id !== tableId) {
             existingOrder = null; // safety
           }
         } catch (e) {
@@ -154,7 +155,7 @@ export const usePOSStore = create<POSStore>((set, get) => ({
         }
       }
 
-      if (!existingOrder) {
+      if (!existingOrder && tableId) {
         // Fallback: find the current active order on the table via the normal list
         const response = (await api.orders.getAll({ table_id: tableId })) as any;
         const activeOrders = Array.isArray(response)

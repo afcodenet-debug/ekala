@@ -382,18 +382,19 @@ CREATE TABLE IF NOT EXISTS "sync_state" (
 );
 CREATE TABLE IF NOT EXISTS "users" (
 	"id"	INTEGER,
-	"full_name"	TEXT NOT NULL,
-	"username"	TEXT,
-	"phone"	TEXT UNIQUE,
+	"username"	TEXT NOT NULL UNIQUE,
+	"full_name"	TEXT,
+	"phone"	TEXT,
 	"pin_code"	TEXT NOT NULL,
-	"role"	TEXT NOT NULL DEFAULT 'waiter' CHECK("role" IN ('admin', 'manager', 'cashier', 'waiter')),
+	"role"	TEXT NOT NULL DEFAULT 'waiter' CHECK("role" IN ('admin', 'cashier', 'waiter', 'manager', 'owner')),
 	"email"	TEXT,
 	"is_active"	INTEGER DEFAULT 1,
 	"created_at"	DATETIME DEFAULT CURRENT_TIMESTAMP,
 	"updated_at"	DATETIME DEFAULT CURRENT_TIMESTAMP,
-	"tenant_id"	INT,
+	"tenant_id"	INTEGER,
 	"password_hash"	TEXT,
-	"has_setup_pin"	BOOLEAN DEFAULT false,
+	"has_setup_pin"	INTEGER DEFAULT 0,
+	"remote_id"	INTEGER,
 	PRIMARY KEY("id" AUTOINCREMENT)
 );
 CREATE INDEX IF NOT EXISTS "idx_audit_changed_at" ON "audit_trail" (

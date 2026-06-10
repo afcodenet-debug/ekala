@@ -35,12 +35,19 @@ router.get('/', async (_req, res) => {
   }
 
   try {
-    const expenses = db.prepare(`
-      SELECT e.*, u.full_name as user_name
-      FROM expenses e
-      JOIN users u ON e.user_id = u.id
-      ORDER BY e.created_at DESC
-    `).all();
+    // Use LEFT JOIN because user_id may not exist in older SQLite schemas
+    let expenses: any[];
+    try {
+      expenses = db.prepare(`
+        SELECT e.*, u.full_name as user_name
+        FROM expenses e
+        LEFT JOIN users u ON e.user_id = u.id
+        ORDER BY e.created_at DESC
+      `).all();
+    } catch {
+      // Fallback: user_id column may not exist yet
+      expenses = db.prepare(`SELECT * FROM expenses ORDER BY created_at DESC`).all();
+    }
     res.json(expenses);
   } catch (error) {
     console.error('[Expenses] GET error:', error);

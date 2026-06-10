@@ -234,11 +234,24 @@ router.post('/checkout', requirePermission('PROCESS_PAYMENTS'), async (_req, res
       // Short invoice number
       invoiceNumber = `INV-${String(Date.now()).slice(-5)}${Math.floor(Math.random() * 10)}`;
 
-      const saleStmt = db.prepare(`
-        INSERT INTO sales (invoice_number, order_id, user_id, subtotal, discount, tax, total_amount, payment_method)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-      `);
-      const saleResult = saleStmt.run(
+      // DYNAMIC SCHEMA FIX: Check if legacy 'total' column exists and is NOT NULL
+      const tableInfo = db.prepare("PRAGMA table_info(sales)").all() as any[];
+      const hasLegacyTotal = tableInfo.some(c => c.name === 'total');
+      
+      let saleStmt;
+      if (hasLegacyTotal) {
+        saleStmt = db.prepare(`
+          INSERT INTO sales (invoice_number, order_id, user_id, subtotal, discount, tax, total_amount, total, payment_method)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `);
+      } else {
+        saleStmt = db.prepare(`
+          INSERT INTO sales (invoice_number, order_id, user_id, subtotal, discount, tax, total_amount, payment_method)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        `);
+      }
+
+      const saleParams = [
         invoiceNumber,
         order_id,
         user_id,
@@ -246,9 +259,62 @@ router.post('/checkout', requirePermission('PROCESS_PAYMENTS'), async (_req, res
         saleDiscount,
         saleTax,
         saleTotal,
-        payment_method
-      );
+      ];
+
+      if (hasLegacyTotal) {
+        saleParams.push(saleTotal); // Provide value for legacy 'total' column
+      }
+      saleParams.push(payment_method);
+
+      const saleResult = saleStmt.run(...saleParams);
       saleId = Number(saleResult.lastInsertRowid);
+
+      // --- SYNC INTEGRATION ---
+      try {
+        const { getProductSyncService } = require('../../sync/index');
+        const coreSync = getProductSyncService();
+        const tenantId = order.tenant_id || 5; // Use order's tenant or default
+
+        // Prepare sale record for outbox
+        const saleForSync = {
+          id: saleId,
+          invoice_number: invoiceNumber,
+          order_id,
+          user_id,
+          subtotal: fulfilledSubtotal,
+          discount: saleDiscount,
+          tax: saleTax,
+          total_amount: saleTotal,
+          payment_method,
+          version: 1,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+          tenant_id: tenantId
+        };
+
+        // Prepare sale items for outbox
+        const saleItemsForSync = fulfilledItems.map((item: any) => ({
+          sale_id: saleId,
+          product_id: item.productId,
+          quantity: Number(item.quantity),
+          unit_price: Number(item.price),
+          total_price: Number(item.price) * Number(item.quantity),
+          tenant_id: tenantId
+        }));
+
+        // Use coreSync to queue the changes
+        db.transaction(() => {
+          coreSync.queueChangeInsideTransaction('sale', 'insert', saleForSync);
+          for (const sItem of saleItemsForSync) {
+            coreSync.queueChangeInsideTransaction('sale_item', 'insert', sItem);
+          }
+        })();
+        console.log(`[Sales] Sale ${saleId} and its items queued for sync`);
+      } catch (syncErr) {
+        console.error('[Sales] Failed to queue sale for sync:', syncErr);
+        // Don't fail the checkout if sync queuing fails
+      }
+      // --- END SYNC INTEGRATION ---
 
       const itemStmt = db.prepare(`
         INSERT INTO sale_items (sale_id, product_id, quantity, unit_price, total_price)

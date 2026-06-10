@@ -23,10 +23,8 @@ const GRID_STYLES = `
     background: ${colors.bg};
     display: flex;
     flex-direction: column;
-    overflow: hidden;
     height: 100%;
-    overflow-y: auto;
-    padding-bottom: 200px;
+    overflow: hidden;
   }
   .pg-root::-webkit-scrollbar { width: 3px; }
   .pg-root::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 2px; }
@@ -37,8 +35,6 @@ const GRID_STYLES = `
     background: ${colors.surface};
     border-bottom: 1px solid ${colors.border};
     flex-shrink: 0;
-    position: sticky;
-    top: 0;
     z-index: 10;
   }
   .pg-header-top {
@@ -492,3 +488,6 @@ export const ProductsGrid: React.FC<ProductsGridProps> = ({ onProductClick }) =>
     </div>
   );
 };
+
+
+export default ProductsGrid;

@@ -107,15 +107,24 @@ const POS: React.FC = () => {
   useEffect(() => {
     const tableIdParam = searchParams.get('tableId');
     const orderIdParam = searchParams.get('orderId');
-    if (tableIdParam) {
-      const tableId = Number(tableIdParam);
-      const orderId = orderIdParam ? Number(orderIdParam) : undefined;
-      if (!Number.isNaN(tableId) && tableId > 0) {
-        if (selectedTableId !== tableId) selectTable(tableId);
-        if (orderId && !Number.isNaN(orderId)) loadOrderForTable(tableId, orderId);
-      }
+    
+    const tableId = tableIdParam ? Number(tableIdParam) : null;
+    const orderId = orderIdParam ? Number(orderIdParam) : null;
+
+    // Valider les paramètres
+    const validTableId = tableId && !Number.isNaN(tableId) && tableId > 0;
+    const validOrderId = orderId && !Number.isNaN(orderId) && orderId > 0;
+
+    // 1. Sélectionner la table (toujours en premier)
+    if (validTableId && selectedTableId !== tableId) {
+      selectTable(tableId);
     }
-  }, [searchParams, selectTable, selectedTableId]);
+
+    // 2. Charger la commande si orderId présent (peut avoir tableId ou non)
+    if (validOrderId) {
+      loadOrderForTable(validTableId ? tableId : null, orderId).catch(() => {});
+    }
+  }, [searchParams, selectTable, selectedTableId, loadOrderForTable]);
 
   const handleSaveOrder  = async () => { await saveOrder(); };
 

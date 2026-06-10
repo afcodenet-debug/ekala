@@ -202,22 +202,115 @@ app.listen(PORT, () => {
   if (!env.RENDER_CLOUD_MODE && db) {
     const supabaseUrl = process.env.SUPABASE_URL;
     const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY;
-    const businessId = process.env.SYNC_BUSINESS_ID || 'default-business';
+    const tenantId = Number(process.env.SYNC_TENANT_ID || '5');
 
     if (supabaseUrl && supabaseKey) {
-      try {
-        const syncService = initializeProductSync(db, supabaseUrl, supabaseKey);
-        const orderService = getOrderSyncService();
-        const userTenantService = new UserTenantSyncService(db, supabaseUrl, supabaseKey);
-        const orchestrator = new SyncOrchestrator(syncService, orderService, userTenantService, db, businessId);
-        orchestrator.startScheduler(30000);           // PUSH + PULL every 30s
-        orchestrator.triggerSync().catch(() => {});   // kick off immediately
+      (async () => {
+        try {
+          // Initial pull of users from Supabase to ensure waiter_name is available locally
+          console.log(`[Server] Pulling initial users from Supabase (tenantId=${tenantId})...`);
+          const { getSupabaseClient } = require('./database/supabase.client');
+          const supabase = getSupabaseClient();
+          
+          // Force pull all users regardless of timestamp
+          const { data: remoteUsers, error: pullError } = await supabase
+            .from('users')
+            .select('id, full_name, username, pin_code, role, is_active, email, tenant_id, phone, password_hash, has_setup_pin')
+            .or(`tenant_id.eq.5,tenant_id.eq.${tenantId}`);
+          
+          if (pullError) {
+            console.warn('[Server] Initial user pull warning:', pullError.message);
+          } else if (remoteUsers && remoteUsers.length > 0) {
+            console.log(`[Server] Found ${remoteUsers.length} users in Supabase, syncing to local SQLite...`);
+            
+            for (const remoteUser of remoteUsers) {
+              // Check if user exists locally by remote_id
+              let localUser = db.prepare('SELECT id, remote_id FROM users WHERE remote_id = ?').get(remoteUser.id);
+              
+              if (localUser) {
+                // Update existing user
+                db.prepare(`
+                  UPDATE users 
+                  SET full_name = ?, username = ?, pin_code = ?, role = ?, is_active = ?, email = ?, tenant_id = ?, phone = ?, password_hash = ?, has_setup_pin = ?
+                  WHERE remote_id = ?
+                `).run(
+                  remoteUser.full_name,
+                  remoteUser.username,
+                  remoteUser.pin_code,
+                  remoteUser.role,
+                  remoteUser.is_active ? 1 : 0,
+                  remoteUser.email,
+                  remoteUser.tenant_id || 5,
+                  remoteUser.phone || null,
+                  remoteUser.password_hash || null,
+                  remoteUser.has_setup_pin ? 1 : 0,
+                  remoteUser.id
+                );
+                console.log(`[Server] Updated local user ${localUser.id} from Supabase user ${remoteUser.id}`);
+              } else {
+                // Try to find by username
+                localUser = db.prepare('SELECT id, remote_id FROM users WHERE username = ?').get(remoteUser.username);
+                
+                if (localUser) {
+                  // Update and set remote_id
+                  db.prepare(`
+                    UPDATE users 
+                    SET full_name = ?, pin_code = ?, role = ?, is_active = ?, email = ?, remote_id = ?, tenant_id = ?, phone = ?, password_hash = ?, has_setup_pin = ?
+                    WHERE username = ?
+                  `).run(
+                    remoteUser.full_name,
+                    remoteUser.pin_code,
+                    remoteUser.role,
+                    remoteUser.is_active ? 1 : 0,
+                    remoteUser.email,
+                    remoteUser.id,
+                    remoteUser.tenant_id || 5,
+                    remoteUser.phone || null,
+                    remoteUser.password_hash || null,
+                    remoteUser.has_setup_pin ? 1 : 0,
+                    remoteUser.username
+                  );
+                  console.log(`[Server] Updated local user ${localUser.id} with remote_id=${remoteUser.id}`);
+                } else {
+                  // Create new user from Supabase data
+                  const result = db.prepare(`
+                    INSERT INTO users (full_name, username, pin_code, role, is_active, email, remote_id, tenant_id, phone, password_hash, has_setup_pin)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                  `).run(
+                    remoteUser.full_name,
+                    remoteUser.username,
+                    remoteUser.pin_code,
+                    remoteUser.role,
+                    remoteUser.is_active ? 1 : 0,
+                    remoteUser.email,
+                    remoteUser.id,
+                    remoteUser.tenant_id || 5,
+                    remoteUser.phone || null,
+                    remoteUser.password_hash || null,
+                    remoteUser.has_setup_pin ? 1 : 0
+                  );
+                  console.log(`[Server] Created local user ${result.lastInsertRowid} from Supabase user ${remoteUser.id}`);
+                }
+              }
+            }
+            console.log('[Server] Initial user sync complete');
+          }
 
-        console.log(`[ProductSync] Bidirectional engine started (businessId=${businessId}, 30s interval)`);
-        console.log('[ProductSync] Stock adjustments and QR checkout sales will now push to Supabase');
-      } catch (err: any) {
-        console.error('[ProductSync] Failed to initialize bidirectional sync:', err?.message || err);
-      }
+          const syncService = initializeProductSync(db, supabaseUrl, supabaseKey);
+          const orderService = getOrderSyncService();
+          const { getSaleSyncService } = require('../sync/index');
+          const saleService = getSaleSyncService();
+          const userTenantService = new UserTenantSyncService(db, supabaseUrl, supabaseKey);
+          const orchestrator = new SyncOrchestrator(syncService, orderService, saleService, userTenantService, db, String(tenantId));
+          orchestrator.startScheduler(30000);           // PUSH + PULL every 30s
+          orchestrator.triggerSync().catch(() => {});   // kick off immediately
+
+          console.log(`[ProductSync] Bidirectional engine started (tenantId=${tenantId}, 30s interval)`);
+          console.log('[ProductSync] Stock adjustments and QR checkout sales will now push to Supabase');
+        } catch (err: any) {
+          console.error('[ProductSync] Failed to initialize bidirectional sync:', err?.message || err);
+        }
+      })();
     } else {
       console.warn('[ProductSync] SUPABASE_URL or key missing — product sync disabled');
     }

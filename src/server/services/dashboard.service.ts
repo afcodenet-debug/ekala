@@ -197,11 +197,11 @@ export class DashboardService {
       // Products for stock alerts (fetch all available to filter in memory)
       supabase.from('products').select('id, name, stock_quantity, minimum_stock').eq('is_available', true),
       // Active staff
-      supabase.from('users').select('id', { count: 'exact', head: true }).eq('is_active', true),
+      supabase.from('user').select('id', { count: 'exact', head: true }).eq('is_active', true),
       // Recent sales for activity
-      supabase.from('sales').select('id, total_amount, payment_method, created_at, user:users(full_name), order:orders(table:restaurant_tables(table_number))').order('created_at', { ascending: false }).limit(5),
+      supabase.from('sales').select('id, total_amount, payment_method, created_at, user:user(full_name), order:orders(table:restaurant_tables(table_number))').order('created_at', { ascending: false }).limit(5),
       // Recent orders for activity
-      supabase.from('orders').select('id, table_id, status, created_at, table:restaurant_tables(table_number), waiter:users(full_name)').not('status', 'in', '("paid","cancelled","rejected")').order('created_at', { ascending: false }).limit(3),
+      supabase.from('orders').select('id, table_id, status, created_at, table:restaurant_tables(table_number), waiter:user(full_name)').not('status', 'in', '("paid","cancelled","rejected")').order('created_at', { ascending: false }).limit(3),
       // Top products today
       supabase.from('sale_items').select('product_id, quantity, total_price, product:products(name), sale:sales!inner(created_at)').gte('sale.created_at', todayISO).lt('sale.created_at', tomorrowISO)
     ]);
