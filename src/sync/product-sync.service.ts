@@ -144,8 +144,9 @@ export class ProductSyncService {
         errors++;
       }
 
-      // Produits : Push only (SQLite is source of truth)
+      // Produits : Bidirectional Sync (Push & Pull)
       try {
+        pulled += await this.pullByEntityFromSupabase('product', tenantId);
         pushed += await this.pushPendingByEntity('product', tenantId);
       } catch (e: any) {
         console.error('[Sync] Product sync failed (continuing):', e?.message || e);
@@ -193,10 +194,10 @@ export class ProductSyncService {
         if (item.operation === 'insert' || item.operation === 'update') {
           await this.handleUpsert(entity, table, item, payload, recordId, tenantId);
         } else if (item.operation === 'delete') {
-          await this.handleDelete(entity, table, item, payload, recordId);
+          const deleteResult = await this.handleDelete(entity, table, item, payload, recordId);
           
           // VÉRIFIER que la suppression a bien été appliquée dans Supabase (pour les produits)
-          if (entity === 'product') {
+          if (entity === 'product' && deleteResult) {
             const remoteId = payload.remote_id || this.getRemoteId(table, recordId);
             if (remoteId) {
               try {
@@ -217,8 +218,8 @@ export class ProductSyncService {
                   throw new Error('Deletion not verified in Supabase');
                 }
               } catch (verifyErr: any) {
-                // Ne pas marquer comme 'done' - laisser dans 'in_progress' ou 'failed' pour retry
-                this.db.prepare(`UPDATE sync_outbox SET status = 'failed', retry_count = ?, last_error = ? WHERE id = ?`)
+                // Ne pas marquer comme 'done' - laisser dans 'pending' pour retry
+                this.db.prepare(`UPDATE sync_outbox SET status = 'pending', retry_count = ?, last_error = ? WHERE id = ?`)
                   .run((item.retry_count || 0) + 1, verifyErr.message, item.id);
                 continue;
               }
@@ -230,7 +231,7 @@ export class ProductSyncService {
           try {
             const checkRow = this.db.prepare(`SELECT deleted_at FROM products WHERE id = ?`).get(recordId) as any;
             if (checkRow && !checkRow.deleted_at) {
-              this.db.prepare(`UPDATE products SET deleted_at = ?, is_available = 0 WHERE id = ?`).run(new Date().toISOString(), recordId);
+              this.db.prepare(`UPDATE products SET deleted_at = ?, is_available = 0, status = 'archived' WHERE id = ?`).run(new Date().toISOString(), recordId);
               console.log(`[Sync] Local soft-delete confirmed for ${entity} #${recordId}`);
             }
           } catch (purgeErr) {
@@ -291,7 +292,7 @@ export class ProductSyncService {
     }
 
     if (entity === 'product') {
-      const cols = ['name', 'stock_quantity', 'is_available', 'category_id', 'barcode', 'description', 'unit', 'image_url', 'minimum_stock', 'sku', 'status', 'cost_method', 'archived_at', 'tenant_id'];
+      const cols = ['name', 'stock_quantity', 'is_available', 'category_id', 'barcode', 'description', 'unit', 'image_url', 'minimum_stock', 'sku', 'status', 'cost_method', 'archived_at', 'tenant_id', 'is_featured', 'sort_order', 'metadata', 'version'];
       cols.forEach(c => {
         if (payload[c] !== undefined) safeUpdate[c] = payload[c];
       });
@@ -541,7 +542,7 @@ export class ProductSyncService {
     item: OutboxItem,
     payload: any,
     recordId: number
-  ) {
+  ): Promise<boolean> {
     const tenantId = payload.tenant_id ? Number(payload.tenant_id) : null;
     
     // Déterminer la requête de base selon le type d'entité
@@ -554,14 +555,32 @@ export class ProductSyncService {
       const localRemoteId = this.getRemoteId(table, recordId);
       targetId = payload.remote_id || localRemoteId || recordId;
       
-      // Si on n'a pas de remote_id, c'est que le produit n'a jamais été synchronisé
+      // Si on n'a pas de remote_id, essayer de trouver par clé naturelle (nom + tenant)
+      if (!payload.remote_id && !localRemoteId && payload.name && tenantId) {
+        try {
+          const { data: existingProduct } = await this.supabase
+            .from(table)
+            .select('id')
+            .eq('name', payload.name)
+            .eq('tenant_id', tenantId)
+            .maybeSingle();
+          if (existingProduct?.id) {
+            targetId = existingProduct.id;
+            console.log(`[Sync] Found remote product by name for #${recordId}: remote_id=${targetId}`);
+          }
+        } catch (err: any) {
+          console.warn(`[Sync] Failed to find remote product by name:`, err.message);
+        }
+      }
+      
+      // Si on n'a toujours pas de remote_id, c'est que le produit n'a jamais été synchronisé
       // Dans ce cas, on ne fait rien dans Supabase (le produit n'y existe pas)
-      if (!payload.remote_id && !localRemoteId) {
+      if (!targetId || targetId === recordId) {
         console.warn(`[Sync] Product #${recordId} has no remote_id - skipping remote delete (never synced to Supabase)`);
         shouldProceed = false;
-      } else if (localRemoteId) {
-        // Utiliser le remote_id local qui est plus fiable
-        targetId = localRemoteId;
+      } else {
+        // Utiliser le targetId trouvé
+        targetId = targetId;
       }
       
       if (shouldProceed) {
@@ -594,12 +613,14 @@ export class ProductSyncService {
           .from(table)
           .update({
             is_available: false,
+            status: 'archived',
             deleted_at: new Date().toISOString(),
             updated_at: new Date().toISOString()
           });
       } else {
         // Retourner sans faire de requête
-        return;
+        console.log(`[Sync] Skipping delete for product #${recordId} (shouldProceed=false)`);
+        return false;
       }
     } else if (entity === 'order') {
       targetId = payload.remote_id || recordId;
@@ -629,6 +650,7 @@ export class ProductSyncService {
 
     const { error } = await queryBuilder;
     if (error) throw error;
+    return true;
   }
 
   /* ------------------------------------------------------------------ */
@@ -925,7 +947,8 @@ export class ProductSyncService {
       return [...common,
         'name', 'stock_quantity', 'selling_price', 'buying_price', 'is_available',
         'category_id', 'barcode', 'description', 'unit', 'image_url',
-        'minimum_stock', 'low_stock_threshold', 'sku', 'status', 'cost_method', 'archived_at', 'price', 'deleted_at'
+        'minimum_stock', 'low_stock_threshold', 'sku', 'status', 'cost_method', 
+        'archived_at', 'price', 'deleted_at', 'is_featured', 'sort_order', 'metadata'
       ];
     }
     if (entity === 'category') {
