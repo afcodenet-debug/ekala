@@ -187,12 +187,37 @@ router.get('/table/:qr_token', async (req, res) => {
       })
       .filter(c => c.items.length > 0);
 
+    // Fetch waiter name if assigned
+    let waiter_name: string | null = null;
+    if (table.assigned_waiter_id) {
+      try {
+        if (env.USE_SUPABASE_TABLES) {
+          const supabase = createClient(env.SUPABASE_URL!, env.SUPABASE_SERVICE_ROLE_KEY!, {
+            auth: { persistSession: false },
+          });
+          const { data: waiter } = await supabase
+            .from('users')
+            .select('full_name')
+            .eq('id', String(table.assigned_waiter_id))
+            .maybeSingle();
+          if (waiter) waiter_name = waiter.full_name;
+        } else if (localDb) {
+          const waiter = localDb.prepare('SELECT full_name FROM users WHERE id = ?').get(table.assigned_waiter_id) as any;
+          if (waiter) waiter_name = waiter.full_name;
+        }
+      } catch (e) {
+        console.warn('[Public Menu] Could not fetch waiter name:', e);
+      }
+    }
+
     res.json({
       table: {
         id: table.id,
         table_number: table.table_number,
         capacity: table.capacity,
         status: table.status,
+        assigned_waiter_id: table.assigned_waiter_id,
+        waiter_name,
       },
       menu,
     });

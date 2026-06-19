@@ -1,7 +1,8 @@
 import { useEffect, useState, useRef } from 'react';
 import { useSearchParams, useLocation } from 'react-router-dom';
 import { APP_NAME } from '../lib/app-config';
-import { useI18n } from '../lib/i18n';  // for future full i18n; we use local override for public QR default EN
+// import { useI18n } from '../lib/i18n';  
+// for future full i18n; we use local override for public QR default EN
 import { 
   UtensilsCrossed, 
   CheckCircle2, 
@@ -414,6 +415,7 @@ const PublicMenuPage = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError]     = useState<string | null>(null);
   const [table, setTable]     = useState<TableInfo | null>(null);
+  const [waiterName, setWaiterName] = useState<string | null>(null);
   const [menu, setMenu]       = useState<MenuCategory[]>([]);
   const [activecat, setActivecat] = useState<number | null>(null);
 
@@ -845,6 +847,10 @@ const PublicMenuPage = () => {
 
       const data = await res.json();
       setTable(data.table);
+      
+      // Get waiter name from the menu response (now included in the API)
+      setWaiterName(data.table?.waiter_name || null);
+      
       const normalized = (data.menu || []).map((cat: any) => ({
         ...cat,
         items: (cat.items || []).map((it: any) => ({ ...it, price: Number(it.price) || 0 })),
@@ -1251,6 +1257,13 @@ const PublicMenuPage = () => {
                 <div style={{ fontFamily: T.mono, fontSize: 12, fontWeight: 500, color: T.gold, letterSpacing: '0.06em' }}>TABLE {table.table_number}</div>
                 <div style={{ fontSize: 9, letterSpacing: '0.16em', textTransform: 'uppercase', color: T.text3, marginTop: 1 }}>Votre table</div>
               </div>
+              
+              {waiterName && (
+                <div style={{ background: 'rgba(200,168,75,0.08)', border: `1px solid ${T.goldBorder}`, borderRadius: 20, padding: '7px 12px', textAlign: 'center', flexShrink: 0 }}>
+                  <div style={{ fontSize: 9, letterSpacing: '0.16em', textTransform: 'uppercase', color: T.text3, marginBottom: 2 }}>Serveur</div>
+                  <div style={{ fontFamily: T.sans, fontSize: 11, fontWeight: 600, color: T.text, letterSpacing: '0.02em' }}>{waiterName}</div>
+                </div>
+              )}
 
               {!customerPhone ? (
                 <button onClick={() => setShowPhoneForm(f => !f)}
