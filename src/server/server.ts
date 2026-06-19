@@ -232,6 +232,15 @@ app.use('/api', (req, res, next) => {
     return next();
   }
 
+  // Public QR Menu endpoints (no JWT required - customers access via QR code)
+  // GET /api/menu/table/:qr_token
+  // POST /api/menu/register-customer
+  // POST /api/menu/checkout
+  // GET /api/menu/order-status/:qr_token/:orderId
+  if (p.startsWith('/menu')) {
+    return next();
+  }
+
   // SaaS public endpoints (MVP) - no JWT required
   // GET /api/plans
   // POST /api/tenants
@@ -258,7 +267,9 @@ app.use('/api', (req, res, next) => {
   if (p === '/health') return next();
 
   // SaaS endpoints are public and do not rely on tenant scope from JWT
-  if (p === '/plans' || p === '/tenants' || p.startsWith('/tenants/') ||
+  // Public QR Menu endpoints
+  if (p.startsWith('/menu') ||
+      p === '/plans' || p === '/tenants' || p.startsWith('/tenants/') ||
       p.startsWith('/payments') || p.startsWith('/webhooks')) {
     return next();
   }

@@ -749,7 +749,8 @@ const PublicMenuPage = () => {
     const fetchStatus = async () => {
       try {
         // Use the public menu endpoint that reads directly from Supabase for real-time customer visibility
-        const res = await fetch(apiUrl(`/api/menu/order-status/${pendingOrderId}`));
+      // Must include both qr_token and orderId for tenant isolation
+      const res = await fetch(apiUrl(`/api/menu/order-status/${token}/${pendingOrderId}`));
         const data = await res.json().catch(() => ({}));
 
         if (cancelled) return;
