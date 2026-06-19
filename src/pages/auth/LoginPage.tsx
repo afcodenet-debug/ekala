@@ -74,11 +74,33 @@ const LoginPage = () => {
     setTenantError('');
     try {
       const resp = await fetch(`/api/auth/tenants/${slug.trim().toLowerCase()}`);
+      
+      // Handle non-OK responses
       if (!resp.ok) {
-        const data = await resp.json().catch(() => ({}));
-        throw new Error(data.message || 'Établissement introuvable');
+        let errorData: any = {};
+        try {
+          const text = await resp.text();
+          if (text) {
+            errorData = JSON.parse(text);
+          }
+        } catch {}
+        throw new Error(errorData?.message || errorData?.error || `Établissement introuvable (HTTP ${resp.status})`);
       }
-      const data = await resp.json();
+      
+      // Parse JSON response with better error handling
+      const text = await resp.text();
+      if (!text || text.trim() === '') {
+        throw new Error('Réponse serveur vide. Veuillez réessayer.');
+      }
+      
+      let data: any;
+      try {
+        data = JSON.parse(text);
+      } catch (parseError) {
+        console.error('[Login] JSON parse error:', parseError, 'Response text:', text.slice(0, 200));
+        throw new Error('Réponse serveur invalide. Veuillez contacter le support.');
+      }
+      
       setTenant(data);
       setStep('credentials');
       // Focus PIN input when staff mode
@@ -86,6 +108,7 @@ const LoginPage = () => {
         if (mode === 'staff') pinInputRef.current?.focus();
       }, 200);
     } catch (e: any) {
+      console.error('[Login] Tenant fetch error:', e);
       setTenantError(e.message || 'Établissement introuvable');
       setTenant(null);
     } finally {

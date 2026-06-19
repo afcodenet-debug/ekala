@@ -148,7 +148,8 @@ export async function request<T>(
       try { errorJson = JSON.parse(errorText); } catch { errorJson = {}; }
 
       // Don't clear auth on login endpoints (they're expected to 401 on bad creds)
-      if (!endpoint.includes('/auth/login')) {
+      // Match both /auth/login/pin and /auth/login/email
+      if (!endpoint.match(/^\/auth\/login(\/|$)/)) {
         clearAuthToken();
         // Dispatch a custom event so the auth store can react
         window.dispatchEvent(new CustomEvent('auth:token-expired'));
