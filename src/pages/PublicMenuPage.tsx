@@ -595,11 +595,18 @@ const PublicMenuPage = () => {
       showToast('error', 'Maximum 14 chiffres.');
       return;
     }
+    if (!token) {
+      showToast('error', 'Token de table manquant.');
+      return;
+    }
     try {
       const res = await fetch(apiUrl('/api/menu/register-customer'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ phone_number: digits }),
+        body: JSON.stringify({ 
+          phone_number: digits,
+          qr_token: token 
+        }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok || !data?.success) throw new Error(data?.error || 'Échec enregistrement');
