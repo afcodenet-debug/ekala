@@ -213,20 +213,40 @@ app.use('/api/auth', authService); // Public
 // JWT Authentication - extracts user from Bearer token and sets req.user
 import { requireJwtAuth } from './middleware/jwt-auth';
 app.use('/api', (req, res, next) => {
+  const p = req.path;
+
   // Skip JWT auth for health endpoint and public paths
-  if (req.path === '/health' || req.path === '/sync/status') {
+  if (p === '/health' || p === '/sync/status') {
     return next();
   }
+
   // Also skip for auth endpoints (they handle their own auth)
-  if (req.path.startsWith('/auth')) {
+  if (p.startsWith('/auth')) {
     return next();
   }
+
+  // SaaS public endpoints (MVP)
+  // GET /api/plans
+  // POST /api/tenants
+  // GET /api/tenants/:id
+  if (p === '/plans' || p.startsWith('/plans') || p === '/tenants' || p.startsWith('/tenants/')) {
+    return next();
+  }
+
   requireJwtAuth(req, res, next);
 });
 
 // Strict Tenant Scoping for ALL other /api routes
 app.use('/api', (req, res, next) => {
-  if (req.path === '/health') return next();
+  const p = req.path;
+
+  if (p === '/health') return next();
+
+  // SaaS endpoints are public and do not rely on tenant scope from JWT
+  if (p === '/plans' || p === '/tenants' || p.startsWith('/tenants/')) {
+    return next();
+  }
+
   requireTenantScope(req, res, next);
 });
 
