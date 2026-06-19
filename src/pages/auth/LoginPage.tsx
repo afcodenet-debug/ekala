@@ -181,7 +181,7 @@ const LoginPage = () => {
 
   // ── Theme color ──────────────────────────────────────────────────────────────
   const accentColor = tenant?.primary_color || '#D4AF37';
-  const tenantDisplayName = tenant?.name || 'EKALA';
+  const tenantDisplayName = tenant?.name || 'QBITE';
 
   // ─────────────────────────────────────────────────────────────────────────────
   // STEP 1: Tenant Selection (Establishment Slug)
@@ -211,14 +211,14 @@ const LoginPage = () => {
             </div>
 
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 14, marginBottom: 8 }}>
-            <div className="lp-logo-mark" title="EKALA">
+            <div className="lp-logo-mark" title="QBITE">
               <svg width="26" height="26" viewBox="0 0 24 24" fill="white" stroke="none">
                   <path d="M13 2L4.5 13.5H11L10 22L19.5 10.5H13L13 2Z"/>
                 </svg>
               </div>
               <div style={{ textAlign: 'left' }}>
                 <h1 style={{ fontSize: 30, fontWeight: 300, color: '#eeeef5', margin: 0, letterSpacing: '-0.04em', lineHeight: 1, fontFamily: "'DM Sans', sans-serif" }}>
-                  EKALA <span style={{ fontWeight: 800, color: '#d4af37' }}>G</span>
+                  Q <span style={{ fontWeight: 800, color: '#d4af37' }}>BITE</span>
                 </h1>
                 <p style={{ fontSize: 9.5, color: 'rgba(255,255,255,0.22)', margin: '3px 0 0', letterSpacing: '0.3em', textTransform: 'uppercase', fontWeight: 700 }}>
                   Enterprise Management
