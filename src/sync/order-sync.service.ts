@@ -80,25 +80,42 @@ export class OrderSyncService {
       throw new Error('tenantId is required for order sync');
     }
 
-    // Queue order header (dans la transaction)
-    this.coreSync.queueChangeInsideTransaction('order', operation, {
-      ...order,
+    const orderPayload: any = {
+      id: order.id,
+      table_id: order.table_id ?? null,
+      waiter_id: order.waiter_id ?? null,
+      status: order.status,
+      total: order.total,
+      items: order.items,
+      customer_id: order.customer_id ?? null,
       tenant_id: Number(tenantId),
-    });
+    };
 
-    // Queue order items (uniquement pour insert/update)
+    if (order.created_at !== undefined && order.created_at !== null) orderPayload.created_at = order.created_at;
+    if (order.updated_at !== undefined && order.updated_at !== null) orderPayload.updated_at = order.updated_at;
+    if (order.version) orderPayload.version = order.version;
+    if (order.remote_id) orderPayload.remote_id = order.remote_id;
+
+    this.coreSync.queueChangeInsideTransaction('order', operation, orderPayload);
+
     if (order.items && operation !== 'delete') {
       const items = Array.isArray(order.items) ? order.items : JSON.parse(order.items || '[]');
       for (const item of items) {
-        // S'assurer que l'item a un ID valide
-        const itemId = item.id || item.productId || newId();
-        this.coreSync.queueChangeInsideTransaction('order_item', 'insert', {
-          ...item,
+        const itemId = item.id || item.productId || this._newId();
+        const quantity = Number(item.quantity);
+        const unitPrice = Number(item.price ?? item.unit_price);
+        const itemPayload: any = {
           id: itemId,
           order_id: order.id,
+          product_id: item.productId ?? item.product_id,
+          quantity,
+          unit_price: unitPrice,
+          total_price: unitPrice * quantity,
+          notes: item.notes ?? null,
           tenant_id: Number(tenantId),
           version: item.version || order.version || 1,
-        });
+        };
+        this.coreSync.queueChangeInsideTransaction('order_item', 'insert', itemPayload);
       }
     }
   }
@@ -127,7 +144,6 @@ export class OrderSyncService {
     const { data, error } = await this.supabase
       .from('orders')
       .select('*, order_items(*)')
-      .eq('tenant_id', Number(tenantId))
       .gt('updated_at', since)
       .order('updated_at', { ascending: true });
 
@@ -171,7 +187,7 @@ export class OrderSyncService {
     return applied;
   }
 
-  private newId(): string {
+  private _newId(): string {
     if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) return crypto.randomUUID();
     const { randomUUID } = require('crypto') as { randomUUID: () => string };
     return randomUUID();
@@ -321,8 +337,3 @@ export class OrderSyncService {
   }
 }
 
-function newId(): string {
-  if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) return crypto.randomUUID();
-  const { randomUUID } = require('crypto') as { randomUUID: () => string };
-  return randomUUID();
-}

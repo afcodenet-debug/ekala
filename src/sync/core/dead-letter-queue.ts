@@ -19,7 +19,7 @@ export interface DeadLetterRecord {
 
 export class DeadLetterQueue {
   private db: Database.Database;
-  private readonly MAX_RETRIES = 5;
+  private readonly _maxRetries = 5;
 
   constructor(db: Database.Database) {
     this.db = db;

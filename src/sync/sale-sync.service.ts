@@ -6,7 +6,7 @@ import type Database from 'better-sqlite3';
 import { ProductSyncService } from './product-sync.service';
 import { getSupabaseClient } from '../server/database/supabase.client';
 
-interface SaleRecord {
+export interface SaleRecord {
   id: number;
   invoice_number: string;
   order_id: number | null;

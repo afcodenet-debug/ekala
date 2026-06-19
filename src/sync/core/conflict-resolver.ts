@@ -83,7 +83,7 @@ export class ConflictResolver {
     remoteFields: Record<string, any>,
     localUpdatedAt: string,
     remoteUpdatedAt: string,
-    tenantId: string
+    _tenantId: string
   ): Record<string, any> {
     const merged: Record<string, any> = { ...localFields };
     const localTime = new Date(localUpdatedAt).getTime();
@@ -125,11 +125,11 @@ export class ConflictResolver {
    * Détecte un conflit entre deux versions d'une même entité
    */
   detectConflict(
-    entity: string,
-    localId: number | string,
-    remoteId: number | string,
-    localUpdatedAt: string,
-    remoteUpdatedAt: string,
+    _entity: string,
+    _localId: number | string,
+    _remoteId: number | string,
+    _localUpdatedAt: string,
+    _remoteUpdatedAt: string,
     localVersion: number,
     remoteVersion: number
   ): boolean {
