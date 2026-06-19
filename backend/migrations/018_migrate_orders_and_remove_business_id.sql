@@ -30,7 +30,7 @@ CREATE TABLE IF NOT EXISTS orders_new (
   remote_id INTEGER,
   source TEXT DEFAULT 'local',
   version INTEGER DEFAULT 1,
-  tenant_id TEXT,
+  tenant_id INTEGER,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
@@ -59,7 +59,7 @@ CREATE TABLE IF NOT EXISTS order_items_new (
   unit_price REAL NOT NULL CHECK (unit_price >= 0),
   total_price REAL NOT NULL CHECK (total_price >= 0),
   notes TEXT,
-  tenant_id TEXT,
+  tenant_id INTEGER,
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   remote_id INTEGER,
   FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE CASCADE,
@@ -90,7 +90,7 @@ CREATE TABLE IF NOT EXISTS restaurant_tables_new (
   status TEXT DEFAULT 'available',
   assigned_waiter_id INTEGER,
   qr_token TEXT,
-  tenant_id TEXT,
+  tenant_id INTEGER,
   remote_id INTEGER,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -126,7 +126,7 @@ CREATE TABLE IF NOT EXISTS products_new (
   sku TEXT,
   cost_method TEXT DEFAULT 'average',
   archived_at DATETIME,
-  tenant_id TEXT,
+  tenant_id INTEGER,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
@@ -149,7 +149,7 @@ CREATE TABLE IF NOT EXISTS categories_new (
   display_order INTEGER DEFAULT 0,
   is_active INTEGER DEFAULT 1,
   remote_id INTEGER,
-  tenant_id TEXT,
+  tenant_id INTEGER,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
@@ -215,7 +215,7 @@ CREATE TABLE IF NOT EXISTS tenants_new (
   provisioned_at TEXT,
   internal_notes TEXT,
   remote_id INTEGER,
-  tenant_id TEXT,
+  tenant_id INTEGER,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );

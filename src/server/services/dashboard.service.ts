@@ -1,6 +1,7 @@
 import db from '../db/database';
 import { getSupabaseClient } from '../database/supabase.client';
 import { env } from '../config/env';
+import { getCurrentTenantId } from '../db/tenant-context';
 
 export interface DashboardSummary {
   kpis: {
@@ -20,13 +21,14 @@ export interface DashboardSummary {
 
 export class DashboardService {
   static async getSummary(): Promise<DashboardSummary> {
+    const tenantId = getCurrentTenantId();
     if (!db) {
-      return this.getSummarySupabase();
+      return this.getSummarySupabase(tenantId);
     }
-    return this.getSummarySQLite();
+    return this.getSummarySQLite(tenantId);
   }
 
-  private static async getSummarySQLite(): Promise<DashboardSummary> {
+  private static async getSummarySQLite(tenantId: number): Promise<DashboardSummary> {
     const today = new Date().toISOString().split('T')[0];
     const yesterday = new Date(Date.now() - 86400000).toISOString().split('T')[0];
 
@@ -34,38 +36,38 @@ export class DashboardService {
     const revenueRow = db.prepare(`
       SELECT COALESCE(SUM(total_amount), 0) as revenue, COUNT(*) as tx_count
       FROM sales
-      WHERE DATE(created_at) = ?
-    `).get(today) as { revenue: number; tx_count: number };
+      WHERE DATE(created_at) = ? AND tenant_id = ?
+    `).get(today, tenantId) as { revenue: number; tx_count: number };
 
     const yesterdayRow = db.prepare(`
       SELECT COALESCE(SUM(total_amount), 0) as revenue
       FROM sales
-      WHERE DATE(created_at) = ?
-    `).get(yesterday) as { revenue: number };
+      WHERE DATE(created_at) = ? AND tenant_id = ?
+    `).get(yesterday, tenantId) as { revenue: number };
 
     const activeTablesRow = db.prepare(`
       SELECT COUNT(DISTINCT table_id) as active
       FROM orders
-      WHERE status NOT IN ('paid', 'cancelled') AND table_id IS NOT NULL
-    `).get() as { active: number };
+      WHERE status NOT IN ('paid', 'cancelled') AND table_id IS NOT NULL AND tenant_id = ?
+    `).get(tenantId) as { active: number };
 
     const openOrdersRow = db.prepare(`
       SELECT COUNT(*) as count
       FROM orders
-      WHERE status NOT IN ('paid', 'cancelled')
-    `).get() as { count: number };
+      WHERE status NOT IN ('paid', 'cancelled') AND tenant_id = ?
+    `).get(tenantId) as { count: number };
 
     const lowStockRow = db.prepare(`
       SELECT COUNT(*) as count
       FROM products
-      WHERE is_available = 1 AND stock_quantity <= minimum_stock
-    `).get() as { count: number };
+      WHERE is_available = 1 AND stock_quantity <= minimum_stock AND tenant_id = ?
+    `).get(tenantId) as { count: number };
 
     const staffRow = db.prepare(`
       SELECT COUNT(*) as count
       FROM users
-      WHERE is_active = 1
-    `).get() as { count: number };
+      WHERE is_active = 1 AND tenant_id = ?
+    `).get(tenantId) as { count: number };
 
     // 2. Hourly Sales
     const hourlyRows = db.prepare(`
@@ -73,10 +75,10 @@ export class DashboardService {
         strftime('%H', created_at) as hour,
         COALESCE(SUM(total_amount), 0) as amount
       FROM sales
-      WHERE DATE(created_at) = ?
+      WHERE DATE(created_at) = ? AND tenant_id = ?
       GROUP BY strftime('%H', created_at)
       ORDER BY hour
-    `).all(today) as Array<{ hour: string; amount: number }>;
+    `).all(today, tenantId) as Array<{ hour: string; amount: number }>;
 
     const hourlySales = Array.from({ length: 24 }, (_, h) => {
       const hh = h.toString().padStart(2, '0');
@@ -96,8 +98,9 @@ export class DashboardService {
       LEFT JOIN users u ON s.user_id = u.id
       LEFT JOIN orders o ON s.order_id = o.id
       LEFT JOIN restaurant_tables t ON o.table_id = t.id
+      WHERE s.tenant_id = ?
       ORDER BY s.created_at DESC LIMIT 5
-    `).all() as any[];
+    `).all(tenantId) as any[];
 
     const recentOrders = db.prepare(`
       SELECT
@@ -106,16 +109,16 @@ export class DashboardService {
       FROM orders o
       LEFT JOIN restaurant_tables t ON o.table_id = t.id
       LEFT JOIN users u ON o.waiter_id = u.id
-      WHERE o.status NOT IN ('paid', 'cancelled')
+      WHERE o.status NOT IN ('paid', 'cancelled') AND o.tenant_id = ?
       ORDER BY o.created_at DESC LIMIT 3
-    `).all() as any[];
+    `).all(tenantId) as any[];
 
     const lowStockItems = db.prepare(`
       SELECT id, name, stock_quantity, minimum_stock
       FROM products
-      WHERE stock_quantity <= minimum_stock AND is_available = 1
+      WHERE stock_quantity <= minimum_stock AND is_available = 1 AND tenant_id = ?
       ORDER BY (stock_quantity - minimum_stock) ASC LIMIT 3
-    `).all() as any[];
+    `).all(tenantId) as any[];
 
     const recentActivity: any[] = [];
     recentSales.forEach(s => recentActivity.push({
@@ -138,9 +141,9 @@ export class DashboardService {
       FROM sale_items si
       JOIN sales s ON si.sale_id = s.id
       JOIN products p ON si.product_id = p.id
-      WHERE DATE(s.created_at) = ?
+      WHERE DATE(s.created_at) = ? AND s.tenant_id = ?
       GROUP BY p.id ORDER BY revenue DESC LIMIT 5
-    `).all(today) as any[];
+    `).all(today, tenantId) as any[];
 
     return {
       kpis: {
@@ -163,7 +166,7 @@ export class DashboardService {
     };
   }
 
-  private static async getSummarySupabase(): Promise<DashboardSummary> {
+  private static async getSummarySupabase(tenantId: number): Promise<DashboardSummary> {
     const supabase = getSupabaseClient();
     const today = new Date();
     today.setHours(0, 0, 0, 0);
@@ -189,21 +192,21 @@ export class DashboardService {
       topProductsItems
     ] = await Promise.all([
       // Sales today
-      supabase.from('sales').select('total_amount').gte('created_at', todayISO).lt('created_at', tomorrowISO),
+      supabase.from('sales').select('total_amount').eq('tenant_id', tenantId).gte('created_at', todayISO).lt('created_at', tomorrowISO),
       // Sales yesterday
-      supabase.from('sales').select('total_amount').gte('created_at', yesterdayISO).lt('created_at', todayISO),
+      supabase.from('sales').select('total_amount').eq('tenant_id', tenantId).gte('created_at', yesterdayISO).lt('created_at', todayISO),
       // Active orders (tables and open counts)
-      supabase.from('orders').select('table_id, status').not('status', 'in', '("paid","cancelled","rejected")'),
+      supabase.from('orders').select('table_id, status').eq('tenant_id', tenantId).not('status', 'in', '("paid","cancelled","rejected")'),
       // Products for stock alerts (fetch all available to filter in memory)
-      supabase.from('products').select('id, name, stock_quantity, minimum_stock').eq('is_available', true),
+      supabase.from('products').select('id, name, stock_quantity, minimum_stock').eq('tenant_id', tenantId).eq('is_available', true),
       // Active staff
-      supabase.from('user').select('id', { count: 'exact', head: true }).eq('is_active', true),
+      supabase.from('users').select('id', { count: 'exact', head: true }).eq('tenant_id', tenantId).eq('is_active', true),
       // Recent sales for activity
-      supabase.from('sales').select('id, total_amount, payment_method, created_at, user:user(full_name), order:orders(table:restaurant_tables(table_number))').order('created_at', { ascending: false }).limit(5),
+      supabase.from('sales').select('id, total_amount, payment_method, created_at, user:users(full_name), order:orders(table:restaurant_tables(table_number))').eq('tenant_id', tenantId).order('created_at', { ascending: false }).limit(5),
       // Recent orders for activity
-      supabase.from('orders').select('id, table_id, status, created_at, table:restaurant_tables(table_number), waiter:user(full_name)').not('status', 'in', '("paid","cancelled","rejected")').order('created_at', { ascending: false }).limit(3),
+      supabase.from('orders').select('id, table_id, status, created_at, table:restaurant_tables(table_number), waiter:users(full_name)').eq('tenant_id', tenantId).not('status', 'in', '("paid","cancelled","rejected")').order('created_at', { ascending: false }).limit(3),
       // Top products today
-      supabase.from('sale_items').select('product_id, quantity, total_price, product:products(name), sale:sales!inner(created_at)').gte('sale.created_at', todayISO).lt('sale.created_at', tomorrowISO)
+      supabase.from('sale_items').select('product_id, quantity, total_price, product:products(name), sale:sales!inner(created_at)').eq('tenant_id', tenantId).gte('sale.created_at', todayISO).lt('sale.created_at', tomorrowISO)
     ]);
 
     // Handle possible errors

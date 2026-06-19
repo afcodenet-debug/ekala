@@ -321,7 +321,7 @@ CREATE INDEX IF NOT EXISTS idx_inv_sessions_status ON inventory_sessions(status)
 -- INVENTORY_MOVEMENTS (stock ledger)
 CREATE TABLE IF NOT EXISTS inventory_movements (
     id BIGSERIAL PRIMARY KEY,
-    product_id BIGINT NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+    product_id BIGINT REFERENCES products(id) ON DELETE SET NULL,
     movement_type TEXT NOT NULL
         CHECK (movement_type IN ('purchase','sale','adjustment','transfer','waste','damaged','return','inventory_count')),
     quantity_before NUMERIC(12,4) NOT NULL DEFAULT 0,
@@ -339,7 +339,8 @@ CREATE TABLE IF NOT EXISTS inventory_movements (
         CHECK (status IN ('pending','confirmed','cancelled')),
     notes TEXT,
     movement_code TEXT,
-    inventory_session_id BIGINT REFERENCES inventory_sessions(id) ON DELETE SET NULL
+    inventory_session_id BIGINT REFERENCES inventory_sessions(id) ON DELETE SET NULL,
+    tenant_id INTEGER DEFAULT 1
 );
 
 CREATE INDEX IF NOT EXISTS idx_inventory_movements_product ON inventory_movements(product_id);

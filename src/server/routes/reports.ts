@@ -33,8 +33,12 @@ async function getSupabaseClient() {
 }
 
 // GET /api/reports/daily-sales?date=YYYY-MM-DD
-router.get('/daily-sales', async (req, res) => {
+router.get('/daily-sales', async (req: any, res) => {
   const dateParam = typeof req.query.date === 'string' ? req.query.date : undefined;
+  const tenantId = req.tenant_id;
+  if (!tenantId) {
+    return res.status(401).json({ error: 'TENANT_REQUIRED', message: 'tenant_id requis' });
+  }
 
   if (!db && useSupabaseReports) {
     try {
@@ -42,6 +46,7 @@ router.get('/daily-sales', async (req, res) => {
       const { data, error } = await supabase
         .from('sales')
         .select('created_at, total_amount')
+        .eq('tenant_id', tenantId)
         .order('created_at', { ascending: false });
 
       if (error) throw error;
@@ -74,10 +79,10 @@ router.get('/daily-sales', async (req, res) => {
 
   try {
     const query = dateParam
-      ? "SELECT DATE(created_at) as date, SUM(total_amount) as total_amount, COUNT(*) as transaction_count FROM sales WHERE DATE(created_at) = ? GROUP BY DATE(created_at)"
-      : "SELECT DATE(created_at) as date, SUM(total_amount) as total_amount, COUNT(*) as transaction_count FROM sales GROUP BY DATE(created_at) ORDER BY date DESC LIMIT 30";
+      ? "SELECT DATE(created_at) as date, SUM(total_amount) as total_amount, COUNT(*) as transaction_count FROM sales WHERE DATE(created_at) = ? AND tenant_id = ? GROUP BY DATE(created_at)"
+      : "SELECT DATE(created_at) as date, SUM(total_amount) as total_amount, COUNT(*) as transaction_count FROM sales WHERE tenant_id = ? GROUP BY DATE(created_at) ORDER BY date DESC LIMIT 30";
 
-    const rows = dateParam ? db.prepare(query).all(dateParam) as any[] : db.prepare(query).all() as any[];
+    const rows = dateParam ? db.prepare(query).all(dateParam, tenantId) as any[] : db.prepare(query).all(tenantId) as any[];
     res.json(rows);
   } catch (error: any) {
     const sqliteErr = error?.code || error?.errno || 'unknown';
@@ -86,7 +91,7 @@ router.get('/daily-sales', async (req, res) => {
       sqliteCode: sqliteErr,
       stack: error?.stack,
       query: dateParam ? 'SELECT DATE... WHERE DATE(created_at) = ?' : 'SELECT DATE... GROUP BY... LIMIT 30',
-      params: dateParam ? [dateParam] : [],
+      params: dateParam ? [dateParam, tenantId] : [tenantId],
       dbNull: !db
     });
     res.status(500).json({ error: 'Failed to fetch daily sales' });
@@ -94,14 +99,18 @@ router.get('/daily-sales', async (req, res) => {
 });
 
 // GET /api/reports/weekly-sales?start=YYYY-MM-DD&end=YYYY-MM-DD
-router.get('/weekly-sales', async (req, res) => {
+router.get('/weekly-sales', async (req: any, res) => {
   const start = typeof req.query.start === 'string' ? req.query.start : undefined;
   const end = typeof req.query.end === 'string' ? req.query.end : undefined;
+  const tenantId = req.tenant_id;
+  if (!tenantId) {
+    return res.status(401).json({ error: 'TENANT_REQUIRED', message: 'tenant_id requis' });
+  }
 
   if (!db && useSupabaseReports) {
     try {
       const supabase = await getSupabaseClient();
-      let query = supabase.from('sales').select('created_at, total_amount').order('created_at', { ascending: false });
+      let query = supabase.from('sales').select('created_at, total_amount').eq('tenant_id', tenantId).order('created_at', { ascending: false });
 
       if (start) query = query.gte('created_at', `${start}T00:00:00Z`);
       if (end) query = query.lte('created_at', `${end}T23:59:59Z`);
@@ -135,13 +144,12 @@ router.get('/weekly-sales', async (req, res) => {
     return res.json([]);
   }
   try {
-    const { start, end } = req.query;
     let query = `
       SELECT DATE(created_at) as date, SUM(total_amount) as total_amount, COUNT(*) as transaction_count
       FROM sales
-      WHERE 1=1
+      WHERE tenant_id = ?
     `;
-    const params: any[] = [];
+    const params: any[] = [tenantId];
 
     if (start) {
       query += ` AND DATE(created_at) >= ?`;
@@ -162,9 +170,13 @@ router.get('/weekly-sales', async (req, res) => {
 });
 
 // GET /api/reports/monthly-sales?month=MM&year=YYYY
-router.get('/monthly-sales', async (req, res) => {
+router.get('/monthly-sales', async (req: any, res) => {
   const month = typeof req.query.month === 'string' ? req.query.month.padStart(2, '0') : null;
   const year = typeof req.query.year === 'string' ? req.query.year : null;
+  const tenantId = req.tenant_id;
+  if (!tenantId) {
+    return res.status(401).json({ error: 'TENANT_REQUIRED', message: 'tenant_id requis' });
+  }
 
   if (!db && useSupabaseReports) {
     try {
@@ -172,6 +184,7 @@ router.get('/monthly-sales', async (req, res) => {
       const { data, error } = await supabase
         .from('sales')
         .select('created_at, total_amount')
+        .eq('tenant_id', tenantId)
         .order('created_at', { ascending: false });
 
       if (error) throw error;
@@ -212,9 +225,9 @@ router.get('/monthly-sales', async (req, res) => {
     let query = `
       SELECT strftime('%Y-%m', created_at) as date, SUM(total_amount) as total_amount, COUNT(*) as transaction_count
       FROM sales
-      WHERE 1=1
+      WHERE tenant_id = ?
     `;
-    const params: any[] = [];
+    const params: any[] = [tenantId];
 
     if (month) {
       query += ` AND strftime('%m', created_at) = ?`;
@@ -235,15 +248,19 @@ router.get('/monthly-sales', async (req, res) => {
 });
 
 // GET /api/reports/top-products?limit=10
-router.get('/top-products', async (req, res) => {
+router.get('/top-products', async (req: any, res) => {
   const limit = Number(req.query.limit ?? 10);
+  const tenantId = req.tenant_id;
+  if (!tenantId) {
+    return res.status(401).json({ error: 'TENANT_REQUIRED', message: 'tenant_id requis' });
+  }
 
   if (!db && useSupabaseReports) {
     try {
       const supabase = await getSupabaseClient();
       const [{ data: items, error: itemError }, { data: products, error: productsError }] = await Promise.all([
-        supabase.from('sale_items').select('product_id, quantity, total_price'),
-        supabase.from('products').select('id, name')
+        supabase.from('sale_items').select('product_id, quantity, total_price').eq('tenant_id', tenantId),
+        supabase.from('products').select('id, name').eq('tenant_id', tenantId)
       ]);
 
       if (itemError) throw itemError;
@@ -285,11 +302,12 @@ router.get('/top-products', async (req, res) => {
       SELECT p.id as product_id, p.name as product_name, SUM(si.quantity) as quantity_sold, SUM(si.total_price) as revenue
       FROM sale_items si
       JOIN products p ON si.product_id = p.id
+      WHERE si.tenant_id = ?
       GROUP BY si.product_id
       ORDER BY revenue DESC
       LIMIT ?
     `;
-    const rows = db.prepare(query).all(limit) as any[];
+    const rows = db.prepare(query).all(tenantId, limit) as any[];
     res.json(rows);
   } catch (error) {
     console.error('[Reports] top-products error:', error);
@@ -298,13 +316,18 @@ router.get('/top-products', async (req, res) => {
 });
 
 // GET /api/reports/low-stock
-router.get('/low-stock', async (req, res) => {
+router.get('/low-stock', async (req: any, res) => {
+  const tenantId = req.tenant_id;
+  if (!tenantId) {
+    return res.status(401).json({ error: 'TENANT_REQUIRED', message: 'tenant_id requis' });
+  }
   if (!db && useSupabaseReports) {
     try {
       const supabase = await getSupabaseClient();
       const { data, error } = await supabase
         .from('products')
         .select('id, name, stock_quantity, minimum_stock, is_available')
+        .eq('tenant_id', tenantId)
         .order('stock_quantity', { ascending: true });
 
       if (error) throw error;
@@ -330,10 +353,10 @@ router.get('/low-stock', async (req, res) => {
     const query = `
       SELECT id, name, stock_quantity, minimum_stock
       FROM products
-      WHERE stock_quantity <= minimum_stock AND is_available = 1
+      WHERE stock_quantity <= minimum_stock AND is_available = 1 AND tenant_id = ?
       ORDER BY stock_quantity ASC
     `;
-    const rows = db.prepare(query).all() as any[];
+    const rows = db.prepare(query).all(tenantId) as any[];
     res.json(rows);
   } catch (error) {
     console.error('[Reports] low-stock error:', error);
@@ -342,14 +365,18 @@ router.get('/low-stock', async (req, res) => {
 });
 
 // GET /api/reports/payment-methods - revenue breakdown by payment method
-router.get('/payment-methods', async (req, res) => {
+router.get('/payment-methods', async (req: any, res) => {
   const start = typeof req.query.start === 'string' ? req.query.start : undefined;
   const end = typeof req.query.end === 'string' ? req.query.end : undefined;
+  const tenantId = req.tenant_id;
+  if (!tenantId) {
+    return res.status(401).json({ error: 'TENANT_REQUIRED', message: 'tenant_id requis' });
+  }
 
   if (!db && useSupabaseReports) {
     try {
       const supabase = await getSupabaseClient();
-      let query = supabase.from('sales').select('payment_method, total_amount, created_at');
+      let query = supabase.from('sales').select('payment_method, total_amount, created_at').eq('tenant_id', tenantId);
       if (start) query = query.gte('created_at', `${start}T00:00:00Z`);
       if (end) query = query.lte('created_at', `${end}T23:59:59Z`);
       const { data, error } = await query;
@@ -384,9 +411,9 @@ router.get('/payment-methods', async (req, res) => {
     let query = `
       SELECT payment_method, SUM(total_amount) as total, COUNT(*) as count
       FROM sales
-      WHERE 1=1
+      WHERE tenant_id = ?
     `;
-    const params: any[] = [];
+    const params: any[] = [tenantId];
     if (start) { query += ` AND DATE(created_at) >= ?`; params.push(start); }
     if (end) { query += ` AND DATE(created_at) <= ?`; params.push(end); }
     query += ` GROUP BY payment_method ORDER BY total DESC`;
@@ -399,17 +426,21 @@ router.get('/payment-methods', async (req, res) => {
 });
 
 // GET /api/reports/categories-performance - revenue by category
-router.get('/categories-performance', async (req, res) => {
+router.get('/categories-performance', async (req: any, res) => {
   const start = typeof req.query.start === 'string' ? req.query.start : undefined;
   const end = typeof req.query.end === 'string' ? req.query.end : undefined;
+  const tenantId = req.tenant_id;
+  if (!tenantId) {
+    return res.status(401).json({ error: 'TENANT_REQUIRED', message: 'tenant_id requis' });
+  }
 
   if (!db && useSupabaseReports) {
     try {
       const supabase = await getSupabaseClient();
       const [{ data: items, error: itemError }, { data: products, error: productsError }, { data: categories, error: categoriesError }] = await Promise.all([
-        supabase.from('sale_items').select('product_id, total_price, sale_id'),
-        supabase.from('products').select('id, category_id'),
-        supabase.from('categories').select('id, name')
+        supabase.from('sale_items').select('product_id, total_price, sale_id').eq('tenant_id', tenantId),
+        supabase.from('products').select('id, category_id').eq('tenant_id', tenantId),
+        supabase.from('categories').select('id, name').eq('tenant_id', tenantId)
       ]);
 
       if (itemError) throw itemError;
@@ -452,9 +483,9 @@ router.get('/categories-performance', async (req, res) => {
       JOIN products p ON si.product_id = p.id
       JOIN categories c ON p.category_id = c.id
       LEFT JOIN sales s ON si.sale_id = s.id
-      WHERE 1=1
+      WHERE si.tenant_id = ?
     `;
-    const params: any[] = [];
+    const params: any[] = [tenantId];
     if (start) { query += ` AND DATE(s.created_at) >= ?`; params.push(start); }
     if (end) { query += ` AND DATE(s.created_at) <= ?`; params.push(end); }
     query += ` GROUP BY c.id, c.name ORDER BY revenue DESC`;
@@ -467,16 +498,20 @@ router.get('/categories-performance', async (req, res) => {
 });
 
 // GET /api/reports/inventory-movements - stock movements history
-router.get('/inventory-movements', async (req, res) => {
+router.get('/inventory-movements', async (req: any, res) => {
   const start = typeof req.query.start === 'string' ? req.query.start : undefined;
   const end = typeof req.query.end === 'string' ? req.query.end : undefined;
   const product_id = typeof req.query.product_id === 'string' ? Number(req.query.product_id) : undefined;
   const limit = Number(req.query.limit ?? 100);
+  const tenantId = req.tenant_id;
+  if (!tenantId) {
+    return res.status(401).json({ error: 'TENANT_REQUIRED', message: 'tenant_id requis' });
+  }
 
   if (!db && useSupabaseReports) {
     try {
       const supabase = await getSupabaseClient();
-      let query = supabase.from('inventory_movements').select('id, product_id, movement_type, quantity_changed, total_value, reason, created_by, reference_type, reference_id, created_at').order('created_at', { ascending: false }).limit(limit);
+      let query = supabase.from('inventory_movements').select('id, product_id, movement_type, quantity_changed, total_value, reason, created_by, reference_type, reference_id, created_at').eq('tenant_id', tenantId).order('created_at', { ascending: false }).limit(limit);
       if (start) query = query.gte('created_at', `${start}T00:00:00Z`);
       if (end) query = query.lte('created_at', `${end}T23:59:59Z`);
       if (product_id) query = query.eq('product_id', product_id);
@@ -487,7 +522,7 @@ router.get('/inventory-movements', async (req, res) => {
       const productIds = Array.from(new Set(movements.map((item: any) => item.product_id).filter(Boolean)));
       let productMap = new Map<number, string>();
       if (productIds.length > 0) {
-        const { data: products, error: productsError } = await supabase.from('products').select('id, name').in('id', productIds);
+        const { data: products, error: productsError } = await supabase.from('products').select('id, name').in('id', productIds).eq('tenant_id', tenantId);
         if (!productsError && products) {
           productMap = new Map((products || []).map((p: any) => [p.id, p.name]));
         }
@@ -512,9 +547,9 @@ router.get('/inventory-movements', async (req, res) => {
       SELECT im.*, p.name as product_name
       FROM inventory_movements im
       LEFT JOIN products p ON im.product_id = p.id
-      WHERE 1=1
+      WHERE im.tenant_id = ?
     `;
-    const params: any[] = [];
+    const params: any[] = [tenantId];
     if (start) { query += ` AND DATE(im.created_at) >= ?`; params.push(start); }
     if (end) { query += ` AND DATE(im.created_at) <= ?`; params.push(end); }
     if (product_id) { query += ` AND im.product_id = ?`; params.push(product_id); }
@@ -529,17 +564,21 @@ router.get('/inventory-movements', async (req, res) => {
 });
 
 // GET /api/reports/summary - aggregated business metrics
-router.get('/summary', async (req, res) => {
+router.get('/summary', async (req: any, res) => {
   const startParam = typeof req.query.start === 'string' ? req.query.start : undefined;
   const endParam = typeof req.query.end === 'string' ? req.query.end : undefined;
+  const tenantId = req.tenant_id;
+  if (!tenantId) {
+    return res.status(401).json({ error: 'TENANT_REQUIRED', message: 'tenant_id requis' });
+  }
 
   if (!db && useSupabaseReports) {
     try {
       const supabase = await getSupabaseClient();
       const [{ data: sales, error: salesError }, { data: items, error: itemsError }, { data: products, error: productsError }] = await Promise.all([
-        supabase.from('sales').select('id, total_amount, created_at'),
-        supabase.from('sale_items').select('product_id, sale_id, quantity, total_price'),
-        supabase.from('products').select('id, name, stock_quantity, minimum_stock, is_available')
+        supabase.from('sales').select('id, total_amount, created_at').eq('tenant_id', tenantId),
+        supabase.from('sale_items').select('product_id, sale_id, quantity, total_price').eq('tenant_id', tenantId),
+        supabase.from('products').select('id, name, stock_quantity, minimum_stock, is_available').eq('tenant_id', tenantId)
       ]);
 
       if (salesError) throw salesError;
@@ -609,16 +648,16 @@ router.get('/summary', async (req, res) => {
     const startDate = start ? String(start) : undefined;
     const endDate = end ? String(end) : undefined;
 
-    let salesDateFilter = '';
-    const salesParams: any[] = [];
+    let salesDateFilter = ' WHERE tenant_id = ?';
+    const salesParams: any[] = [tenantId];
     if (startDate && endDate) {
-      salesDateFilter = ' WHERE DATE(created_at) BETWEEN ? AND ?';
+      salesDateFilter += ' AND DATE(created_at) BETWEEN ? AND ?';
       salesParams.push(startDate, endDate);
     } else if (startDate) {
-      salesDateFilter = ' WHERE DATE(created_at) >= ?';
+      salesDateFilter += ' AND DATE(created_at) >= ?';
       salesParams.push(startDate);
     } else if (endDate) {
-      salesDateFilter = ' WHERE DATE(created_at) <= ?';
+      salesDateFilter += ' AND DATE(created_at) <= ?';
       salesParams.push(endDate);
     }
 
@@ -628,15 +667,15 @@ router.get('/summary', async (req, res) => {
     `).get(...salesParams) as { total: number; count: number };
 
     let topDateFilter = '';
-    const topParams: any[] = [];
+    const topParams: any[] = [tenantId];
     if (startDate && endDate) {
-      topDateFilter = ' WHERE DATE(s.created_at) BETWEEN ? AND ?';
+      topDateFilter = ' AND DATE(s.created_at) BETWEEN ? AND ?';
       topParams.push(startDate, endDate);
     } else if (startDate) {
-      topDateFilter = ' WHERE DATE(s.created_at) >= ?';
+      topDateFilter = ' AND DATE(s.created_at) >= ?';
       topParams.push(startDate);
     } else if (endDate) {
-      topDateFilter = ' WHERE DATE(s.created_at) <= ?';
+      topDateFilter = ' AND DATE(s.created_at) <= ?';
       topParams.push(endDate);
     }
 
@@ -644,15 +683,16 @@ router.get('/summary', async (req, res) => {
       SELECT p.name as product_name, SUM(si.quantity) as quantity_sold, SUM(si.total_price) as revenue
       FROM sale_items si
       JOIN products p ON si.product_id = p.id
-      JOIN sales s ON si.sale_id = s.id${topDateFilter}
+      JOIN sales s ON si.sale_id = s.id
+      WHERE s.tenant_id = ?${topDateFilter}
       GROUP BY p.id, p.name
       ORDER BY revenue DESC
       LIMIT 1
     `).all(...topParams) as any[];
 
     const lowStockCount = db.prepare(`
-      SELECT COUNT(*) as count FROM products WHERE stock_quantity <= minimum_stock AND is_available = 1
-    `).get() as { count: number };
+      SELECT COUNT(*) as count FROM products WHERE stock_quantity <= minimum_stock AND is_available = 1 AND tenant_id = ?
+    `).get(tenantId) as { count: number };
 
     res.json({
       totalRevenue: Number(totalRow?.total || 0),

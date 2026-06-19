@@ -22,7 +22,7 @@ CREATE TABLE IF NOT EXISTS orders_v2 (
   remote_id INTEGER,
   source TEXT DEFAULT 'local',
   version INTEGER DEFAULT 1,
-  tenant_id TEXT,
+  tenant_id INTEGER,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
@@ -34,7 +34,7 @@ SELECT id, table_id, waiter_id, items, status, total, customer_phone, notes, rem
 -- ==============================
 -- 2. ORDER_ITEMS : nettoyage
 -- ==============================
-ALTER TABLE order_items ADD COLUMN tenant_id TEXT;
+ALTER TABLE order_items ADD COLUMN tenant_id INTEGER;
 ALTER TABLE order_items DROP COLUMN remote_order_id;
 
 -- ==============================

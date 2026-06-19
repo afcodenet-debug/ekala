@@ -60,9 +60,15 @@ export const requirePermission = (permission: keyof typeof PERMISSIONS) => {
 };
 
 // Middleware to check if user has required role (legacy)
+// Supports both JWT auth (req.user.role) and mock header auth (x-user-role)
 export const requireRole = (allowedRoles: string[]) => {
   return (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
-    const roleRaw = getRoleFromHeaders(req);
+    // First try to get role from JWT (set by requireTenantScope)
+    const jwtRole = req.user?.role;
+    
+    // Fallback to header (mock auth mode)
+    const headerRole = getRoleFromHeaders(req);
+    const roleRaw = jwtRole || headerRole;
 
     if (!roleRaw || !allowedRoles.includes(roleRaw)) {
       return res.status(403).json({
@@ -80,7 +86,11 @@ export const requireRole = (allowedRoles: string[]) => {
       });
     }
 
-    req.user = { id: 1, role: roleRaw };
+    // Ensure req.user is set (roleRaw is now validated as UserRole)
+    if (!req.user) {
+      req.user = { id: 1, role: roleRaw };
+    }
+
     next();
   };
 };

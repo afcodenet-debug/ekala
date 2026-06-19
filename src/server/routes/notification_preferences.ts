@@ -5,8 +5,12 @@ import { env } from '../config/env';
 const router = express.Router();
 
 // GET /api/notification_preferences - Get preferences for user/role
-router.get('/', async (req, res) => {
+router.get('/', async (req: any, res) => {
   const { user_id, role } = req.query;
+  const tenantId = req.tenant_id;
+  if (!tenantId) {
+    return res.status(401).json({ error: 'TENANT_REQUIRED', message: 'tenant_id requis' });
+  }
 
   // Cloud mode: read from Supabase
   if (env.RENDER_CLOUD_MODE || env.USE_SUPABASE_TABLES) {
@@ -15,7 +19,7 @@ router.get('/', async (req, res) => {
     }
     const supabase = createClient(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false } });
 
-    let query = supabase.from('notification_preferences').select('*');
+    let query = supabase.from('notification_preferences').select('*').eq('tenant_id', tenantId);
 
     if (user_id) {
       query = query.eq('user_id', Number(user_id));
@@ -36,30 +40,20 @@ router.get('/', async (req, res) => {
   }
 
   try {
-    let query = db.prepare(`
-      SELECT * FROM notification_preferences
-      ORDER BY created_at DESC
-    `);
+    const params: any[] = [tenantId];
+    let sql = 'SELECT * FROM notification_preferences WHERE tenant_id = ?';
 
-    const params: any[] = [];
     if (user_id) {
-      query = db.prepare(`
-        SELECT * FROM notification_preferences
-        WHERE user_id = ?
-        ORDER BY created_at DESC
-      `);
+      sql += ' AND user_id = ?';
       params.push(Number(user_id));
     }
     if (role) {
-      query = db.prepare(`
-        SELECT * FROM notification_preferences
-        WHERE role = ?
-        ORDER BY created_at DESC
-      `);
+      sql += ' AND role = ?';
       params.push(role as string);
     }
+    sql += ' ORDER BY created_at DESC';
 
-    const preferences = query.all(...params);
+    const preferences = db.prepare(sql).all(...params);
     res.json(preferences);
   } catch (error: any) {
     res.status(500).json({ error: error.message });
@@ -67,8 +61,12 @@ router.get('/', async (req, res) => {
 });
 
 // POST /api/notification_preferences - Create or update preferences
-router.post('/', async (req, res) => {
+router.post('/', async (req: any, res) => {
   const { user_id, role, email_enabled, inapp_enabled, qr_orders, stock_alerts, daily_reports, inventory_summary, payment_failed, order_assigned, system_errors } = req.body;
+  const tenantId = req.tenant_id;
+  if (!tenantId) {
+    return res.status(401).json({ error: 'TENANT_REQUIRED', message: 'tenant_id requis' });
+  }
 
   if (user_id === undefined && role === undefined) {
     return res.status(400).json({ error: 'Either user_id or role is required' });
@@ -95,8 +93,9 @@ router.post('/', async (req, res) => {
         payment_failed: payment_failed ?? true,
         order_assigned: order_assigned ?? true,
         system_errors: system_errors ?? true,
+        tenant_id: tenantId,
         updated_at: new Date().toISOString()
-      }, { onConflict: 'user_id,role' })
+      }, { onConflict: 'user_id,role,tenant_id' })
       .select('*')
       .single();
 
@@ -108,8 +107,8 @@ router.post('/', async (req, res) => {
   const db = require('../db/database').db;
   try {
     const exists = db.prepare(
-      'SELECT id FROM notification_preferences WHERE user_id = ? AND role = ?'
-    ).get(Number(user_id || 0), role as string || '');
+      'SELECT id FROM notification_preferences WHERE user_id = ? AND role = ? AND tenant_id = ?'
+    ).get(Number(user_id || 0), role as string || '', tenantId);
 
     let result;
     if (exists) {
@@ -119,24 +118,24 @@ router.post('/', async (req, res) => {
           email_enabled = ?, inapp_enabled = ?, qr_orders = ?, stock_alerts = ?,
           daily_reports = ?, inventory_summary = ?, payment_failed = ?, order_assigned = ?,
           system_errors = ?, updated_at = CURRENT_TIMESTAMP
-        WHERE user_id = ? AND role = ?
+        WHERE user_id = ? AND role = ? AND tenant_id = ?
       `).run(
         email_enabled ?? true, inapp_enabled ?? true, qr_orders ?? true, stock_alerts ?? true,
         daily_reports ?? true, inventory_summary ?? true, payment_failed ?? true, order_assigned ?? true,
         system_errors ?? true,
-        Number(user_id || 0), role as string || ''
+        Number(user_id || 0), role as string || '', tenantId
       );
     } else {
       // Insert new
       result = db.prepare(`
         INSERT INTO notification_preferences 
-        (user_id, role, email_enabled, inapp_enabled, qr_orders, stock_alerts, daily_reports, inventory_summary, payment_failed, order_assigned, system_errors)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        (user_id, role, email_enabled, inapp_enabled, qr_orders, stock_alerts, daily_reports, inventory_summary, payment_failed, order_assigned, system_errors, tenant_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         Number(user_id || 0), role as string || '',
         email_enabled ?? true, inapp_enabled ?? true, qr_orders ?? true, stock_alerts ?? true,
         daily_reports ?? true, inventory_summary ?? true, payment_failed ?? true, order_assigned ?? true,
-        system_errors ?? true
+        system_errors ?? true, tenantId
       );
     }
 

@@ -38,7 +38,8 @@ export const AssignWaiterModal: React.FC<AssignWaiterModalProps> = ({
     setLoadingWaiters(true);
     try {
       const response = await fetch('/api/users');
-      const allUsers = await response.json();
+      const data = await response.json();
+      const allUsers = Array.isArray(data) ? data : (data.users || []);
       const waiterUsers = allUsers.filter((u: any) => u.role === 'waiter' && u.is_active !== 0);
       setWaiters(waiterUsers);
     } catch (err) {
@@ -150,8 +151,7 @@ export const AssignWaiterModal: React.FC<AssignWaiterModalProps> = ({
                       <User size={14} />
                     </div>
                     <div style={{ flex: 1 }}>
-                      <p style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-1)', margin: 0 }}>{waiter.full_name}</p>
-                      <p style={{ fontSize: 11, color: 'var(--text-3)', margin: 0 }}>{t('tables.waiterLabel')}: {waiter.id}</p>
+                      <p style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-1)', margin: 0 }}>{waiter.full_name || waiter.username}</p>
                     </div>
                     {selectedWaiterId === waiter.id.toString() && <CheckCircle2 size={16} color="var(--gold)" />}
                   </label>

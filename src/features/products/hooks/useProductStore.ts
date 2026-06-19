@@ -41,8 +41,8 @@ interface ProductStore {
   // Products
   fetchProducts:    () => Promise<void>;
   fetchCategories:  () => Promise<void>;
-  createProduct:    (data: Partial<Product>, role?: string) => Promise<boolean>;
-  updateProduct:    (id: number, data: Partial<Product>, role?: string) => Promise<boolean>;
+  createProduct:    (data: Partial<Product>, role?: string) => Promise<{ success: boolean; error?: string }>;
+  updateProduct:    (id: number, data: Partial<Product>, role?: string) => Promise<{ success: boolean; error?: string }>;
   deleteProduct:    (id: number) => Promise<boolean>;
 
   // Stock
@@ -106,10 +106,11 @@ export const useProductStore = create<ProductStore>((set, get) => ({
     try {
       await api.products.create(data, role);
       get().fetchProducts();
-      return true;
-    } catch (err) {
+      return { success: true };
+    } catch (err: any) {
       console.error('Failed to create product', err);
-      return false;
+      const errorMsg = err?.response?.data?.error || err?.data?.error || err?.message || '';
+      return { success: false, error: errorMsg };
     }
   },
 
@@ -117,10 +118,11 @@ export const useProductStore = create<ProductStore>((set, get) => ({
     try {
       await api.products.update(id, data, role);
       get().fetchProducts();
-      return true;
-    } catch (err) {
+      return { success: true };
+    } catch (err: any) {
       console.error('Failed to update product', err);
-      return false;
+      const errorMsg = err?.response?.data?.error || err?.data?.error || err?.message || '';
+      return { success: false, error: errorMsg };
     }
   },
 

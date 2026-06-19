@@ -15,7 +15,7 @@ interface Waiter {
 
 interface Table {
   id: number;
-  table_number: string;
+  table_number: string | number;
   status: string;
   assigned_waiter_id: number | null;
 }
@@ -364,7 +364,7 @@ const StaffPage = () => {
   const [allTables, setAllTables] = useState<Table[]>([]);
   const [loading,   setLoading]   = useState(true);
 
-  const isAdmin = currentUser?.role === 'admin' || currentUser?.role === 'manager';
+  const isAdmin = currentUser?.role === 'owner' || currentUser?.role === 'admin' || currentUser?.role === 'manager';
 
   /* Inject styles once */
   useEffect(() => {
@@ -426,7 +426,7 @@ const StaffPage = () => {
           <ShieldOff size={36} color={T.red} style={{ marginBottom: 16, opacity: 0.8 }} />
           <h2 style={{ fontSize: 18, fontWeight: 800, color: T.red, margin: '0 0 8px' }}>Accès refusé</h2>
           <p style={{ fontSize: 13, color: T.text3, margin: 0 }}>
-            Seuls les administrateurs peuvent gérer les affectations du personnel.
+            Seuls les propriétaires et administrateurs peuvent gérer les affectations du personnel.
           </p>
         </div>
       </div>
@@ -583,19 +583,16 @@ const StaffPage = () => {
                       Assigner une table
                     </p>
                     <div className="sp-assign-chips">
-                      {availableTables
-                        .filter(t => t.status === 'available')
-                        .slice(0, 5)
-                        .map(table => (
-                          <button
-                            key={table.id}
-                            className="sp-chip"
-                            onClick={() => assignTable(table.id, waiter.id)}
-                            title={`Assigner la table ${table.table_number}`}
-                          >
-                            T{table.table_number}
-                          </button>
-                        ))}
+                      {availableTables.slice(0, 20).map(table => (
+                        <button
+                          key={table.id}
+                          className="sp-chip"
+                          onClick={() => assignTable(table.id, waiter.id)}
+                          title={`Assigner la table ${table.table_number}`}
+                        >
+                          {table.table_number}
+                        </button>
+                      ))}
                       {availableTables.filter(t => t.status === 'available').length === 0 && (
                         <span className="sp-chip-empty">Aucune table disponible</span>
                       )}

@@ -289,20 +289,25 @@ useOrderStore.subscribe((state) => {
       // Mark as notified immediately to prevent re-triggering
       markAsNotified(order.id);
       
+      const isQr = order.source === 'qr';
+      
       useNotificationStore.getState().addNotification({
-        type: 'newQrOrder' as any,
-        title: 'Nouvelle commande QR',
-        message: `Table ${order.table_number || order.table_id} : Nouvelle commande en attente`,
+        type: isQr ? 'newQrOrder' : 'orderAssigned',
+        title: isQr ? 'Nouvelle commande QR' : 'Nouvelle commande POS',
+        message: isQr 
+          ? `Table ${order.table_number || order.table_id} : Nouvelle commande client en attente`
+          : `Table ${order.table_number || order.table_id} : Commande créée par le personnel`,
         priority: 'high',
         link: '/orders',
         metadata: { 
           orderId: order.id,
           tableId: order.table_id,
-          tableNumber: order.table_number
+          tableNumber: order.table_number,
+          source: order.source
         },
       });
       
-      console.log('[OrderStore] Notification sent for order:', order.id, 'Table:', order.table_number || order.table_id);
+      console.log('[OrderStore] Notification sent for order:', order.id, 'Table:', order.table_number || order.table_id, 'Source:', order.source);
     });
   }
 

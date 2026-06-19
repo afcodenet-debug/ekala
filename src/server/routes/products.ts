@@ -3,7 +3,7 @@ import path from 'path';
 import db from '../db/database';
 import { requireRole } from '../middleware/auth';
 import fs from 'fs';
-import { getProductSyncService } from '../../sync';
+import { getProductSyncService, getOrchestratorV2 } from '../../sync';
 import { AnalyticsService } from '../services/analytics.service';
 import { notifyStockAdjustment, notifyNewProduct, loadRawSettings } from '../services/notification.service';
 import { createNotification } from '../services/notification.repository';
@@ -78,10 +78,14 @@ router.get('/analytics', async (_req, res) => {
 });
 
 // Get product by ID (with Supabase compat in cloud)
-router.get('/:id', async (req, res) => {
+router.get('/:id', async (req: any, res) => {
   try {
     const { id } = req.params;
     const isSupabaseMode = env.RENDER_CLOUD_MODE || env.USE_SUPABASE_PRODUCTS;
+    const tenantId = req.tenant_id;
+  if (!tenantId) {
+    return res.status(401).json({ error: 'TENANT_REQUIRED', message: 'tenant_id requis' });
+  }
 
     if (!db && !isSupabaseMode) {
       console.warn('[Products] SQLite disabled (db is null). Returning 404 for /products/:id');
@@ -89,15 +93,14 @@ router.get('/:id', async (req, res) => {
     }
 
     if (isSupabaseMode) {
-      const businessId = (req as any).businessId;
-      const p = await productService.getProductById(id, businessId).catch(() => null as any);
+      const p = await productService.getProductById(id, String(tenantId)).catch(() => null as any);
       if (!p) return res.status(404).json({ error: 'Product not found' });
 
       let category_name: string | null = null;
       if (p.category_id && env.SUPABASE_URL && env.SUPABASE_SERVICE_ROLE_KEY) {
         try {
           const supa = createClient(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false } });
-          const { data } = await supa.from('categories').select('name').eq('id', p.category_id).single();
+          const { data } = await supa.from('categories').select('name').eq('id', p.category_id).eq('tenant_id', tenantId).single();
           category_name = (data as any)?.name || null;
         } catch {}
       }
@@ -117,8 +120,8 @@ router.get('/:id', async (req, res) => {
       SELECT p.*, c.name as category_name
       FROM products p
       LEFT JOIN categories c ON p.category_id = c.id
-      WHERE p.id = ?
-    `).get(id);
+      WHERE p.id = ? AND p.tenant_id = ?
+    `).get(id, tenantId);
 
     if (!product) {
       return res.status(404).json({ error: 'Product not found' });
@@ -132,11 +135,15 @@ router.get('/:id', async (req, res) => {
 });
 
 // Create new product
-router.post('/', requireRole(['admin', 'manager']), async (req, res) => {
+router.post('/', requireRole(['admin', 'manager']), async (req: any, res) => {
   const isSupabaseMode = env.RENDER_CLOUD_MODE || env.USE_SUPABASE_PRODUCTS;
+  const tenantId = parseInt(String(req.tenant_id), 10);
+  if (!tenantId || isNaN(tenantId)) {
+    return res.status(401).json({ error: 'TENANT_REQUIRED', message: 'tenant_id requis' });
+  }
+
   if (isSupabaseMode) {
     try {
-      const businessId = (req as any).businessId;
       const b = req.body || {};
       if (!b.name) return res.status(400).json({ error: 'Product name is required' });
       const dto = {
@@ -144,8 +151,8 @@ router.post('/', requireRole(['admin', 'manager']), async (req, res) => {
         description: b.description ?? null,
         sku: b.sku ?? null,
         barcode: b.barcode ?? null,
-        price: b.selling_price != null ? String(b.selling_price) : '0',
-        cost_price: b.buying_price != null ? String(b.buying_price) : null,
+        selling_price: b.selling_price != null ? String(b.selling_price) : '0',
+        buying_price: b.buying_price != null ? String(b.buying_price) : null,
         stock_quantity: b.stock_quantity ?? 0,
         low_stock_threshold: b.minimum_stock ?? 5,
         image_url: b.image_url ?? null,
@@ -154,12 +161,12 @@ router.post('/', requireRole(['admin', 'manager']), async (req, res) => {
         category_id: b.category_id ? String(b.category_id) : null,
         sort_order: 0,
       };
-      const created = await productService.createProduct(dto as any, businessId, (req as any).user?.id);
+      const created = await productService.createProduct(dto as any, String(tenantId), req.user?.sub);
       // return legacy shape (spread first, then overrides — no duplicate keys)
       return res.status(201).json({
         ...created,
         selling_price: Number(created.price) || 0,
-        buying_price: created.cost_price ? Number(created.cost_price) : 0,
+        buying_price: Number(created.cost_price) || 0,
       });
     } catch (e: any) {
       console.error('[Supabase create product]', e);
@@ -178,9 +185,23 @@ router.post('/', requireRole(['admin', 'manager']), async (req, res) => {
       if (!data.name) return res.status(400).json({ error: 'Product name is required' });
       if (data.selling_price === undefined) return res.status(400).json({ error: 'Selling price is required' });
 
+      // ── Validate unique name per tenant ──────────────────────────────
+      const duplicateName = db.prepare('SELECT id FROM products WHERE name = ? AND tenant_id = ? AND deleted_at IS NULL').get(data.name, tenantId);
+      if (duplicateName) {
+        return res.status(400).json({ error: 'PRODUCT_NAME_DUPLICATE', message: 'Un produit avec ce nom existe déjà pour ce locataire.' });
+      }
+
+      // ── Validate unique SKU per tenant ───────────────────────────────
+      if (data.sku && data.sku.trim() !== '') {
+        const duplicateSku = db.prepare('SELECT id FROM products WHERE sku = ? AND tenant_id = ? AND deleted_at IS NULL').get(data.sku, tenantId);
+        if (duplicateSku) {
+          return res.status(400).json({ error: 'PRODUCT_SKU_DUPLICATE', message: 'Un produit avec ce SKU existe déjà pour ce locataire.' });
+        }
+      }
+
       // ── Validate category_id against live DB ───────────────────────────
       if (data.category_id !== undefined) {
-        const cat = db.prepare('SELECT id FROM categories WHERE id = ?').get(data.category_id) as any;
+        const cat = db.prepare('SELECT id FROM categories WHERE id = ? AND tenant_id = ?').get(data.category_id, (req as any).tenant_id) as any;
         if (!cat) {
           return res.status(400).json({ error: `Category #${data.category_id} does not exist` });
         }
@@ -192,6 +213,26 @@ router.post('/', requireRole(['admin', 'manager']), async (req, res) => {
       if (data.minimum_stock === undefined) data.minimum_stock = 0;
       if (data.unit === undefined) data.unit = 'pcs';
 
+      // Ensure price and cost_price match selling and buying prices
+      data.price = data.selling_price;
+      data.cost_price = data.buying_price;
+
+      // Generate SKU if missing
+      if (!data.sku) {
+        const tenant = db.prepare('SELECT name FROM tenants WHERE id = ?').get((req as any).tenant_id) as any;
+        const tenantName = tenant?.name || 'OUT';
+        const rand4 = Math.floor(Math.random() * 10000).toString().padStart(4, '0');
+        const tPart = tenantName.replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
+        const pPart = data.name.replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
+        const base = (tPart + pPart);
+        const prefix = (base || 'XXXX').substring(0, 4).padEnd(4, 'X');
+        data.sku = (prefix + rand4).substring(0, 8);
+      }
+
+      data.tenant_id = (req as any).tenant_id;
+      data.created_by = req.user?.sub;
+      data.updated_by = req.user?.sub;
+
       const cols = Object.keys(data);
       const vals = Object.values(data);
       const placeholders = cols.map(() => '?').join(', ');
@@ -202,15 +243,19 @@ router.post('/', requireRole(['admin', 'manager']), async (req, res) => {
 
       const newProduct = { id: result.lastInsertRowid, ...data };
 
-      // Queue for sync (outbox pattern)
+      // Queue for sync (outbox pattern) - sync will be triggered AFTER transaction commit
       try {
         const sync = getProductSyncService();
+        console.log('[ROUTE] Queueing product for sync:', { id: newProduct.id, name: data.name, tenant_id: data.tenant_id });
         sync.queueChangeInsideTransaction('product', 'insert', {
           ...newProduct,
+          created_by: data.created_by,
+          updated_by: data.updated_by,
           updated_at: new Date().toISOString(),
         });
+        console.log('[ROUTE] Product queued successfully for sync');
       } catch (syncErr) {
-        console.warn('[Sync] Could not queue new product for sync:', syncErr);
+        console.error('[ROUTE] Failed to queue product for sync:', syncErr);
       }
 
       // ── Send new product notification (role-driven, non-blocking) ─────
@@ -229,12 +274,35 @@ router.post('/', requireRole(['admin', 'manager']), async (req, res) => {
       throw error;
     }
   });
-  try { transaction(); } catch (error) { res.status(500).json({ error: 'Failed to create product' }); }
+  try { 
+    transaction(); 
+    // Trigger sync AFTER transaction commit (outbox is now visible)
+    // Trigger sync AFTER transaction commit (use GenericSync directly to avoid isRunning lock on ProductSyncService)
+    setImmediate(() => {
+      try {
+        const orchestrator = getOrchestratorV2();
+        const genericSync = orchestrator.getGenericSync();
+        console.log('[ROUTE] Triggering immediate push for product (tenant:', tenantId, ')');
+        genericSync.pushByEntity('product', String(tenantId)).then((count: number) => {
+          console.log('[ROUTE] Immediate sync completed - Pushed:', count);
+        }).catch((syncErr: any) => {
+          console.error('[ROUTE] Immediate sync failed:', syncErr);
+        });
+      } catch (syncErr) {
+        console.error('[ROUTE] Failed to trigger sync:', syncErr);
+      }
+    });
+  } catch (error) { res.status(500).json({ error: 'Failed to create product' }); }
 });
 
 // Update product
-router.patch('/:id', requireRole(['admin', 'manager']), async (req, res) => {
+router.patch('/:id', requireRole(['admin', 'manager']), async (req: any, res) => {
   const isSupabaseMode = env.RENDER_CLOUD_MODE || env.USE_SUPABASE_PRODUCTS;
+  const tenantId = parseInt(String(req.tenant_id), 10);
+  if (!tenantId || isNaN(tenantId)) {
+    return res.status(401).json({ error: 'TENANT_REQUIRED', message: 'tenant_id requis' });
+  }
+
   if (isSupabaseMode) {
     try {
       const id = (req.params.id as string) || '';
@@ -242,17 +310,17 @@ router.patch('/:id', requireRole(['admin', 'manager']), async (req, res) => {
       const dto: any = {};
       if (b.name !== undefined) dto.name = b.name;
       if (b.description !== undefined) dto.description = b.description;
-      if (b.selling_price !== undefined) dto.price = String(b.selling_price);
-      if (b.buying_price !== undefined) dto.cost_price = b.buying_price != null ? String(b.buying_price) : null;
+      if (b.selling_price !== undefined) dto.selling_price = String(b.selling_price);
+      if (b.buying_price !== undefined) dto.buying_price = b.buying_price != null ? String(b.buying_price) : null;
       if (b.stock_quantity !== undefined) dto.stock_quantity = b.stock_quantity;
       if (b.minimum_stock !== undefined) dto.low_stock_threshold = b.minimum_stock;
       if (b.category_id !== undefined) dto.category_id = b.category_id ? String(b.category_id) : null;
       // add more fields as needed
-      const updated = await productService.updateProduct(id, dto, (req as any).businessId);
+      const updated = await productService.updateProduct(id, dto, String(tenantId));
       return res.json({ success: true, data: {
         ...updated,
         selling_price: Number(updated.price) || 0,
-        buying_price: updated.cost_price ? Number(updated.cost_price) : 0,
+        buying_price: Number(updated.cost_price) || 0,
       }});
     } catch (e: any) {
       return res.status(500).json({ error: e?.message || 'Failed to update (Supabase)' });
@@ -276,9 +344,25 @@ router.patch('/:id', requireRole(['admin', 'manager']), async (req, res) => {
         return res.status(400).json({ error: 'No valid fields to update' });
       }
 
+      // ── Validate unique name per tenant if name is changing ───────────
+      if (updateData.name !== undefined) {
+        const duplicateName = db.prepare('SELECT id FROM products WHERE name = ? AND tenant_id = ? AND id <> ? AND deleted_at IS NULL').get(updateData.name, tenantId, id);
+        if (duplicateName) {
+          return res.status(400).json({ error: 'PRODUCT_NAME_DUPLICATE', message: 'Un produit avec ce nom existe déjà pour ce locataire.' });
+        }
+      }
+
+      // ── Validate unique SKU per tenant if SKU is changing ──────────────
+      if (updateData.sku !== undefined && updateData.sku !== null && updateData.sku.trim() !== '') {
+        const duplicateSku = db.prepare('SELECT id FROM products WHERE sku = ? AND tenant_id = ? AND id <> ? AND deleted_at IS NULL').get(updateData.sku, tenantId, id);
+        if (duplicateSku) {
+          return res.status(400).json({ error: 'PRODUCT_SKU_DUPLICATE', message: 'Un produit avec ce SKU existe déjà pour ce locataire.' });
+        }
+      }
+
       // ── Validate category_id if being changed ──────────────────────────
       if (updateData.category_id !== undefined) {
-        const cat = db.prepare('SELECT id FROM categories WHERE id = ?').get(updateData.category_id) as any;
+        const cat = db.prepare('SELECT id FROM categories WHERE id = ? AND tenant_id = ?').get(updateData.category_id, tenantId) as any;
         if (!cat) {
           return res.status(400).json({ error: `Category #${updateData.category_id} does not exist` });
         }
@@ -291,19 +375,31 @@ router.patch('/:id', requireRole(['admin', 'manager']), async (req, res) => {
       const stmt = db.prepare(`
         UPDATE products
         SET ${setClause}, updated_at = CURRENT_TIMESTAMP
-        WHERE id = ?
+        WHERE id = ? AND tenant_id = ?
       `);
 
-      const result = stmt.run(...vals, id);
+      const result = stmt.run(...vals, id, tenantId);
 
 if (result.changes > 0) {
-         // Queue for sync (outbox pattern)
+         // Queue for sync (outbox pattern) and trigger IMMEDIATE sync
          try {
            const sync = getProductSyncService();
            sync.queueChangeInsideTransaction('product', 'update', {
              id: Number(id),
              ...updateData,
              updated_at: new Date().toISOString(),
+             tenant_id: tenantId
+           });
+           
+           // Trigger immediate sync to Supabase (DON'T WAIT - fire and forget)
+           Promise.resolve().then(async () => {
+             try {
+               console.log('[ROUTE] Triggering immediate sync for tenant:', tenantId);
+               const result = await sync.syncNow(String(tenantId));
+               console.log('[ROUTE] Immediate sync completed for product update #', id, '- Pushed:', result.pushed);
+             } catch (syncErr) {
+               console.error('[ROUTE] Immediate sync failed:', syncErr);
+             }
            });
          } catch (syncErr) {
            console.warn('[Sync] Could not queue product change:', syncErr);
@@ -326,55 +422,59 @@ if (result.changes > 0) {
   }
 });
 
-// Delete product (soft delete by setting is_available to 0)
-router.delete('/:id', requireRole(['admin', 'manager']), (req, res) => {
+// Delete product
+router.delete('/:id', requireRole(['admin', 'manager']), async (req: any, res) => {
+  const isSupabaseMode = env.RENDER_CLOUD_MODE || env.USE_SUPABASE_PRODUCTS;
+  const tenantId = parseInt(String(req.tenant_id), 10);
+  if (!tenantId || isNaN(tenantId)) {
+    return res.status(401).json({ error: 'TENANT_REQUIRED', message: 'tenant_id requis' });
+  }
+
   try {
     const { id } = req.params;
 
-    // Check if product is used in any active orders
-    const activeOrders = db.prepare(`
-      SELECT COUNT(*) as count FROM order_items oi
-      JOIN orders o ON oi.order_id = o.id
-      WHERE oi.product_id = ? AND o.status IN ('pending', 'confirmed')
-    `).get(id) as any;
+    if (!isSupabaseMode) {
+      // Check if product is used in any active orders (SQLite check)
+      const activeOrders = db.prepare(`
+        SELECT COUNT(*) as count FROM order_items oi
+        JOIN orders o ON oi.order_id = o.id
+        WHERE oi.product_id = ? AND o.status IN ('pending', 'confirmed') AND o.tenant_id = ?
+      `).get(id, tenantId) as any;
 
-    if (activeOrders.count > 0) {
-      return res.status(400).json({
-        error: 'Cannot delete product that is part of active orders'
-      });
-    }
-
-    const result = db.prepare(`
-      UPDATE products
-      SET is_available = 0, updated_at = CURRENT_TIMESTAMP
-      WHERE id = ?
-    `).run(id);
-
-    if (result.changes > 0) {
-      // Queue for sync
-      try {
-        const sync = getProductSyncService();
-        sync.queueChangeInsideTransaction('product', 'update', { 
-          id: Number(id), 
-          is_available: 0,
-          updated_at: new Date().toISOString()
+      if (activeOrders.count > 0) {
+        return res.status(400).json({
+          error: 'Cannot delete product that is part of active orders'
         });
-      } catch (syncErr) {
-        console.warn('[Sync] Could not queue product deletion for sync:', syncErr);
       }
 
-      res.json({ success: true });
+      // Delegate to productService which handles adapter logic and sync queuing
+      await productService.deleteProduct(id, String(tenantId));
+
+      // Vérifier si l'opération a vraiment eu lieu
+      const checkDeleted = db.prepare(`SELECT is_available, deleted_at FROM products WHERE id = ? AND tenant_id = ?`).get(id, tenantId) as any;
+      if (checkDeleted && checkDeleted.is_available !== 0 && !checkDeleted.deleted_at) {
+        return res.status(500).json({ error: 'Delete operation may have failed - product still appears available' });
+      }
+
+      return res.json({ success: true });
     } else {
-      res.status(404).json({ error: 'Product not found' });
+      // Supabase mode - use the modern service
+      const id = (req.params.id as string) || '';
+      const deleted = await productService.deleteProduct(id, String(tenantId));
+      return res.json({ success: true, data: deleted });
     }
-  } catch (error) {
+  } catch (error: any) {
     console.error('[PRODUCTS_ROUTE_ERROR] Error deleting product:', error);
-    res.status(500).json({ error: 'Failed to delete product' });
+    res.status(500).json({ error: error.message || 'Failed to delete product' });
   }
 });
 
 // Get low stock products (Supabase compat)
-router.get('/low-stock', async (_req, res) => {
+router.get('/low-stock', async (req: any, res) => {
+  const tenantId = req.tenant_id;
+  if (!tenantId) {
+    return res.status(401).json({ error: 'TENANT_REQUIRED', message: 'tenant_id requis' });
+  }
   try {
     const isSupabaseMode = env.RENDER_CLOUD_MODE || env.USE_SUPABASE_PRODUCTS;
     if (!db && !isSupabaseMode) {
@@ -382,8 +482,7 @@ router.get('/low-stock', async (_req, res) => {
       return res.json([]);
     }
     if (isSupabaseMode) {
-      const businessId = (_req as any).businessId;
-      const result = await productService.listProducts(businessId, { is_available: true, limit: 500, page: 1 });
+      const result = await productService.listProducts(String(tenantId), { is_available: true, limit: 500, page: 1 });
       const low = (result.items || []).filter((p: any) => (p.stock_quantity ?? 0) <= (p.low_stock_threshold ?? 0));
       // minimal shape for existing UI
       return res.json(low.map((p: any) => ({
@@ -397,9 +496,9 @@ router.get('/low-stock', async (_req, res) => {
              c.name as category_name
       FROM products p
       LEFT JOIN categories c ON p.category_id = c.id
-      WHERE p.is_available = 1 AND p.stock_quantity <= p.minimum_stock
+      WHERE p.is_available = 1 AND p.stock_quantity <= p.minimum_stock AND p.tenant_id = ?
       ORDER BY (p.minimum_stock - p.stock_quantity) DESC
-    `).all();
+    `).all(tenantId);
     res.json(products);
   } catch (error: any) {
     console.error('[PRODUCTS API FORENSIC ERROR] /low-stock', {
@@ -413,9 +512,13 @@ router.get('/low-stock', async (_req, res) => {
 });
 
 // Adjust stock (add/subtract quantity with professional movement tracking)
-router.post('/:id/adjust-stock', requireRole(['admin', 'manager']), (req, res) => {
+router.post('/:id/adjust-stock', requireRole(['admin', 'manager']), (req: any, res) => {
   const { quantity, movement_type = 'adjustment', reason = 'Manual adjustment', user_id } = req.body;
   const { id } = req.params;
+  const tenantId = req.tenant_id;
+  if (!tenantId) {
+    return res.status(401).json({ error: 'TENANT_REQUIRED', message: 'tenant_id requis' });
+  }
 
   // ── Capturable state populated by the transaction callback ──────────
   let notifyData: {
@@ -436,8 +539,8 @@ router.post('/:id/adjust-stock', requireRole(['admin', 'manager']), (req, res) =
 
   const transaction = db.transaction(() => {
     const productRow = db.prepare(
-      'SELECT stock_quantity, buying_price, name FROM products WHERE id = ?'
-    ).get(id) as any;
+      'SELECT stock_quantity, buying_price, name, minimum_stock FROM products WHERE id = ? AND tenant_id = ?'
+    ).get(id, tenantId) as any;
     if (!productRow) throw new Error('Product not found');
 
     const qtyBefore   = productRow.stock_quantity || 0;
@@ -456,16 +559,17 @@ router.post('/:id/adjust-stock', requireRole(['admin', 'manager']), (req, res) =
     db.prepare(`
       UPDATE products
       SET stock_quantity = ?, updated_at = CURRENT_TIMESTAMP
-      WHERE id = ?
-    `).run(qtyAfter, id);
+      WHERE id = ? AND tenant_id = ?
+    `).run(qtyAfter, id, tenantId);
 
-    db.prepare(`
+    const movementResult = db.prepare(`
       INSERT INTO inventory_movements (
         product_id, movement_type,
         quantity_before, quantity_changed, quantity_after,
         unit_cost, total_value,
-        reason, created_by, reference_type
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        reason, created_by, reference_type,
+        tenant_id
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       id,
       movement_type,
@@ -476,7 +580,8 @@ router.post('/:id/adjust-stock', requireRole(['admin', 'manager']), (req, res) =
       totalValue,
       reason,
       user_id || null,
-      'manual'
+      'manual',
+      tenantId
     );
 
     // Concrete trigger for STOCK_LOW (Phase 3)
@@ -491,7 +596,8 @@ router.post('/:id/adjust-stock', requireRole(['admin', 'manager']), (req, res) =
           notification_type: 'STOCK_LOW',
           link: '/products',
           metadata: { product_id: id, stock: qtyAfter, minimum: minStock },
-        });
+          tenant_id: tenantId,
+        } as any);
       }
     } catch (e) {
       console.warn('[Products] Failed to create STOCK_LOW notification', e);
@@ -504,12 +610,34 @@ router.post('/:id/adjust-stock', requireRole(['admin', 'manager']), (req, res) =
         id: Number(id),
         stock_quantity: qtyAfter,
         updated_at: new Date().toISOString(),
+        tenant_id: tenantId
       });
     } catch (syncErr) {
       console.warn('[Sync] ProductSyncService not ready for stock adjustment, will retry on next cycle');
     }
 
-    return db.prepare('SELECT * FROM products WHERE id = ?').get(id);
+    try {
+      const sync = getOrchestratorV2().getGenericSync();
+      sync.queueChangeInsideTransaction('inventory_movement', 'insert', {
+        id: Number(movementResult.lastInsertRowid),
+        product_id: id,
+        movement_type,
+        quantity_before: qtyBefore,
+        quantity_changed: qtyChanged,
+        quantity_after: qtyAfter,
+        unit_cost: unitCost,
+        total_value: totalValue,
+        reason,
+        created_by: user_id || null,
+        reference_type: 'manual',
+        tenant_id: tenantId,
+        version: 1,
+      });
+    } catch (syncErr) {
+      console.warn('[Sync] GenericSyncService not ready for inventory movement, will retry on next cycle');
+    }
+
+    return db.prepare('SELECT * FROM products WHERE id = ? AND tenant_id = ?').get(id, tenantId);
   });
 
   try {
@@ -579,7 +707,7 @@ router.post(
       }
 
       // Verify product exists
-      const product = db.prepare('SELECT id FROM products WHERE id = ?').get(id) as any;
+      const product = db.prepare('SELECT id FROM products WHERE id = ? AND tenant_id = ?').get(id, (req as any).tenant_id) as any;
       if (!product) return res.status(404).json({ error: 'Product not found' });
 
       if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR, { recursive: true });
@@ -595,7 +723,7 @@ router.post(
       const imageUrl = `/api/uploads/products/${safeName}`;
 
       // Persist URL in product record
-      db.prepare('UPDATE products SET image_url = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(imageUrl, id);
+      db.prepare('UPDATE products SET image_url = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND tenant_id = ?').run(imageUrl, id, (req as any).tenant_id);
 
       console.log(`[Products] Image saved for product #${id}: ${safeName}`);
       res.json({ success: true, image_url: imageUrl });
@@ -611,7 +739,11 @@ router.post(
 // GET /products - supports both legacy flat array and new professional pagination.
 // In Supabase/Render cloud mode: delegates to modern productService + shape adapter
 // so that POS, ProductsGrid, etc. receive selling_price, category_name, etc. (fixes price=0 bug).
-router.get('/', async (req, res) => {
+router.get('/', async (req: any, res) => {
+  const tenantId = req.tenant_id;
+  if (!tenantId) {
+    return res.status(401).json({ error: 'TENANT_REQUIRED', message: 'tenant_id requis' });
+  }
   try {
     const isSupabaseMode = env.RENDER_CLOUD_MODE || env.USE_SUPABASE_PRODUCTS;
 
@@ -621,7 +753,6 @@ router.get('/', async (req, res) => {
     }
 
     if (isSupabaseMode) {
-      const businessId = (req as any).businessId || undefined;
       const hasPagination = !!(req.query.page || req.query.limit || req.query.search || req.query.lowStock || req.query.category_id);
 
       const page = hasPagination ? Math.max(1, parseInt(String(req.query.page)) || 1) : 1;
@@ -631,7 +762,7 @@ router.get('/', async (req, res) => {
       const search = (req.query.search as string || '').trim() || undefined;
       const categoryId = req.query.category_id ? String(req.query.category_id) : undefined;
 
-      const svcResult = await productService.listProducts(businessId, {
+      const svcResult = await productService.listProducts(String(tenantId), {
         page,
         limit,
         search,
@@ -644,7 +775,7 @@ router.get('/', async (req, res) => {
       if (env.SUPABASE_URL && env.SUPABASE_SERVICE_ROLE_KEY) {
         try {
           const supa = createClient(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false } });
-          const { data: cats } = await supa.from('categories').select('id, name');
+          const { data: cats } = await supa.from('categories').select('id, name').eq('tenant_id', tenantId);
           (cats || []).forEach((c: any) => catMap.set(String(c.id), c.name || ''));
         } catch (e) {
           console.warn('[Products] Supabase category enrichment skipped:', (e as any)?.message);
@@ -697,9 +828,9 @@ router.get('/', async (req, res) => {
                c.name as category_name
         FROM products p
         LEFT JOIN categories c ON p.category_id = c.id
-        WHERE p.is_available = 1
+        WHERE p.is_available = 1 AND p.tenant_id = ?
         ORDER BY p.name ASC
-      `).all();
+      `).all(tenantId);
       return res.json(products);
     }
 
@@ -711,8 +842,8 @@ router.get('/', async (req, res) => {
     const lowStock = req.query.lowStock === 'true';
     const categoryId = req.query.category_id ? parseInt(req.query.category_id as string) : null;
 
-    let where = 'p.is_available = 1';
-    const params: any[] = [];
+    let where = 'p.is_available = 1 AND p.tenant_id = ?';
+    const params: any[] = [tenantId];
 
     if (search) {
       where += ` AND (p.name LIKE ? OR p.barcode LIKE ? OR c.name LIKE ?)`;
@@ -783,22 +914,22 @@ router.get('/:id/history', (req, res) => {
     }
 
     Promise.all([
-      db.prepare('SELECT id, name, barcode, image_url, buying_price, selling_price, stock_quantity, minimum_stock, unit FROM products WHERE id = ?').get(id) as any,
+      db.prepare('SELECT id, name, barcode, image_url, buying_price, selling_price, stock_quantity, minimum_stock, unit FROM products WHERE id = ? AND tenant_id = ?').get(id, (req as any).tenant_id) as any,
       db.prepare(`
         SELECT si.quantity, si.unit_price, si.total_price, s.invoice_number, s.created_at, s.payment_method
         FROM sale_items si
         JOIN sales s ON si.sale_id = s.id
-        WHERE si.product_id = ?
+        WHERE si.product_id = ? AND s.tenant_id = ?
         ORDER BY s.created_at DESC
         LIMIT ?
-      `).all(parseInt(id), limit),
+      `).all(parseInt(id), (req as any).tenant_id, limit),
       db.prepare(`
         SELECT m.*, m.created_at
         FROM inventory_movements m
-        WHERE m.product_id = ?
+        WHERE m.product_id = ? AND m.tenant_id = ?
         ORDER BY m.created_at DESC
         LIMIT ?
-      `).all(parseInt(id), limit),
+      `).all(parseInt(id), (req as any).tenant_id, limit),
     ]).then(([product, saleItems, movements]) => {
       res.json({ product, saleItems, movements });
     }).catch(err => {

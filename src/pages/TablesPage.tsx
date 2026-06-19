@@ -339,7 +339,7 @@ const FloorPlan = () => {
 
   const permissions = useMemo(() => {
     const role = user?.role;
-    const isAdmin = role === 'admin';
+    const isAdmin = role === 'owner' || role === 'admin';
     const isManager = role === 'manager';
     const isWaiter = role === 'waiter';
     const canModify = isAdmin || isManager;

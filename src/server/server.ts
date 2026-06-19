@@ -25,18 +25,22 @@ import purchaseOrdersRoutes from './routes/purchase-orders';
 import stockAdjustmentsRoutes from './routes/stock-adjustments';
 import inventoryRoutes from './routes/inventory';
 import reportsRoutes from './routes/reports';
-import authRoutes from './routes/auth';
-import authSetupRoutes from './routes/auth-setup';
+import authService from './services/auth.service';
 import settingsRoutes from './routes/settings';
 import logsRoutes from './routes/logs';
 import customersRoutes from './routes/customers';
 import notificationsRoutes from './routes/notifications';
 import notificationPreferencesRoutes from './routes/notification_preferences';
 import scheduledReportsLogRoutes from './routes/scheduled_reports_log';
+import vouchersRoutes from './routes/vouchers';
+import voucherPurchaseRoutes from './routes/voucher-purchase';
 import db, { initializeDatabase } from './db/database';
 import { startSupabasePullWorker, getPullSyncStatus } from './services/supabase-pull-sync.service';
+import { startSupabaseRealtimePull, getSupabaseRealtimeStatus } from './services/supabase-realtime-sync.service';
 import { startScheduledReports } from './services/scheduled-reports.service';
-import { initializeProductSync, getOrderSyncService, SyncOrchestrator, UserTenantSyncService } from '../sync';
+// Note: Direct sync imports not needed here - sync is initialized via require() inside listen() callback
+// to ensure db is ready. The sync engine uses the V2 orchestrator for all tables.
+import { SyncOrchestratorV2 } from '../sync';
 import { env } from './config/env';
 import { createSaaSRouter } from './saas/saas.routes';
 import { createSaaSPaymentRouter } from './saas/saas-payment.routes';
@@ -50,16 +54,69 @@ const app = express();
 initializeDatabase();
 console.log('[RENDER BOOT] Database schema initialized/verified.');
 
+// ⭐ FIX: Run startup migrations to ensure all critical columns exist
+// This prevents "no such column: tenant_id" errors during sync
+try {
+  const { runStartupMigrations } = require('../sync/startup-migration');
+  runStartupMigrations(db);
+  console.log('[RENDER BOOT] Startup migrations completed successfully');
+} catch (err: any) {
+  console.error('[RENDER BOOT] FATAL: Startup migrations failed:', err);
+  // Don't throw - allow server to start even if migrations fail
+  // The fail-fast logic in SyncOrchestratorV2 will catch schema issues later
+}
+
 const PORT = process.env.PORT || 3001;
 
-app.use(express.json());
+// Increase JSON body size limit to handle large payloads (e.g., base64 images)
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
 // =============================================
-// FORENSIC REQUEST LOGGING (before everything)
+// FORENSIC REQUEST LOGGING + TENANT CONTEXT
 // =============================================
+import { tenantStorage } from './db/tenant-context';
+import { verifyJwt } from './middleware/jwt-auth';
+
 app.use((req, res, next) => {
-  console.log('[HTTP]', req.method, req.originalUrl, 'origin=', req.headers.origin || 'none');
-  next();
+  if (req.path !== '/health') {
+    console.log('[HTTP]', req.method, req.originalUrl);
+  }
+  
+  let tenantId: number | undefined;
+  let userId: number | undefined;
+
+  // Inject tenant_id from JWT into req for multi-tenant isolation
+  try {
+    const authHeader = req.headers.authorization;
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      const token = authHeader.slice(7);
+      const payload = verifyJwt(token);
+      
+      if (payload) {
+        tenantId = payload.tenant_id;
+        userId = payload.sub;
+        (req as any).tenant_id = tenantId;
+        (req as any).user_id = userId;
+        (req as any).user = payload;
+      } else {
+        // Log explicitly why token failed if it's not a public route
+        if (!req.path.startsWith('/api/auth') && !req.path.startsWith('/menu')) {
+          console.warn(`[Auth] Invalid token provided for protected route: ${req.originalUrl}`);
+        }
+      }
+    }
+  } catch (err) {
+    console.error('[Auth] Context injection error:', err);
+  }
+  
+  if (tenantId) {
+    tenantStorage.run({ tenantId, userId }, () => {
+      next();
+    });
+  } else {
+    next();
+  }
 });
 
 // =============================================
@@ -69,6 +126,7 @@ const ALLOWED_ORIGINS = new Set<string | undefined>([
   process.env.FRONTEND_BASE_URL,
   process.env.VITE_FRONTEND_URL,
   'http://localhost:5173',
+  'http://localhost:5174',
   'http://localhost:3000',
   'https://ekala.vercel.app',
   process.env.RENDER_EXTERNAL_URL,
@@ -107,11 +165,20 @@ app.get('/health', (_req, res) => {
 app.get('/api/sync/status', (_req, res) => {
   try {
     const s = getPullSyncStatus();
+    const realtime = getSupabaseRealtimeStatus();
     res.json({
       worker: {
         running: s.workerRunning,
         enabled: s.enabled,
         intervalMs: s.pullIntervalMs,
+      },
+      realtime: {
+        enabled: realtime.enabled,
+        subscribed: realtime.subscribed,
+        tables: realtime.tables,
+        lastEventAt: realtime.lastEventAt,
+        lastError: realtime.lastError,
+        eventsApplied: realtime.eventsApplied,
       },
       lastPullAt: s.lastPullAt,
       lastSuccessfulPullAt: s.lastSuccessfulPullAt,
@@ -137,7 +204,104 @@ console.log('[RENDER START] PORT=', PORT);
 app.use('/api/menu', menuRoutes);
 app.use('/menu', menuRoutes);   // clean public URLs for QR codes (e.g. /menu/table/<token>)
 
-// Core API used by the admin/staff frontend (POS, Tables, Orders, Dashboard, Expenses)
+import { requireTenantScope } from './middleware/tenant-scope';
+import { requireActiveSubscription, requireSubscriptionForWrites, getSubscriptionStatus, invalidateSubscriptionCache } from './middleware/subscription-guard';
+import { logSubscriptionEvent } from './middleware/subscription-audit-logger';
+
+app.use('/api/auth', authService); // Public
+
+// JWT Authentication - extracts user from Bearer token and sets req.user
+import { requireJwtAuth } from './middleware/jwt-auth';
+app.use('/api', (req, res, next) => {
+  // Skip JWT auth for health endpoint and public paths
+  if (req.path === '/health' || req.path === '/sync/status') {
+    return next();
+  }
+  // Also skip for auth endpoints (they handle their own auth)
+  if (req.path.startsWith('/auth')) {
+    return next();
+  }
+  requireJwtAuth(req, res, next);
+});
+
+// Strict Tenant Scoping for ALL other /api routes
+app.use('/api', (req, res, next) => {
+  if (req.path === '/health') return next();
+  requireTenantScope(req, res, next);
+});
+
+// Subscription Guard — intercepts all protected API requests
+// Place AFTER tenant scope (which injects tenant_id) and BEFORE routes
+app.use('/api', async (req, res, next) => {
+  // Skip subscription check for health, sync status, and SaaS routes
+  if (req.path === '/health' || req.path === '/sync/status' || req.path.startsWith('/saas') || req.path.startsWith('/voucher-purchase')) {
+    return next();
+  }
+
+  try {
+    const tenantId = (req as any).tenant_id;
+    if (!tenantId) return next(); // No tenant context → skip
+
+    const sub = await getSubscriptionStatus(tenantId);
+    (req as any).subscription = sub;
+
+    // Log the event
+    const event = sub.state === 'active' || sub.state === 'trial'
+      ? 'ACCESS_GRANTED'
+      : sub.state === 'grace'
+        ? (['GET', 'HEAD', 'OPTIONS'].includes(req.method) ? 'ACCESS_READ_ONLY' : 'ACCESS_DENIED_WRITE')
+        : 'ACCESS_BLOCKED';
+
+    logSubscriptionEvent({
+      event,
+      tenantId,
+      userId: (req as any).user?.sub,
+      subscription: sub,
+      method: req.method,
+      path: req.originalUrl,
+      ip: req.ip,
+      userAgent: req.headers['user-agent'],
+    });
+
+    // Enforce access control
+    if (sub.state === 'active' || sub.state === 'trial') {
+      return next();
+    } else if (sub.state === 'grace') {
+      if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) {
+        res.setHeader('X-Subscription-Warning', 'grace_period');
+        res.setHeader('X-Subscription-Grace-Days', String(sub.graceDaysRemaining || 0));
+        return next();
+      }
+      return res.status(403).json({
+        error: 'SUBSCRIPTION_GRACE_PERIOD',
+        message: 'Abonnement expiré — accès en lecture seule pendant la période de grâce.',
+        graceDaysRemaining: sub.graceDaysRemaining,
+        planName: sub.planName,
+        renewalUrl: '/billing',
+      });
+    } else {
+      return res.status(403).json({
+        error: 'SUBSCRIPTION_REQUIRED',
+        message: sub.state === 'no_plan'
+          ? 'Aucun abonnement actif. Choisissez un plan pour continuer.'
+          : sub.state === 'cancelled'
+            ? 'Abonnement annulé. Souscrivez à un nouveau plan.'
+            : 'Abonnement expiré. Renouvelez pour continuer.',
+        state: sub.state,
+        planName: sub.planName,
+        daysUntilRenewal: sub.daysUntilRenewal,
+        renewalUrl: '/billing',
+        pricingUrl: '/pricing',
+      });
+    }
+  } catch (err: any) {
+    console.error('[SubGuard] Middleware error:', err.message);
+    // Fail-open: allow request on error
+    return next();
+  }
+});
+
+// Routes now receive req.tenant_id guaranteed
 app.use('/api/tables', tablesRoutes);
 app.use('/api/products', productsRoutes);
 app.use('/api/orders', ordersRoutes);
@@ -151,14 +315,14 @@ app.use('/api/purchase-orders', purchaseOrdersRoutes);
 app.use('/api/stock-adjustments', stockAdjustmentsRoutes);
 app.use('/api/inventory', inventoryRoutes);
 app.use('/api/reports', reportsRoutes);
-app.use('/api/auth', authRoutes);
-app.use('/api/auth', authSetupRoutes);
 app.use('/api/settings', settingsRoutes);
 app.use('/api/logs', logsRoutes);
 app.use('/api/customers', customersRoutes);
 app.use('/api/notifications', notificationsRoutes);
 app.use('/api/notification_preferences', notificationPreferencesRoutes);
 app.use('/api/scheduled_reports_log', scheduledReportsLogRoutes);
+app.use('/api/vouchers', vouchersRoutes);
+app.use('/api/voucher-purchase', voucherPurchaseRoutes);
 
 // =============================================================================
 // SaaS Multi-Tenant Routes (Phase 1 + 3)
@@ -166,6 +330,34 @@ app.use('/api/scheduled_reports_log', scheduledReportsLogRoutes);
 app.use('/api', createSaaSRouter());
 app.use('/api', createSaaSPaymentRouter());
 startSubscriptionExpirationCron();
+
+// ─── SYNC ENGINE INITIALIZATION (SYNCHRONOUS - MUST BE BEFORE app.listen) ───
+// CRITICAL: This MUST run before app.listen() so that getProductSyncService()
+// works immediately when routes are called (e.g. TableService.create/delete).
+let syncOrchestratorV2: any = null;
+
+if (!env.RENDER_CLOUD_MODE && db) {
+  const supabaseUrl = process.env.SUPABASE_URL;
+  const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY;
+
+  if (supabaseUrl && supabaseKey) {
+    try {
+      const { initializeSyncV2 } = require('../sync/index');
+      
+      // Initialize helper DB for routes outbox  
+      const { setOutboxDatabase: setOutboxDb } = require('../sync/sync-helper');
+      setOutboxDb(db);
+      
+      syncOrchestratorV2 = initializeSyncV2(db, supabaseUrl, supabaseKey);
+      
+      console.log(`[SyncV2] Engine initialized (ALL ${26} tables covered)`);
+    } catch (err: any) {
+      console.error('[SyncV2] Failed to initialize sync engine:', err?.message || err);
+    }
+  } else {
+    console.warn('[SyncV2] SUPABASE_URL or key missing — sync disabled');
+  }
+}
 
 app.listen(PORT, () => {
   console.log(`[RENDER BOOT] Express listening on port ${PORT}`);
@@ -184,135 +376,26 @@ app.listen(PORT, () => {
   console.log('[RENDER BOOT] endpoints mounted: /health, /test, /api/auth, /api/menu, /api/tables, /api/products, /api/categories, /api/orders, /api/sales, /api/expenses, /api/dashboard, /api/users, /api/settings, /api/logs, /api/inventory, /api/reports, /api/suppliers, /api/purchase-orders, /api/stock-adjustments');
 
   // Lightweight Supabase → SQLite pull worker (QR orders visibility)
-  // Auto-enabled when SUPABASE_URL + SERVICE_ROLE_KEY are present (unless explicitly disabled with ENABLE_SUPABASE_PULL=false).
-  // This is what makes customer orders from the public QR Menu appear in the staff POS.
   startSupabasePullWorker();
 
-  // Scheduled email reports (Morning / Midday / EOD)
-  // Only starts on local POS machines (not in pure cloud mode)
+  // Realtime Supabase → SQLite pull bridge for full bidirectional parity
+  startSupabaseRealtimePull();
+
+  // Scheduled email reports
   if (!env.RENDER_CLOUD_MODE) {
     startScheduledReports();
   }
 
-  // ─────────────────────────────────────────────────────────────────────────────
-  // Bidirectional product stock + inventory_movements sync (SQLite ↔ Supabase)
-  // Uses the outbox engine. Runs in the SAME process that performs the writes
-  // (sales.ts / products.ts), so queueChange calls actually create outbox rows.
-  // ─────────────────────────────────────────────────────────────────────────────
-  if (!env.RENDER_CLOUD_MODE && db) {
-    const supabaseUrl = process.env.SUPABASE_URL;
-    const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY;
-    const tenantId = Number(process.env.SYNC_TENANT_ID || '5');
-
-    if (supabaseUrl && supabaseKey) {
-      (async () => {
-        try {
-          // Initial pull of users from Supabase to ensure waiter_name is available locally
-          console.log(`[Server] Pulling initial users from Supabase (tenantId=${tenantId})...`);
-          const { getSupabaseClient } = require('./database/supabase.client');
-          const supabase = getSupabaseClient();
-          
-          // Force pull all users regardless of timestamp
-          const { data: remoteUsers, error: pullError } = await supabase
-            .from('users')
-            .select('id, full_name, username, pin_code, role, is_active, email, tenant_id, phone, password_hash, has_setup_pin')
-            .or(`tenant_id.eq.5,tenant_id.eq.${tenantId}`);
-          
-          if (pullError) {
-            console.warn('[Server] Initial user pull warning:', pullError.message);
-          } else if (remoteUsers && remoteUsers.length > 0) {
-            console.log(`[Server] Found ${remoteUsers.length} users in Supabase, syncing to local SQLite...`);
-            
-            for (const remoteUser of remoteUsers) {
-              // Check if user exists locally by remote_id
-              let localUser = db.prepare('SELECT id, remote_id FROM users WHERE remote_id = ?').get(remoteUser.id);
-              
-              if (localUser) {
-                // Update existing user
-                db.prepare(`
-                  UPDATE users 
-                  SET full_name = ?, username = ?, pin_code = ?, role = ?, is_active = ?, email = ?, tenant_id = ?, phone = ?, password_hash = ?, has_setup_pin = ?
-                  WHERE remote_id = ?
-                `).run(
-                  remoteUser.full_name,
-                  remoteUser.username,
-                  remoteUser.pin_code,
-                  remoteUser.role,
-                  remoteUser.is_active ? 1 : 0,
-                  remoteUser.email,
-                  remoteUser.tenant_id || 5,
-                  remoteUser.phone || null,
-                  remoteUser.password_hash || null,
-                  remoteUser.has_setup_pin ? 1 : 0,
-                  remoteUser.id
-                );
-                console.log(`[Server] Updated local user ${localUser.id} from Supabase user ${remoteUser.id}`);
-              } else {
-                // Try to find by username
-                localUser = db.prepare('SELECT id, remote_id FROM users WHERE username = ?').get(remoteUser.username);
-                
-                if (localUser) {
-                  // Update and set remote_id
-                  db.prepare(`
-                    UPDATE users 
-                    SET full_name = ?, pin_code = ?, role = ?, is_active = ?, email = ?, remote_id = ?, tenant_id = ?, phone = ?, password_hash = ?, has_setup_pin = ?
-                    WHERE username = ?
-                  `).run(
-                    remoteUser.full_name,
-                    remoteUser.pin_code,
-                    remoteUser.role,
-                    remoteUser.is_active ? 1 : 0,
-                    remoteUser.email,
-                    remoteUser.id,
-                    remoteUser.tenant_id || 5,
-                    remoteUser.phone || null,
-                    remoteUser.password_hash || null,
-                    remoteUser.has_setup_pin ? 1 : 0,
-                    remoteUser.username
-                  );
-                  console.log(`[Server] Updated local user ${localUser.id} with remote_id=${remoteUser.id}`);
-                } else {
-                  // Create new user from Supabase data
-                  const result = db.prepare(`
-                    INSERT INTO users (full_name, username, pin_code, role, is_active, email, remote_id, tenant_id, phone, password_hash, has_setup_pin)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                  `).run(
-                    remoteUser.full_name,
-                    remoteUser.username,
-                    remoteUser.pin_code,
-                    remoteUser.role,
-                    remoteUser.is_active ? 1 : 0,
-                    remoteUser.email,
-                    remoteUser.id,
-                    remoteUser.tenant_id || 5,
-                    remoteUser.phone || null,
-                    remoteUser.password_hash || null,
-                    remoteUser.has_setup_pin ? 1 : 0
-                  );
-                  console.log(`[Server] Created local user ${result.lastInsertRowid} from Supabase user ${remoteUser.id}`);
-                }
-              }
-            }
-            console.log('[Server] Initial user sync complete');
-          }
-
-          const syncService = initializeProductSync(db, supabaseUrl, supabaseKey);
-          const orderService = getOrderSyncService();
-          const { getSaleSyncService } = require('../sync/index');
-          const saleService = getSaleSyncService();
-          const userTenantService = new UserTenantSyncService(db, supabaseUrl, supabaseKey);
-          const orchestrator = new SyncOrchestrator(syncService, orderService, saleService, userTenantService, db, String(tenantId));
-          orchestrator.startScheduler(30000);           // PUSH + PULL every 30s
-          orchestrator.triggerSync().catch(() => {});   // kick off immediately
-
-          console.log(`[ProductSync] Bidirectional engine started (tenantId=${tenantId}, 30s interval)`);
-          console.log('[ProductSync] Stock adjustments and QR checkout sales will now push to Supabase');
-        } catch (err: any) {
-          console.error('[ProductSync] Failed to initialize bidirectional sync:', err?.message || err);
-        }
-      })();
-    } else {
-      console.warn('[ProductSync] SUPABASE_URL or key missing — product sync disabled');
-    }
+  // Démarrer le scheduler périodique du sync V2 (après le démarrage du serveur)
+  if (syncOrchestratorV2) {
+    syncOrchestratorV2.startScheduler(30000);
+    console.log(`[SyncV2] Scheduler started (30s interval)`);
+    
+    // Premier sync immédiat
+    setImmediate(() => {
+      syncOrchestratorV2.triggerSync().catch((err: any) => {
+        console.error('[SyncV2] Initial sync failed:', err);
+      });
+    });
   }
 });

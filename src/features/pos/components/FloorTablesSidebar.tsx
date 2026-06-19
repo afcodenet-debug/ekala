@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { Search, Users, Clock, DollarSign, Filter, Layers, CheckCircle2, Zap } from 'lucide-react';
+import { Search, Users, Clock, DollarSign, Filter, Layers, CheckCircle2, Zap, User } from 'lucide-react';
 import { useTableStore } from '../../../stores/useTableStore';
 import { useAuthStore } from '../../../stores/useAuthStore';
 import { usePOSStore } from '../../../stores/usePOSStore';
@@ -235,6 +235,14 @@ const FLOOR_STYLES = `
   @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.5} }
 `;
 
+const getDuration = (createdAt?: string) => {
+  if (!createdAt) return '0m';
+  const start = new Date(createdAt).getTime();
+  const now = Date.now();
+  const diff = Math.floor((now - start) / 60000);
+  return `${diff}m`;
+};
+
 /* ─── HorizontalBar ─────────────────────────────────────────────────────── */
 const HorizontalBar: React.FC<{
   tables: any[]; selectedTableId: number | null; onTableClick: (id: number) => void;
@@ -370,11 +378,15 @@ const HorizontalBar: React.FC<{
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 6, paddingTop: 8, borderTop: `1px solid ${isSelected ? 'rgba(212,175,55,0.1)' : colors.border}`, zIndex: 1 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
                     <DollarSign size={8} color={colors.accent.gold} />
-                    <span className="mono" style={{ fontSize: 6, fontWeight: 800, color: colors.accent.gold }}>{formatPrice(45.8, currency, lang)}</span>
+                    <span className="mono" style={{ fontSize: 6, fontWeight: 800, color: colors.accent.gold }}>
+                      {formatPrice(table.active_order_total || 0, currency, lang)}
+                    </span>
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
                     <Clock size={10} color={colors.text3} />
-                    <span className="mono" style={{ fontSize: 10, color: colors.text3 }}>23m</span>
+                    <span className="mono" style={{ fontSize: 10, color: colors.text3 }}>
+                      {getDuration(table.active_order_created_at)}
+                    </span>
                   </div>
                 </div>
               )}
@@ -459,6 +471,14 @@ const VerticalSidebar: React.FC<{
                       <Users size={12} color={colors.text3} />
                       <span style={{ fontSize: 11, color: colors.text3, fontWeight: 600 }}>{table.capacity} {t('pos.places')}</span>
                     </div>
+                    {table.waiter_name && (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 4 }}>
+                        <User size={12} color={colors.accent.blue} />
+                        <span style={{ fontSize: 11, color: colors.text2, fontWeight: 700 }}>
+                          {table.waiter_name}
+                        </span>
+                      </div>
+                    )}
                   </div>
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '4px 10px', borderRadius: 100, background: cfg.dim, border: `1px solid ${cfg.color}33` }}>
@@ -471,11 +491,15 @@ const VerticalSidebar: React.FC<{
                 <div style={{ display: 'flex', justifyContent: 'space-between', paddingTop: 12, borderTop: `1px solid ${isSel ? 'rgba(212,175,55,0.1)' : colors.border}` }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
                     <DollarSign size={8} color={colors.accent.gold} />
-                    <span className="mono" style={{ fontSize: 8, fontWeight: 700, color: colors.accent.gold }}>{formatPrice(45.8, currency, lang)}</span>
+                    <span className="mono" style={{ fontSize: 8, fontWeight: 700, color: colors.accent.gold }}>
+                      {formatPrice(table.active_order_total || 0, currency, lang)}
+                    </span>
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
                     <Clock size={12} color={colors.text3} />
-                    <span className="mono" style={{ fontSize: 11, color: colors.text3 }}>23 MIN</span>
+                    <span className="mono" style={{ fontSize: 11, color: colors.text3 }}>
+                      {getDuration(table.active_order_created_at).toUpperCase()}
+                    </span>
                   </div>
                 </div>
               )}

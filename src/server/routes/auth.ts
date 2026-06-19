@@ -2,6 +2,7 @@ import express from 'express';
 import db from '../db/database';
 import { env } from '../config/env';
 import { createClient } from '@supabase/supabase-js';
+import { signJwt } from '../middleware/jwt-auth';
 
 const router = express.Router();
 
@@ -20,8 +21,8 @@ router.post('/login', async (req, res) => {
       });
 
       let query = supabase
-        .from('user')
-        .select('id, full_name, role, is_active, username, phone')
+        .from('users')
+        .select('id, full_name, role, is_active, username, phone, email, tenant_id')
         .eq('is_active', true)
         .eq('pin_code', pin_code);
 
@@ -38,8 +39,15 @@ router.post('/login', async (req, res) => {
       }
 
       if (user) {
+        const token = signJwt({
+          sub: user.id,
+          tenant_id: user.tenant_id,
+          role: user.role,
+          email: user.email,
+          full_name: user.full_name,
+        });
         console.log(`[Auth] Success (Supabase): User ${user.full_name} (${user.role}) logged in.`);
-        return res.json(user);
+        return res.json({ token, user: { ...user, tenant_name: null, tenant_slug: null } });
       } else {
         console.warn(`[Auth] Failed (Supabase): No active user found for PIN ${pin_code}`);
         return res.status(401).json({ error: 'Invalid Credentials or Inactive Account' });
@@ -61,21 +69,28 @@ router.post('/login', async (req, res) => {
 
     if (identity) {
       user = db.prepare(`
-        SELECT id, full_name, role, is_active, username, phone
+        SELECT id, full_name, role, is_active, username, phone, email, tenant_id
         FROM users 
         WHERE (username = ? OR phone = ?) AND pin_code = ? AND is_active = 1
       `).get(identity, identity, pin_code);
     } else {
       user = db.prepare(`
-        SELECT id, full_name, role, is_active
+        SELECT id, full_name, role, is_active, username, phone, email, tenant_id
         FROM users 
         WHERE pin_code = ? AND is_active = 1
       `).get(pin_code);
     }
 
     if (user) {
+      const token = signJwt({
+        sub: user.id,
+        tenant_id: user.tenant_id,
+        role: user.role,
+        email: user.email,
+        full_name: user.full_name,
+      });
       console.log(`[Auth] Success: User ${user.full_name} (${user.role}) logged in.`);
-      res.json(user);
+      res.json({ token, user });
     } else {
       console.warn(`[Auth] Failed: No active user found for PIN ${pin_code}`);
       res.status(401).json({ error: 'Invalid Credentials or Inactive Account' });

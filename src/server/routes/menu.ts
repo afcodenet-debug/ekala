@@ -15,6 +15,7 @@ type TableRow = {
   status: string;
   assigned_waiter_id: number | string | null;
   qr_token: string | null;
+  tenant_id: number;
 };
 
 router.get('/table/:qr_token', async (req, res) => {
@@ -29,7 +30,7 @@ router.get('/table/:qr_token', async (req, res) => {
       USE_SUPABASE_PRODUCTS: env.USE_SUPABASE_PRODUCTS,
     });
 
-    // Lazy-load local SQLite only when at least one flag is false (Render Supabase-only deploys must never open the DB file)
+    // Lazy-load local SQLite only when at least one flag is false
     const useLegacy = !env.USE_SUPABASE_TABLES || !env.USE_SUPABASE_PRODUCTS;
     let localDb: any = null;
     if (useLegacy) {
@@ -46,11 +47,10 @@ router.get('/table/:qr_token', async (req, res) => {
       console.log('[Public Menu][FORENSIC] After tableRepo.findByQrToken', {
         qr_token,
         tableFound: !!table,
-        table: table,
       });
     } else {
       table = localDb.prepare(`
-        SELECT id, table_number, capacity, status, assigned_waiter_id, qr_token
+        SELECT id, table_number, capacity, status, assigned_waiter_id, qr_token, tenant_id
         FROM restaurant_tables
         WHERE qr_token = ?
         LIMIT 1
@@ -66,11 +66,16 @@ router.get('/table/:qr_token', async (req, res) => {
       return res.status(404).json({ error: 'Table not found for given qr_token' });
     }
 
+    const tenantId = table.tenant_id;
+    if (!tenantId) {
+      return res.status(400).json({ error: 'INVALID_TABLE', message: 'Table has no tenant_id' });
+    }
+
     // === PRODUCTS (Supabase si flag activé) ===
     let products: any[] = [];
 
     if (env.USE_SUPABASE_PRODUCTS) {
-      console.log('[Public Menu] Serving products from Supabase (direct query on real schema)');
+      console.log(`[Public Menu] Serving products from Supabase (tenant=${tenantId})`);
 
       const supabase = createClient(env.SUPABASE_URL!, env.SUPABASE_SERVICE_ROLE_KEY!, {
         auth: { persistSession: false },
@@ -80,6 +85,7 @@ router.get('/table/:qr_token', async (req, res) => {
         .from('products')
         .select('id, category_id, name, description, selling_price, buying_price, stock_quantity, minimum_stock, unit, image_url, is_available')
         .eq('is_available', true)
+        .eq('tenant_id', tenantId)
         .order('category_id')
         .limit(1000);
 
@@ -92,7 +98,7 @@ router.get('/table/:qr_token', async (req, res) => {
           category_id: p.category_id,
           name: p.name,
           description: p.description,
-          price: Number(p.selling_price) || 0,           // ← on lit directement selling_price
+          price: Number(p.selling_price) || 0,
           currency: 'ZMW',
           unit: p.unit ?? 'pcs',
           image_url: p.image_url,
@@ -100,12 +106,9 @@ router.get('/table/:qr_token', async (req, res) => {
           stock_quantity: Number(p.stock_quantity ?? 0),
           minimum_stock: Number(p.minimum_stock ?? 0),
         }));
-
-        console.log('[Public Menu][PRICE DEBUG] Direct Supabase query used. Sample prices:', 
-          products.slice(0, 5).map((x: any) => x.price));
       }
     } else {
-      console.log('[Public Menu] Serving products from local SQLite');
+      console.log(`[Public Menu] Serving products from local SQLite (tenant=${tenantId})`);
       products = localDb.prepare(`
         SELECT 
           p.id, p.category_id, p.name, p.description,
@@ -113,18 +116,14 @@ router.get('/table/:qr_token', async (req, res) => {
           p.unit, p.image_url, p.is_available,
           p.stock_quantity, p.minimum_stock
         FROM products p
-        WHERE p.is_available = 1
+        WHERE p.is_available = 1 AND p.tenant_id = ?
         ORDER BY p.category_id ASC, p.name ASC
-      `).all() as any[];
+      `).all(tenantId) as any[];
 
-      // Coerce to number for consistent API contract (SQLite returns number, but ensure)
       products = products.map((p: any) => ({ ...p, price: Number(p.price) || 0 }));
-
-      // === DEBUG: Legacy path (should only happen if USE_SUPABASE_PRODUCTS is false on Render) ===
-      console.log('[Public Menu][PRICE DEBUG] Legacy/SQLite path used. Sample prices:', products.slice(0,3).map((p:any) => p.price));
     }
 
-    // Construction du menu (même logique qu’avant)
+    // Construction du menu
     const categoryIds = Array.from(
       new Set(products.map(p => p.category_id).filter((x): x is string | number => x != null))
     );
@@ -133,7 +132,6 @@ router.get('/table/:qr_token', async (req, res) => {
     let categories: Array<{ id: number; name: string; description: string | null }> = [];
 
     if (env.USE_SUPABASE_PRODUCTS) {
-      // Fetch categories directly from Supabase (no local DB)
       if (categoryIds.length > 0) {
         const supabase = createClient(env.SUPABASE_URL!, env.SUPABASE_SERVICE_ROLE_KEY!, {
           auth: { persistSession: false },
@@ -141,6 +139,7 @@ router.get('/table/:qr_token', async (req, res) => {
         const { data: catData, error: catErr } = await supabase
           .from('categories')
           .select('id, name, description')
+          .eq('tenant_id', tenantId)
           .in('id', categoryIds);
         if (catErr) {
           console.warn('[Public Menu] Supabase categories query error:', catErr.message);
@@ -152,8 +151,8 @@ router.get('/table/:qr_token', async (req, res) => {
       categories = localDb.prepare(`
         SELECT id, name, description
         FROM categories
-        WHERE id IN (${categoryIds.map(() => '?').join(',')})
-      `).all(...categoryIds) as any;
+        WHERE id IN (${categoryIds.map(() => '?').join(',')}) AND tenant_id = ?
+      `).all(...categoryIds, tenantId) as any;
     }
 
     const categoriesById = new Map(categories.map(c => [c.id, c]));
@@ -176,7 +175,7 @@ router.get('/table/:qr_token', async (req, res) => {
             id: p.id,
             name: p.name,
             description: p.description,
-            price: p.price,           // already normalized above from selling_price
+            price: p.price,
             currency: p.currency,
             unit: p.unit,
             image_url: p.image_url,
@@ -187,15 +186,6 @@ router.get('/table/:qr_token', async (req, res) => {
         };
       })
       .filter(c => c.items.length > 0);
-
-    // === FINAL DEBUG SUMMARY (always logged on QR menu load) ===
-    const allPrices = menu.flatMap((c: any) => c.items.map((i: any) => i.price));
-    console.log('[Public Menu][PRICE DEBUG] FINAL RESPONSE SUMMARY:');
-    console.log('  Total categories:', menu.length);
-    console.log('  Total items:', allPrices.length);
-    console.log('  Sample prices sent to frontend:', allPrices.slice(0, 8));
-    console.log('  Any zero prices?', allPrices.some((p: number) => p === 0));
-    // === END DEBUG ===
 
     res.json({
       table: {
@@ -212,34 +202,16 @@ router.get('/table/:qr_token', async (req, res) => {
   }
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Customer registration for QR Menu (public, no auth required)
-// POST /api/menu/register-customer
-// Body: { phone_number: string (digits) }
-// Response: { success: boolean, phone_number: string, pin_code: string, alreadyExists?: boolean }
-// Requirements implemented:
-// - phone_number UNIQUE
-// - email UNIQUE (optional)
-// - name = "Client" + random 6 digits
-// - pin_code = last 6 digits of phone_number
-// - Professional error handling + logging
-// ─────────────────────────────────────────────────────────────────────────────
 router.post('/register-customer', async (req, res) => {
-  const { phone_number } = req.body || {};
+  const { phone_number, qr_token } = req.body || {};
 
-  console.log('[Public Menu] register-customer request', { phone_number: phone_number ? phone_number.slice(0, 3) + '***' : null });
-
-  if (!phone_number || typeof phone_number !== 'string') {
-    return res.status(400).json({ error: 'Numéro de téléphone requis' });
+  if (!phone_number || typeof phone_number !== 'string' || !qr_token) {
+    return res.status(400).json({ error: 'Numéro de téléphone et qr_token requis' });
   }
 
   const digits = phone_number.replace(/\D/g, '');
-
-  if (digits.length < 9) {
-    return res.status(400).json({ error: 'Numéro minimum 9 chiffres' });
-  }
-  if (digits.length > 14) {
-    return res.status(400).json({ error: 'Numéro maximum 14 chiffres' });
+  if (digits.length < 9 || digits.length > 14) {
+    return res.status(400).json({ error: 'Format de numéro invalide' });
   }
 
   const supabase = createClient(env.SUPABASE_URL!, env.SUPABASE_SERVICE_ROLE_KEY!, {
@@ -247,21 +219,23 @@ router.post('/register-customer', async (req, res) => {
   });
 
   try {
-    // 1. Check if phone already exists
+    // Find tenant from qr_token
+    const { data: table } = await supabase.from('restaurant_tables').select('tenant_id').eq('qr_token', qr_token).single();
+    if (!table) return res.status(404).json({ error: 'Table introuvable' });
+    const tenantId = table.tenant_id;
+    if (!tenantId) {
+      return res.status(400).json({ error: 'INVALID_TABLE', message: 'Table has no tenant_id' });
+    }
+
+    // 1. Check if phone already exists for this tenant
     const { data: existing, error: checkErr } = await supabase
       .from('customers')
       .select('phone_number, pin_code, name')
       .eq('phone_number', digits)
-      .single();
-
-    if (checkErr && checkErr.code !== 'PGRST116') { // PGRST116 = no rows
-      console.error('[Public Menu] Error checking existing customer:', checkErr);
-      return res.status(500).json({ error: 'Erreur lors de la vérification du numéro' });
-    }
+      .eq('tenant_id', tenantId)
+      .maybeSingle();
 
     if (existing) {
-      // Already registered → return existing PIN (last 6 digits)
-      console.log('[Public Menu] Customer already exists', { phone: digits.slice(0, 3) + '***' });
       return res.json({
         success: true,
         phone_number: existing.phone_number,
@@ -271,10 +245,9 @@ router.post('/register-customer', async (req, res) => {
     }
 
     // 2. Generate data
-    const randomSuffix = Math.floor(100000 + Math.random() * 900000); // 6 digits
+    const randomSuffix = Math.floor(100000 + Math.random() * 900000);
     const name = `Client${randomSuffix}`;
-    const pin_code = digits.slice(-6); // last 6 digits (pad left with 0 if needed? but phones are long enough)
-    const email = null; // optional, not provided in this flow
+    const pin_code = digits.slice(-6);
 
     // 3. Insert new customer
     const { data: inserted, error: insertErr } = await supabase
@@ -283,30 +256,16 @@ router.post('/register-customer', async (req, res) => {
         phone_number: digits,
         name,
         pin_code,
-        email,                    // can be updated later
+        tenant_id: tenantId,
         created_at: new Date().toISOString(),
       })
       .select('phone_number, pin_code')
       .single();
 
     if (insertErr) {
-      // Handle unique constraint violations gracefully
-      if (insertErr.code === '23505') { // unique_violation
-        console.warn('[Public Menu] Duplicate during insert (race condition)', insertErr.details);
-        return res.status(409).json({
-          error: 'Ce numéro est déjà enregistré',
-          alreadyExists: true,
-        });
-      }
-      console.error('[Public Menu] Failed to insert customer:', insertErr);
-      return res.status(500).json({ error: 'Erreur d’enregistrement' });
+      if (insertErr.code === '23505') return res.status(409).json({ error: 'Déjà enregistré', alreadyExists: true });
+      throw insertErr;
     }
-
-    console.log('[Public Menu] New customer registered successfully', {
-      phone: digits.slice(0, 3) + '***',
-      name,
-      pin_code: '******',
-    });
 
     return res.json({
       success: true,
@@ -315,380 +274,154 @@ router.post('/register-customer', async (req, res) => {
       alreadyExists: false,
     });
   } catch (err: any) {
-    console.error('[Public Menu] Unexpected error in register-customer:', err);
+    console.error('[Public Menu] register-customer error:', err);
     return res.status(500).json({ error: 'Erreur d’enregistrement' });
   }
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Customer order checkout for QR Menu
-// POST /api/menu/checkout
-// Body: { qr_token, customer_phone?, pin_code, items: [{product_id, quantity, name?}], notes?, order_id?, total? }
-// Validates PIN (phone optional → lookup by pin_code alone) and creates pending order in Supabase.
-// Notes (special instructions) are accepted and embedded as cartItems.notes inside the items JSONB.
-// ─────────────────────────────────────────────────────────────────────────────
 router.post('/checkout', async (req, res) => {
-  const { qr_token, customer_phone, pin_code, items, notes, order_id } = req.body || {};
+  const { qr_token, customer_phone, pin_code, items, notes } = req.body || {};
 
   if (!qr_token || !pin_code || !Array.isArray(items) || items.length === 0) {
-    return res.status(400).json({ error: 'Données de commande incomplètes' });
+    return res.status(400).json({ error: 'Données incomplètes' });
   }
 
   const cleanPin = String(pin_code).trim();
-
-  if (cleanPin.length !== 6) {
-    return res.status(400).json({ error: 'Le code PIN doit contenir 6 chiffres' });
-  }
-
   const supabase = createClient(env.SUPABASE_URL!, env.SUPABASE_SERVICE_ROLE_KEY!, {
     auth: { persistSession: false },
   });
 
   try {
-    // 1. Lookup customer by PIN (phone number is optional in the request)
-    // If phone is provided → use it for faster/more precise lookup
-    // If phone is not provided → lookup by PIN only (as per your requirement)
-    let customer = null;
-    let finalCustomerPhone = null;
-
-    if (customer_phone) {
-      finalCustomerPhone = String(customer_phone).replace(/\D/g, '');
-      const { data: rows, error: custErr } = await supabase
-        .from('customers')
-        .select('id, phone_number, pin_code, name')
-        .eq('phone_number', finalCustomerPhone)
-        .eq('pin_code', cleanPin)
-        .limit(1);
-
-      const data = rows?.[0] ?? null;
-      if (!custErr && data) customer = data;
-    } else {
-      // No phone provided → search by PIN only
-      const { data: rows, error: custErr } = await supabase
-        .from('customers')
-        .select('id, phone_number, pin_code, name')
-        .eq('pin_code', cleanPin)
-        .limit(1);
-
-      const data = rows?.[0] ?? null;
-      if (!custErr && data) {
-        customer = data;
-        finalCustomerPhone = data.phone_number;  // found from DB
-      }
-    }
-
-    if (!customer) {
-      console.warn('[Public Menu] Invalid PIN attempt (no matching customer found)');
-      return res.status(401).json({ 
-        error: 'Code PIN incorrect', 
-        pinNotFound: true 
-      });
-    }
-
-    // Use the phone found in DB if it wasn't sent by the client
-    if (!finalCustomerPhone) finalCustomerPhone = customer.phone_number;
-
-    // 2. Find the table from qr_token (including assigned waiter for the order)
+    // Find table and tenant
     const { data: table, error: tableErr } = await supabase
       .from('restaurant_tables')
-      .select('id, table_number, assigned_waiter_id, status')
+      .select('id, table_number, assigned_waiter_id, status, tenant_id')
       .eq('qr_token', qr_token)
       .single();
 
-    if (tableErr || !table) {
-      return res.status(404).json({ error: 'Table introuvable pour ce code QR' });
+    if (tableErr || !table) return res.status(404).json({ error: 'Table introuvable' });
+    const tenantId = table.tenant_id;
+    if (!tenantId) {
+      return res.status(400).json({ error: 'INVALID_TABLE', message: 'Table has no tenant_id' });
     }
 
-    // 3. CHECK FOR EXISTING ACTIVE ORDER (Merge logic for "Source of Truth")
-    // If a table already has a pending/confirmed/preparing order in Supabase, 
-    // we merge the new items ONLY if it's the same customer (linked to PIN).
+    // Lookup customer by PIN and tenant
+    const { data: customers } = await supabase
+      .from('customers')
+      .select('id, phone_number')
+      .eq('pin_code', cleanPin)
+      .eq('tenant_id', tenantId)
+      .limit(1);
+
+    const customer = customers?.[0];
+    if (!customer) return res.status(401).json({ error: 'PIN incorrect' });
+
+    // Check for existing active order
     const { data: existingOrder } = await supabase
       .from('orders')
-      .select('id, items, total, status, customer_id')
+      .select('id, items, total')
       .eq('table_id', table.id)
       .eq('customer_id', customer.id)
+      .eq('tenant_id', tenantId)
       .not('status', 'in', '("paid","cancelled","rejected")')
-      .order('created_at', { ascending: false })
-      .limit(1)
-      .single();
+      .maybeSingle();
 
     if (existingOrder) {
-      console.log(`[Public Menu] Merging items into existing Supabase order #${existingOrder.id}`);
-      
+      // Merge logic
       const existingItems = Array.isArray(existingOrder.items) ? existingOrder.items : [];
-      const newItems = Array.isArray(items) ? items : [];
-      
-      // Merge items by product_id
       const itemMap = new Map();
-      existingItems.forEach((it: any) => {
-        const pid = it.product_id || it.productId;
-        itemMap.set(pid, { ...it, quantity: Number(it.quantity) });
-      });
-      
-      newItems.forEach((it: any) => {
+      existingItems.forEach((it: any) => itemMap.set(it.product_id || it.productId, { ...it }));
+      items.forEach((it: any) => {
         const pid = it.product_id || it.productId;
         if (itemMap.has(pid)) {
-          const existing = itemMap.get(pid);
-          existing.quantity += Number(it.quantity);
+          itemMap.get(pid).quantity += Number(it.quantity);
         } else {
-          itemMap.set(pid, { ...it, quantity: Number(it.quantity) });
+          itemMap.set(pid, { ...it });
         }
       });
-      
       const mergedItems = Array.from(itemMap.values());
       const mergedTotal = mergedItems.reduce((sum, it) => sum + (Number(it.price || it.unit_price || 0) * it.quantity), 0);
-      
-      // Add special instructions if provided
-      if (notes && String(notes).trim()) {
-        (mergedItems as any).notes = String(notes).trim();
-      } else if ((existingItems as any).notes) {
-        (mergedItems as any).notes = (existingItems as any).notes;
-      }
 
-      const { data: updatedOrder, error: updateErr } = await supabase
-        .from('orders')
-        .update({
-          items: mergedItems,
-          total: mergedTotal,
-          updated_at: new Date().toISOString()
-        })
-        .eq('id', existingOrder.id)
-        .select()
-        .single();
+      await supabase.from('orders').update({
+        items: mergedItems,
+        total: mergedTotal,
+        updated_at: new Date().toISOString()
+      }).eq('id', existingOrder.id).eq('tenant_id', tenantId);
 
-      if (updateErr) {
-        console.error('[Public Menu] Failed to merge into existing order:', updateErr);
-        // Fallback to creating a new one if update fails
-      } else {
-        // Also insert/update order_items table for normalized tracking
-        const orderItemsPayload = newItems.map((item: any) => ({
-          order_id: existingOrder.id,
-          product_id: item.product_id || item.productId,
-          quantity: Number(item.quantity) || 1,
-          created_at: new Date().toISOString(),
-        }));
-        
-        await supabase.from('order_items').insert(orderItemsPayload);
-
-        return res.json({
-          success: true,
-          orderId: existingOrder.id,
-          customerPhone: finalCustomerPhone,
-          merged: true
-        });
-      }
+      return res.json({ success: true, orderId: existingOrder.id, merged: true });
     }
 
-    // 4. Create NEW order in Supabase (if no active order found)
-    // waiter_id is REQUIRED (NOT NULL + FK to users)
+    // Create new order
     let waiterId = table.assigned_waiter_id;
-
-    // Verify the waiter exists (to avoid FK violation)
-    if (waiterId) {
-      const { data: exists } = await supabase
-        .from('user')
-        .select('id')
-        .eq('id', waiterId)
-        .single();
-
-      if (!exists) {
-        waiterId = null; // invalid, try fallback
-      }
-    }
-
     if (!waiterId) {
-      // Fallback: find any admin or manager
-      const { data: fallbackUser } = await supabase
-        .from('user')
-        .select('id')
-        .in('role', ['admin', 'manager'])
-        .limit(1)
-        .single();
-
-      waiterId = fallbackUser?.id;
+      const { data: staff } = await supabase.from('users').select('id').eq('tenant_id', tenantId).in('role', ['admin', 'manager']).limit(1).single();
+      waiterId = staff?.id;
     }
-
-    if (!waiterId) {
-      console.error('[Public Menu] No valid waiter_id found for customer order');
-      return res.status(500).json({ error: 'Aucun serveur disponible pour traiter cette commande pour le moment' });
-    }
-
-    // Preserve special instructions inside the items JSONB (as .notes on the array)
-    // so they survive without a 'notes' column on the orders table.
-    const cartItems: any = [...items];
-    if (notes && String(notes).trim()) {
-      cartItems.notes = String(notes).trim();
-    }
-
-    const orderPayload: any = {
-      table_id: table.id,
-      waiter_id: waiterId,
-      customer_id: customer.id,
-      status: 'pending',
-      items: cartItems,                // array (with optional .notes) stored as JSONB
-      total: Number(req.body.total || 0),
-      // Let the database/trigger handle created_at and updated_at
-    };
-
-    // Never trust client-provided PK for public QR orders
-    delete orderPayload.id;
-    delete orderPayload.order_id;
 
     const { data: newOrder, error: orderError } = await supabase
       .from('orders')
-      .insert(orderPayload)
+      .insert({
+        table_id: table.id,
+        waiter_id: waiterId,
+        customer_id: customer.id,
+        status: 'pending',
+        items,
+        total: Number(req.body.total || 0),
+        tenant_id: tenantId,
+        source: 'qr'
+      })
       .select('id')
       .single();
 
-    if (orderError) {
-      console.error('[Public Menu][CHECKOUT ERROR] Full Supabase error when inserting into orders:');
-      console.error(orderError);
-      console.error('Payload we tried to insert:', JSON.stringify(orderPayload, null, 2));
+    if (orderError) throw orderError;
 
-      // Special handling for the common sequence desync issue
-      if (orderError.code === '23505' || (orderError.message || '').includes('duplicate key') || (orderError.message || '').includes('orders_pkey')) {
-        return res.status(500).json({
-          error: 'Erreur de numérotation des commandes (séquence désynchronisée)',
-          debug: 'Exécutez dans Supabase SQL: SELECT setval(pg_get_serial_sequence(\'orders\', \'id\'), COALESCE((SELECT MAX(id) FROM orders), 0) + 1, false);'
-        });
-      }
-
-      return res.status(500).json({ 
-        error: 'Impossible de créer la commande pour le moment',
-        debug: orderError.message || orderError.details || JSON.stringify(orderError)
-      });
-    }
-
-    const newOrderId = newOrder.id;
-
-    // 4. Insert order items (best effort)
-    const orderItemsPayload = items.map((item: any) => ({
-      order_id: newOrderId,
-      product_id: item.product_id,
-      quantity: Number(item.quantity) || 1,
-      created_at: new Date().toISOString(),
-    }));
-
-    const { error: itemsError } = await supabase
-      .from('order_items')
-      .insert(orderItemsPayload);
-
-    if (itemsError) {
-      console.warn('[Public Menu] Order items insertion had issues (order still created):', itemsError);
-    }
-
-    console.log('[Public Menu] Order created successfully via QR (pending admin review)', {
-      orderId: newOrderId,
-      table: table.table_number,
-      customer: finalCustomerPhone ? finalCustomerPhone.slice(0, 3) + '***' : 'unknown',
-      itemsCount: items.length,
-    });
-
-    // Loud signal so operators see immediately in server logs (even before pull sync)
-    console.log('');
-    console.log('══════════════════════════════════════════════════════════════');
-    console.log('📣  QR CUSTOMER ORDER SUBMITTED  📣');
-    console.log(`   order_id (Supabase) : ${newOrderId}`);
-    console.log(`   table               : ${table.table_number} (id=${table.id})`);
-    console.log(`   assigned_waiter_id  : ${waiterId}`);
-    console.log(`   total               : ${Number(req.body.total || 0)}`);
-    console.log(`   items               : ${items.length}`);
-    console.log('   → Order is now in Supabase with status=pending');
-    console.log('   → The Supabase→SQLite pull worker will make it visible to staff POS.');
-    console.log('   → If staff sees nothing: check that ENABLE_SUPABASE_PULL is effective');
-    console.log('     (it now auto-enables when Supabase creds are present).');
-    console.log('══════════════════════════════════════════════════════════════');
-    console.log('');
-
-    // Best decision: automatically repair the orders.id sequence after every public QR order.
-    // This prevents the "duplicate key on orders_pkey" error from recurring due to sync/manual inserts.
-    try {
-      await supabase.rpc('advance_orders_sequence');
-    } catch (seqErr) {
-      console.warn('[Public Menu] Sequence auto-advance failed (non-fatal, run the SQL setup once):', seqErr);
-    }
-
-    return res.json({
-      success: true,
-      orderId: newOrderId,
-      customerPhone: finalCustomerPhone,
-    });
+    return res.json({ success: true, orderId: newOrder.id });
 
   } catch (err: any) {
-    console.error('[Public Menu] Checkout error:', err);
-    return res.status(500).json({ error: 'Erreur lors de la création de la commande' });
+    console.error('[Public Menu] checkout error:', err);
+    return res.status(500).json({ error: 'Erreur lors de la commande' });
   }
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Public order status for QR customers (reads directly from Supabase)
-// This allows customers to see real-time status updates (confirmed, preparing, ready...)
-// even if the local POS pull worker hasn't synced yet.
-// GET /api/menu/order-status/:orderId
-// ─────────────────────────────────────────────────────────────────────────────
-router.get('/order-status/:orderId', async (req, res) => {
-  const { orderId } = req.params;
-
-  if (!orderId) {
-    return res.status(400).json({ error: 'Order ID is required' });
-  }
+router.get('/order-status/:qr_token/:orderId', async (req, res) => {
+  const { qr_token, orderId } = req.params;
 
   try {
-    const supabaseUrl = process.env.SUPABASE_URL;
-    const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-
-    if (!supabaseUrl || !supabaseKey) {
-      return res.status(500).json({ error: 'Supabase not configured' });
-    }
-
-    const supabase = createClient(supabaseUrl, supabaseKey, {
+    const supabase = createClient(env.SUPABASE_URL!, env.SUPABASE_SERVICE_ROLE_KEY!, {
       auth: { persistSession: false },
     });
 
-    const { data, error } = await supabase
-      .from('orders')
-      .select('id, status, table_id, total, items, created_at, updated_at')
-      .eq('id', Number(orderId))
+    // Derive tenant_id from the public QR token
+    const { data: table, error: tableErr } = await supabase
+      .from('restaurant_tables')
+      .select('tenant_id')
+      .eq('qr_token', qr_token)
       .single();
 
-    if (error || !data) {
-      return res.status(404).json({ error: 'Order not found' });
+    if (tableErr || !table?.tenant_id) {
+      return res.status(404).json({ error: 'Table not found for given qr_token' });
     }
 
-    // Enrich items with current local prices (important for "My order" list in public QR menu)
-    let items = data.items || [];
-    if (db && Array.isArray(items)) {
-      try {
-        const getPriceStmt = db.prepare('SELECT selling_price FROM products WHERE id = ?').pluck();
-        items = items.map((it: any) => {
-          const pid = it.product_id || it.productId;
-          if (pid != null) {
-            const existingPrice = Number(it.price ?? it.unit_price ?? 0);
-            if (existingPrice <= 0) {
-              const price = Number(getPriceStmt.get(pid) || 0);
-              return { ...it, price };
-            }
-          }
-          return it;
-        });
-      } catch (e) {
-        console.warn('[Public Menu] Price enrichment failed for order-status', e);
-      }
-    }
+    const tenantId = table.tenant_id;
 
-    res.json({
-      id: data.id,
-      status: data.status,
-      table_id: data.table_id,
-      total: data.total,
-      items,
-      created_at: data.created_at,
-      updated_at: data.updated_at,
-    });
+    // Strict tenant scoping
+    const { data, error } = await supabase
+      .from('orders')
+      .select('id, status, table_id, total, items, created_at, updated_at, tenant_id')
+      .eq('id', Number(orderId))
+      .eq('tenant_id', tenantId)
+      .single();
+
+    if (error || !data) return res.status(404).json({ error: 'Order not found' });
+    res.json(data);
   } catch (err: any) {
-    console.error('[Public Menu] Order status error:', err);
-    res.status(500).json({ error: 'Failed to fetch order status' });
+    res.status(500).json({ error: 'Failed to fetch status' });
   }
+});
+
+// Backward-incompatible hardening: the old endpoint is no longer safe
+router.get('/order-status/:orderId', (_req, res) => {
+  res.status(400).json({ error: 'BAD_REQUEST', message: 'qr_token is required for tenant isolation' });
 });
 
 export default router;

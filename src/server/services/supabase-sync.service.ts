@@ -135,12 +135,59 @@ async function syncTableIncremental(tableName: string, since: string | null): Pr
     const client = getSupabaseClient();
     const supabaseTable = tableName === 'users' ? 'user' : tableName;
 
-    const { error } = await client
+    // Pour restaurant_tables, on doit gérer le mapping entre SQLite.id et Supabase.id (remote_id)
+    // Supabase utilise toujours 'id' comme clé primaire, donc on utilise onConflict: 'id'
+    // MAIS pour SQLite, le champ 'id' est local, et 'remote_id' correspond à Supabase.id
+    const onConflict = 'id';
+
+    // Préparer les données pour synchronisation
+    // Pour restaurant_tables : Supabase.id = SQLite.remote_id ou SQLite.id (si remote_id est null)
+    const rowsToSync = rows.map((row: any) => {
+      const syncRow = { ...row };
+      
+      // Pour restaurant_tables, gestion spéciale du mapping
+      if (tableName === 'restaurant_tables') {
+        // Si remote_id existe déjà, c'est bon - Supabase.id = remote_id
+        if (syncRow.remote_id) {
+          syncRow.id = syncRow.remote_id; // Utiliser remote_id comme id pour Supabase
+          delete syncRow.remote_id; // Ne pas envoyer remote_id à Supabase
+        } else {
+          // Première sync : utiliser id local comme id Supabase
+          // Ne pas supprimer id, Supabase l'utilisera comme clé
+        }
+      }
+      
+      return syncRow;
+    });
+
+    const { data: upsertedData, error } = await client
       .from(supabaseTable)
-      .upsert(rows, { onConflict: 'id' });
+      .upsert(rowsToSync, { onConflict })
+      .select();
 
     if (error) {
       return { success: false, count: 0, error: error.message };
+    }
+
+    // Mettre à jour les remote_id dans SQLite avec les IDs Supabase
+    if (tableName === 'restaurant_tables' && upsertedData && Array.isArray(upsertedData)) {
+      for (const supabaseRow of upsertedData) {
+        // Trouver la ligne SQLite correspondante
+        const localRow = rows.find((r: any) => {
+          // Si remote_id existait déjà, matcher par remote_id
+          if (r.remote_id && r.remote_id === supabaseRow.id) return true;
+          // Sinon matcher par id local qui a été utilisé comme id Supabase
+          if (!r.remote_id && r.id === supabaseRow.id) return true;
+          return false;
+        });
+        
+        if (localRow && (!localRow.remote_id || localRow.remote_id !== supabaseRow.id)) {
+          // Mettre à jour SQLite avec l'ID Supabase comme remote_id
+          db.prepare(`UPDATE ${tableName} SET remote_id = ? WHERE id = ?`)
+            .run(supabaseRow.id, localRow.id);
+          console.log(`[SupabaseSync] ✓ restaurant_tables: mappé SQLite.id=${localRow.id} → Supabase.id=${supabaseRow.id}`);
+        }
+      }
     }
 
     return { success: true, count: rows.length };

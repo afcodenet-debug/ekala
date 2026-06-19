@@ -320,7 +320,14 @@ const fmtDate = (lang?: string) => new Date().toLocaleDateString(LOCALES[lang ??
 
 /* ─── Professional relative time (used in activity feed) ─────────────────── */
 const getRelativeTime = (dateStr: string, lang: string = 'en'): string => {
-  const date = new Date(dateStr);
+  // SQLite often stores as "YYYY-MM-DD HH:MM:SS" which JS Date(str) interprets 
+  // as LOCAL time if no "Z" or offset is present. 
+  // We force it to be treated as UTC to match server storage.
+  const normalizedStr = (dateStr && !dateStr.includes('Z') && !dateStr.includes('+')) 
+    ? dateStr.replace(' ', 'T') + 'Z' 
+    : dateStr;
+
+  const date = new Date(normalizedStr);
   const now = new Date();
   const diffMs = now.getTime() - date.getTime();
   const diffSec = Math.floor(diffMs / 1000);
@@ -328,12 +335,21 @@ const getRelativeTime = (dateStr: string, lang: string = 'en'): string => {
   const diffHour = Math.floor(diffMin / 60);
 
   if (diffSec < 60) {
-    if (lang === 'fr') return "à l'instant";
-    if (lang === 'pt') return "agora";
+    if (lang === 'fr') return "un instant";
+    if (lang === 'pt') return "instante";
     return "just now";
   }
-  if (diffMin < 60) return `${diffMin} min`;
-  if (diffHour < 24) return lang === 'fr' ? `${diffHour} h` : `${diffHour}h`;
+  
+  if (diffMin < 60) {
+    if (lang === 'fr') return `${diffMin} min`;
+    return `${diffMin}m`;
+  }
+  
+  if (diffHour < 24) {
+    if (lang === 'fr') return `${diffHour} h`;
+    return `${diffHour}h`;
+  }
+  
   return date.toLocaleDateString(LOCALES[lang] || 'en-US', { month: 'short', day: 'numeric' });
 };
 
@@ -536,6 +552,10 @@ const Dashboard = () => {
                   }
 
                   const relative   = getRelativeTime(item.time, lang);
+                  const timeDisplay = (relative === 'just now' || relative === 'un instant' || relative === 'instante')
+                    ? relative
+                    : t('dashboard.timeAgo', { time: relative });
+
                   const timeColumn = item.type === 'stock' ? (
                     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '2px 8px', background: 'var(--amber-dim)', border: '1px solid var(--amber)33', borderRadius: 999, fontSize: 10, fontWeight: 700, color: 'var(--amber)', letterSpacing: '0.5px', flexShrink: 0 }}>
                       <span style={{ width: 6, height: 6, background: 'var(--amber)', borderRadius: '50%', boxShadow: '0 0 8px var(--amber), 0 0 16px var(--amber)', position: 'relative', zIndex: 2 }}>
@@ -545,7 +565,7 @@ const Dashboard = () => {
                     </span>
                   ) : (
                     <span className="mono" style={{ fontSize: 10.5, color: 'var(--text-3)', flexShrink: 0 }}>
-                      {t('dashboard.timeAgo', { time: relative })}
+                      {timeDisplay}
                     </span>
                   );
 

@@ -6,6 +6,7 @@ import { api } from '../lib/api-client';
 import { useAuthStore } from '../stores/useAuthStore';
 import { useI18n } from '../lib/i18n';
 import { EnterpriseTokens } from '../lib/design-system';
+import { ConfirmDialog } from '../components/ConfirmDialog';
 
 const { colors, radius, shadows } = EnterpriseTokens;
 
@@ -21,7 +22,7 @@ export const CategoriesPage: React.FC = () => {
   const { t } = useI18n();
   const { user } = useAuthStore();
   const role = user?.role || '';
-  const isAdminOrManager = ['admin', 'manager'].includes(role);
+  const isAdminOrManager = ['owner', 'admin', 'manager'].includes(role);
 
   const [categories, setCategories] = useState<Category[]>([]);
   const [loading, setLoading] = useState(true);
@@ -32,6 +33,7 @@ export const CategoriesPage: React.FC = () => {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [deletingId, setDeletingId] = useState<number | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<Category | null>(null);
 
   const fetchCategories = async () => {
     try {
@@ -90,12 +92,14 @@ export const CategoriesPage: React.FC = () => {
     }
   };
 
-  const handleDelete = async (cat: Category) => {
-    if (!window.confirm(
-      t('categories.deleteConfirm', { name: cat.name }) ||
-      `Delete "${cat.name}"? Products will be moved to another category.`
-    )) return;
+  const handleDeleteClick = async (cat: Category) => {
+    setDeleteTarget(cat);
+  };
 
+  const confirmDelete = async () => {
+    if (!deleteTarget) return;
+    const cat = deleteTarget;
+    setDeleteTarget(null);
     setDeletingId(cat.id);
     try {
       await api.categories.delete(cat.id, role);
@@ -290,7 +294,7 @@ export const CategoriesPage: React.FC = () => {
                       <Pencil size={15} />
                     </button>
                     <button
-                      onClick={() => handleDelete(cat)}
+                      onClick={() => handleDeleteClick(cat)}
                       disabled={deletingId === cat.id}
                       style={{ width: 34, height: 34, borderRadius: radius.sm, background: colors.accent.redDim, border: `1px solid ${colors.accent.red}30`, color: colors.accent.red, cursor: deletingId === cat.id ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', opacity: deletingId === cat.id ? 0.5 : 1 }}
                     >
@@ -317,6 +321,20 @@ export const CategoriesPage: React.FC = () => {
           ))}
         </div>
       )}
+
+      {/* Premium Delete Confirmation Dialog */}
+      <ConfirmDialog
+        open={!!deleteTarget}
+        title={t('categories.deleteTitle') || 'Delete category'}
+        message={
+          t('categories.deleteConfirm', { name: deleteTarget?.name || '' }) ||
+          `Delete "${deleteTarget?.name}"? Products will be moved to another category.`
+        }
+        confirmLabel={t('categories.delete') || 'Delete'}
+        loading={deletingId !== null}
+        onConfirm={confirmDelete}
+        onCancel={() => setDeleteTarget(null)}
+      />
     </div>
   );
 };

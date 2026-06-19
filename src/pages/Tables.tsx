@@ -48,7 +48,7 @@ const Tables: React.FC = () => {
     return { total, available, active, reserved, cleaning, outOfService };
   }, [tables]);
 
-  const isAdmin = user?.role === 'admin';
+  const isAdmin = user?.role === 'owner' || user?.role === 'admin';
   const isManager = user?.role === 'manager';
   const isWaiter = user?.role === 'waiter';
 

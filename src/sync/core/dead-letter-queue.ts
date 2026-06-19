@@ -12,6 +12,7 @@ export interface DeadLetterRecord {
   payload: string;
   error: string;
   retry_count: number;
+  tenant_id?: string | null;
   created_at: string;
   archived_at: string;
 }
@@ -73,10 +74,31 @@ export class DeadLetterQueue {
     const item = this.db.prepare(`SELECT * FROM sync_dlq WHERE id = ?`).get(dlqId) as DeadLetterRecord | undefined;
     if (!item) return false;
 
+    // IMPORTANT:
+    // - sync_outbox.id est PRIMARY KEY
+    // - lors d'un retry, l'id de l'item en DLQ peut déjà exister dans l'outbox (ou avoir été réinséré par un retry parallèle)
+    // => éviter le crash UNIQUE constraint en générant un nouvel id d'outbox et/ou en utilisant un INSERT OR REPLACE/ignore.
+    const newOutboxId = `retry_${item.id}_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+
+    // Normaliser tenant_id pour éviter de réintroduire des valeurs float-like (ex: "6.0")
+    const tenantIdNormalized =
+      item.tenant_id === undefined || item.tenant_id === null || String(item.tenant_id).trim() === ''
+        ? null
+        : Math.trunc(Number(String(item.tenant_id)));
+
     this.db.prepare(`
-      INSERT INTO sync_outbox (id, entity, operation, record_id, payload, version, status, retry_count)
-      VALUES (?, ?, ?, ?, ?, 1, 'pending', 0)
-    `).run(item.id, item.entity, item.operation, item.record_id, item.payload);
+      INSERT INTO sync_outbox (
+        id, entity, operation, record_id, payload, version, status, retry_count, tenant_id
+      )
+      VALUES (?, ?, ?, ?, ?, 1, 'pending', 0, ?)
+    `).run(
+      newOutboxId,
+      item.entity,
+      item.operation,
+      item.record_id,
+      item.payload,
+      tenantIdNormalized
+    );
 
     this.db.prepare(`DELETE FROM sync_dlq WHERE id = ?`).run(dlqId);
 

@@ -6,7 +6,12 @@ import { createClient } from '@supabase/supabase-js';
 const router = express.Router();
 
 // Get all expenses
-router.get('/', async (_req, res) => {
+router.get('/', async (req: any, res) => {
+  const tenantId = req.tenant_id;
+  if (!tenantId) {
+    return res.status(401).json({ error: 'TENANT_REQUIRED', message: 'tenant_id requis' });
+  }
+
   if (!db) {
     if (!env.SUPABASE_URL || !env.SUPABASE_SERVICE_ROLE_KEY) {
       console.warn('[Expenses] SQLite disabled and Supabase not configured. Returning empty list for GET /expenses');
@@ -20,6 +25,7 @@ router.get('/', async (_req, res) => {
       const { data, error } = await supabase
         .from('expenses')
         .select('id, description, amount, category, user_id, created_at')
+        .eq('tenant_id', tenantId)
         .order('created_at', { ascending: false });
 
       if (error) {
@@ -42,11 +48,13 @@ router.get('/', async (_req, res) => {
         SELECT e.*, u.full_name as user_name
         FROM expenses e
         LEFT JOIN users u ON e.user_id = u.id
+        WHERE e.tenant_id = ?
         ORDER BY e.created_at DESC
-      `).all();
-    } catch {
+      `).all(tenantId);
+    } catch (e: any) {
       // Fallback: user_id column may not exist yet
-      expenses = db.prepare(`SELECT * FROM expenses ORDER BY created_at DESC`).all();
+      console.warn('[Expenses] SQL error, likely missing columns:', e.message);
+      expenses = db.prepare(`SELECT * FROM expenses WHERE tenant_id = ? ORDER BY created_at DESC`).all(tenantId);
     }
     res.json(expenses);
   } catch (error) {
@@ -56,8 +64,12 @@ router.get('/', async (_req, res) => {
 });
 
 // Create new expense
-router.post('/', async (req, res) => {
+router.post('/', async (req: any, res) => {
   const { description, amount, category, user_id } = req.body;
+  const tenantId = req.tenant_id;
+  if (!tenantId) {
+    return res.status(401).json({ error: 'TENANT_REQUIRED', message: 'tenant_id requis' });
+  }
 
   if (!description || !amount || !category || !user_id) {
     return res.status(400).json({ error: 'All fields are required' });
@@ -79,6 +91,7 @@ router.post('/', async (req, res) => {
           amount,
           category,
           user_id,
+          tenant_id: tenantId,
           created_at: new Date().toISOString()
         }
       ]).select('id');
@@ -97,9 +110,24 @@ router.post('/', async (req, res) => {
 
   try {
     const result = db.prepare(`
-      INSERT INTO expenses (description, amount, category, user_id)
-      VALUES (?, ?, ?, ?)
-    `).run(description, amount, category, user_id);
+      INSERT INTO expenses (description, amount, category, user_id, tenant_id)
+      VALUES (?, ?, ?, ?, ?)
+    `).run(description, amount, category, user_id, tenantId);
+
+    // Queue for sync to Supabase
+    try {
+      const { syncAfterWrite } = require('../../sync/sync-helper');
+      syncAfterWrite('expense', 'insert', {
+        id: result.lastInsertRowid,
+        description,
+        amount,
+        category,
+        user_id,
+        tenant_id: tenantId
+      });
+    } catch (syncErr) {
+      console.warn('[Expenses] Could not queue sync:', syncErr);
+    }
 
     res.json({ id: result.lastInsertRowid });
   } catch (error) {
@@ -109,8 +137,12 @@ router.post('/', async (req, res) => {
 });
 
 // Delete expense (admin/manager only)
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', async (req: any, res) => {
   const { id } = req.params;
+  const tenantId = req.tenant_id;
+  if (!tenantId) {
+    return res.status(401).json({ error: 'TENANT_REQUIRED', message: 'tenant_id requis' });
+  }
 
   if (!db) {
     if (!env.SUPABASE_URL || !env.SUPABASE_SERVICE_ROLE_KEY) {
@@ -122,7 +154,7 @@ router.delete('/:id', async (req, res) => {
       const supabase = createClient(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, {
         auth: { persistSession: false }
       });
-      const { error } = await supabase.from('expenses').delete().eq('id', Number(id));
+      const { error } = await supabase.from('expenses').delete().eq('id', Number(id)).eq('tenant_id', tenantId);
 
       if (error) {
         console.error('[Expenses Supabase] DELETE error:', error);
@@ -137,9 +169,15 @@ router.delete('/:id', async (req, res) => {
   }
 
   try {
-    const result = db.prepare('DELETE FROM expenses WHERE id = ?').run(id);
+    const result = db.prepare('DELETE FROM expenses WHERE id = ? AND tenant_id = ?').run(id, tenantId);
 
     if (result.changes > 0) {
+      try {
+        const { syncAfterWrite } = require('../../sync/sync-helper');
+        syncAfterWrite('expense', 'delete', { id: Number(id), tenant_id: tenantId });
+      } catch (syncErr) {
+        console.warn('[Expenses] Could not queue delete sync:', syncErr);
+      }
       res.json({ success: true });
     } else {
       res.status(404).json({ error: 'Expense not found' });

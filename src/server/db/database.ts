@@ -84,7 +84,7 @@ try {
 
       dbInstance.pragma('journal_mode = WAL');
       dbInstance.pragma('synchronous = NORMAL');
-      dbInstance.pragma('busy_timeout = 5000');
+      dbInstance.pragma('busy_timeout = 15000');
       dbInstance.pragma('cache_size = -64000');
       dbInstance.pragma('foreign_keys = ON');
     }
@@ -252,23 +252,33 @@ function ensureCoreQrMenuTables(): void {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       category_id INTEGER,
       name TEXT NOT NULL,
-      description TEXT,
-      selling_price REAL NOT NULL,
-      unit TEXT,
-      image_url TEXT,
-      is_available INTEGER DEFAULT 1,
-      stock_quantity INTEGER DEFAULT 0,
-      minimum_stock INTEGER DEFAULT 5,
-      price REAL DEFAULT 0,
-      buying_price REAL DEFAULT 0,
-      status TEXT DEFAULT 'active',
-      remote_id INTEGER,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       barcode TEXT,
       sku TEXT,
+      buying_price REAL DEFAULT 0,
+      selling_price REAL NOT NULL,
+      stock_quantity REAL DEFAULT 0,
+      minimum_stock REAL DEFAULT 0,
+      unit TEXT DEFAULT 'pcs',
+      is_available INTEGER DEFAULT 1,
+      description TEXT,
+      image_url TEXT,
+      status TEXT DEFAULT 'active',
       cost_method TEXT DEFAULT 'average',
-      archived_at DATETIME
+      created_by INTEGER,
+      updated_by INTEGER,
+      archived_at DATETIME,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      deleted_at DATETIME,
+      sort_order INTEGER DEFAULT 0,
+      tenant_id TEXT,
+      is_featured INTEGER DEFAULT 0,
+      metadata TEXT,
+      version INTEGER DEFAULT 1,
+      price REAL DEFAULT 0,
+      cost_price REAL DEFAULT 0,
+      remote_id INTEGER,
+      sync_status TEXT DEFAULT 'synced'
     )
   `);
 
@@ -334,6 +344,35 @@ function ensureCoreQrMenuTables(): void {
 
   // Ensure columns exist if table was already created (migration-like)
   try {
+    // --- Product & Category & Orders & Sales Migrations ---
+    const productCols = dbInstance.prepare("PRAGMA table_info(products)").all() as Array<{ name: string }>;
+    if (!productCols.some(c => c.name === 'status')) dbInstance.exec(`ALTER TABLE products ADD COLUMN status TEXT DEFAULT 'active'`);
+    if (!productCols.some(c => c.name === 'remote_id')) dbInstance.exec(`ALTER TABLE products ADD COLUMN remote_id INTEGER`);
+    if (!productCols.some(c => c.name === 'price')) dbInstance.exec(`ALTER TABLE products ADD COLUMN price REAL DEFAULT 0`);
+    if (!productCols.some(c => c.name === 'buying_price')) dbInstance.exec(`ALTER TABLE products ADD COLUMN buying_price REAL DEFAULT 0`);
+    if (!productCols.some(c => c.name === 'cost_price')) dbInstance.exec(`ALTER TABLE products ADD COLUMN cost_price REAL DEFAULT 0`);
+    if (!productCols.some(c => c.name === 'tenant_id')) dbInstance.exec(`ALTER TABLE products ADD COLUMN tenant_id TEXT`);
+    if (!productCols.some(c => c.name === 'business_id')) dbInstance.exec(`ALTER TABLE products ADD COLUMN business_id INTEGER`);
+    if (!productCols.some(c => c.name === 'deleted_at')) dbInstance.exec(`ALTER TABLE products ADD COLUMN deleted_at DATETIME`);
+    if (!productCols.some(c => c.name === 'is_featured')) dbInstance.exec(`ALTER TABLE products ADD COLUMN is_featured INTEGER DEFAULT 0`);
+    if (!productCols.some(c => c.name === 'sort_order')) dbInstance.exec(`ALTER TABLE products ADD COLUMN sort_order INTEGER DEFAULT 0`);
+    if (!productCols.some(c => c.name === 'metadata')) dbInstance.exec(`ALTER TABLE products ADD COLUMN metadata TEXT`);
+    if (!productCols.some(c => c.name === 'version')) dbInstance.exec(`ALTER TABLE products ADD COLUMN version INTEGER DEFAULT 1`);
+    if (!productCols.some(c => c.name === 'sync_status')) dbInstance.exec(`ALTER TABLE products ADD COLUMN sync_status TEXT DEFAULT 'synced'`);
+    if (!productCols.some(c => c.name === 'created_by')) dbInstance.exec(`ALTER TABLE products ADD COLUMN created_by INTEGER`);
+    if (!productCols.some(c => c.name === 'updated_by')) dbInstance.exec(`ALTER TABLE products ADD COLUMN updated_by INTEGER`);
+    if (!productCols.some(c => c.name === 'archived_at')) dbInstance.exec(`ALTER TABLE products ADD COLUMN archived_at DATETIME`);
+    if (!productCols.some(c => c.name === 'sku')) dbInstance.exec(`ALTER TABLE products ADD COLUMN sku TEXT`);
+    if (!productCols.some(c => c.name === 'barcode')) dbInstance.exec(`ALTER TABLE products ADD COLUMN barcode TEXT`);
+    if (!productCols.some(c => c.name === 'cost_method')) dbInstance.exec(`ALTER TABLE products ADD COLUMN cost_method TEXT DEFAULT 'average'`);
+
+
+    const categoryCols = dbInstance.prepare("PRAGMA table_info(categories)").all() as Array<{ name: string }>;
+    if (!categoryCols.some(c => c.name === 'tenant_id')) dbInstance.exec(`ALTER TABLE categories ADD COLUMN tenant_id INTEGER`);
+    if (!categoryCols.some(c => c.name === 'deleted_at')) dbInstance.exec(`ALTER TABLE categories ADD COLUMN deleted_at DATETIME`);
+    if (!categoryCols.some(c => c.name === 'updated_at')) dbInstance.exec(`ALTER TABLE categories ADD COLUMN updated_at DATETIME DEFAULT CURRENT_TIMESTAMP`);
+    if (!categoryCols.some(c => c.name === 'remote_id')) dbInstance.exec(`ALTER TABLE categories ADD COLUMN remote_id INTEGER`);
+
     const orderCols = dbInstance.prepare("PRAGMA table_info(orders)").all() as Array<{ name: string }>;
     if (!orderCols.some(c => c.name === 'waiter_id'))  dbInstance.exec(`ALTER TABLE orders ADD COLUMN waiter_id INTEGER`);
     if (!orderCols.some(c => c.name === 'items'))      dbInstance.exec(`ALTER TABLE orders ADD COLUMN items TEXT`);
@@ -343,34 +382,17 @@ function ensureCoreQrMenuTables(): void {
     if (!orderCols.some(c => c.name === 'customer_phone')) dbInstance.exec(`ALTER TABLE orders ADD COLUMN customer_phone TEXT`);
     if (!orderCols.some(c => c.name === 'customer_id'))    dbInstance.exec(`ALTER TABLE orders ADD COLUMN customer_id INTEGER`);
     if (!orderCols.some(c => c.name === 'tenant_id'))     dbInstance.exec(`ALTER TABLE orders ADD COLUMN tenant_id INTEGER`);
+    if (!orderCols.some(c => c.name === 'deleted_at'))     dbInstance.exec(`ALTER TABLE orders ADD COLUMN deleted_at DATETIME`);
 
-    const productCols = dbInstance.prepare("PRAGMA table_info(products)").all() as Array<{ name: string }>;
-    if (!productCols.some(c => c.name === 'status')) dbInstance.exec(`ALTER TABLE products ADD COLUMN status TEXT DEFAULT 'active'`);
-    if (!productCols.some(c => c.name === 'remote_id')) dbInstance.exec(`ALTER TABLE products ADD COLUMN remote_id INTEGER`);
-    if (!productCols.some(c => c.name === 'price')) dbInstance.exec(`ALTER TABLE products ADD COLUMN price REAL DEFAULT 0`);
-    if (!productCols.some(c => c.name === 'buying_price')) dbInstance.exec(`ALTER TABLE products ADD COLUMN buying_price REAL DEFAULT 0`);
-    if (!productCols.some(c => c.name === 'tenant_id')) dbInstance.exec(`ALTER TABLE products ADD COLUMN tenant_id INTEGER`);
-
-    const categoryCols = dbInstance.prepare("PRAGMA table_info(categories)").all() as Array<{ name: string }>;
-    if (!categoryCols.some(c => c.name === 'tenant_id')) dbInstance.exec(`ALTER TABLE categories ADD COLUMN tenant_id INTEGER`);
+    const saleCols = dbInstance.prepare("PRAGMA table_info(sales)").all() as Array<{ name: string }>;
+    if (!saleCols.some(c => c.name === 'tenant_id'))     dbInstance.exec(`ALTER TABLE sales ADD COLUMN tenant_id INTEGER`);
+    if (!saleCols.some(c => c.name === 'deleted_at'))     dbInstance.exec(`ALTER TABLE sales ADD COLUMN deleted_at DATETIME`);
 
     const tableCols = dbInstance.prepare("PRAGMA table_info(restaurant_tables)").all() as Array<{ name: string }>;
     if (!tableCols.some(c => c.name === 'tenant_id')) dbInstance.exec(`ALTER TABLE restaurant_tables ADD COLUMN tenant_id INTEGER`);
+    if (!tableCols.some(c => c.name === 'remote_id')) dbInstance.exec(`ALTER TABLE restaurant_tables ADD COLUMN remote_id INTEGER`);
   } catch (e) {
     console.warn('[Database] Column migration skipped (tables may be fresh):', e);
-  }
-
-  // Ensure categories has updated_at and remote_id for sync
-  try {
-    const categoryCols = dbInstance.prepare("PRAGMA table_info(categories)").all() as Array<{ name: string }>;
-    if (!categoryCols.some(c => c.name === 'updated_at')) dbInstance.exec(`ALTER TABLE categories ADD COLUMN updated_at DATETIME DEFAULT CURRENT_TIMESTAMP`);
-    if (!categoryCols.some(c => c.name === 'remote_id')) dbInstance.exec(`ALTER TABLE categories ADD COLUMN remote_id INTEGER`);
-    dbInstance.exec(`UPDATE orders SET tenant_id = 5 WHERE tenant_id IS NULL`);
-    dbInstance.exec(`UPDATE products SET tenant_id = 5 WHERE tenant_id IS NULL`);
-    dbInstance.exec(`UPDATE categories SET tenant_id = 5 WHERE tenant_id IS NULL`);
-    dbInstance.exec(`UPDATE restaurant_tables SET tenant_id = 5 WHERE tenant_id IS NULL`);
-  } catch (e) {
-    console.warn('[Database] Categories column migration skipped:', e);
   }
 
   // Ensure unique index for categories remote_id
@@ -414,7 +436,30 @@ function ensureCoreQrMenuTables(): void {
   try { dbInstance.prepare(`CREATE INDEX IF NOT EXISTS idx_users_remote_id ON users(remote_id) WHERE remote_id IS NOT NULL`).run(); } catch {}
   try { dbInstance.prepare(`CREATE INDEX IF NOT EXISTS idx_users_tenant_id ON users(tenant_id)`).run(); } catch {}
   try { dbInstance.prepare(`CREATE INDEX IF NOT EXISTS idx_users_active ON users(is_active)`).run(); } catch {}
-  try { dbInstance.prepare(`UPDATE users SET tenant_id = 5 WHERE tenant_id IS NULL`).run(); } catch {}
+  try { dbInstance.prepare(`UPDATE users SET tenant_id = 1 WHERE tenant_id IS NULL`).run(); } catch {}
+
+  // ── Maintenance: Assign default password to users without one ──────────────────
+  try {
+    const bcrypt = require('bcryptjs');
+    const defaultPassword = 'admin123';
+    const defaultHash = bcrypt.hashSync(defaultPassword, 10);
+
+    // Update those without any hash
+    const stmt = dbInstance.prepare(`
+      UPDATE users 
+      SET password_hash = ? 
+      WHERE password_hash IS NULL OR password_hash = ''
+    `);
+    const result = stmt.run(defaultHash);
+    if (result.changes > 0) {
+      console.log(`[Database] Assigned bcrypt default password 'admin123' to ${result.changes} users.`);
+    }
+
+    // Optional: Re-hash legacy PBKDF2 hashes (those not starting with $2)
+    // ONLY if they match 'admin123' or are forced. For now, we'll just handle empty ones.
+  } catch (e: any) {
+    console.warn('[Database] Failed to assign default passwords:', e.message);
+  }
 
   console.log('[Database] Core QR menu tables ensured (IF NOT EXISTS)');
 }
@@ -493,6 +538,7 @@ function ensureAdvancedTables(): void {
       total_value REAL DEFAULT 0,
       created_by INTEGER,
       reason TEXT,
+      tenant_id INTEGER DEFAULT 5,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE
     )
@@ -559,6 +605,7 @@ function ensureAdvancedTables(): void {
     if (!invMoveCols.some(c => c.name === 'reason'))         dbInstance.exec(`ALTER TABLE inventory_movements ADD COLUMN reason TEXT`);
     if (!invMoveCols.some(c => c.name === 'reference_type')) dbInstance.exec(`ALTER TABLE inventory_movements ADD COLUMN reference_type TEXT`);
     if (!invMoveCols.some(c => c.name === 'reference_id'))   dbInstance.exec(`ALTER TABLE inventory_movements ADD COLUMN reference_id TEXT`);
+    if (!invMoveCols.some(c => c.name === 'tenant_id'))      dbInstance.exec(`ALTER TABLE inventory_movements ADD COLUMN tenant_id INTEGER DEFAULT 5`);
     
     // CRITICAL FIX: Check if movement_type constraint includes 'sale'
     const tableSql = dbInstance.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='inventory_movements'").get()?.sql || '';
@@ -582,18 +629,19 @@ function ensureAdvancedTables(): void {
               total_value REAL DEFAULT 0,
               created_by INTEGER,
               reason TEXT,
+              tenant_id INTEGER DEFAULT 5,
               created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
               FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE
           );
           INSERT INTO inventory_movements_new (
               id, product_id, movement_type, quantity_before, quantity_changed, 
               quantity_after, reference_id, reference_type, status, notes, 
-              unit_cost, total_value, created_by, reason, created_at
+              unit_cost, total_value, created_by, reason, tenant_id, created_at
           )
           SELECT 
               id, product_id, movement_type, quantity_before, quantity_changed, 
               quantity_after, reference_id, reference_type, status, notes, 
-              COALESCE(unit_cost, 0), COALESCE(total_value, 0), created_by, reason, created_at
+              COALESCE(unit_cost, 0), COALESCE(total_value, 0), created_by, reason, COALESCE(tenant_id, 5), created_at
           FROM inventory_movements;
           DROP TABLE inventory_movements;
           ALTER TABLE inventory_movements_new RENAME TO inventory_movements;
@@ -605,35 +653,66 @@ function ensureAdvancedTables(): void {
     }
 
     // 3. Sync Backfill & Force Pull logic
-    dbInstance.exec(`UPDATE sales SET tenant_id = 5 WHERE tenant_id IS NULL`);
-    dbInstance.exec(`UPDATE sales SET updated_at = CURRENT_TIMESTAMP WHERE updated_at IS NULL`);
-    dbInstance.exec(`UPDATE sale_items SET tenant_id = 5 WHERE tenant_id IS NULL`);
+    const entitiesToBackfill = [
+      { name: 'category', table: 'categories' },
+      { name: 'product', table: 'products' },
+      { name: 'order', table: 'orders' },
+      { name: 'sale', table: 'sales' }
+    ];
 
-    const localSaleCount = (dbInstance.prepare('SELECT COUNT(*) as count FROM sales').get() as any).count;
-    if (localSaleCount < 10) {
-      dbInstance.prepare("DELETE FROM sync_state WHERE key = 'last_pull_sale'").run();
-    }
+    const crypto = require('crypto');
+    const insertOutbox = dbInstance.prepare(`
+      INSERT INTO sync_outbox (id, entity, operation, record_id, payload, tenant_id)
+      VALUES (?, ?, 'insert', ?, ?, ?)
+    `);
 
-    const pendingSales = dbInstance.prepare(`
-      SELECT s.* FROM sales s
-      WHERE s.remote_id IS NULL 
-      AND NOT EXISTS (SELECT 1 FROM sync_outbox WHERE entity = 'sale' AND record_id = CAST(s.id AS TEXT))
-    `).all() as any[];
+    for (const ent of entitiesToBackfill) {
+      // 1. Backfill INSERTS (remote_id IS NULL)
+      const pending = dbInstance.prepare(`
+        SELECT t.* FROM ${ent.table} t
+        WHERE t.remote_id IS NULL
+        AND (t.deleted_at IS NULL OR t.deleted_at = '')
+        AND NOT EXISTS (SELECT 1 FROM sync_outbox WHERE entity = ? AND record_id = CAST(t.id AS TEXT))
+        LIMIT 500
+      `).all(ent.name) as any[];
 
-    if (pendingSales.length > 0) {
-      console.log(`[Database] Backfilling ${pendingSales.length} sales into sync_outbox`);
-      const insertOutbox = dbInstance.prepare(`
-        INSERT INTO sync_outbox (id, entity, operation, record_id, payload, tenant_id)
-        VALUES (?, ?, ?, ?, ?, ?)
-      `);
-      
-      const crypto = require('crypto');
-      for (const sale of pendingSales) {
-        const tenant_id = sale.tenant_id || 5;
-        insertOutbox.run(crypto.randomUUID(), 'sale', 'insert', String(sale.id), JSON.stringify(sale), tenant_id);
-        const saleItems = dbInstance.prepare('SELECT * FROM sale_items WHERE sale_id = ?').all(sale.id) as any[];
-        for (const item of saleItems) {
-          insertOutbox.run(crypto.randomUUID(), 'sale_item', 'insert', String(item.id), JSON.stringify({ ...item, tenant_id }), tenant_id);
+      if (pending.length > 0) {
+        console.log(`[Database] Backfilling ${pending.length} ${ent.name} (inserts) into sync_outbox`);
+        for (const record of pending) {
+          const tid = record.tenant_id || record.business_id;
+          if (!tid || tid === '1' || tid === 1) { 
+            // On ignore le tenant 1 par défaut si l'utilisateur est sur le 6, 
+            // pour éviter de pousser des données de test/migration
+            continue; 
+          }
+          insertOutbox.run(crypto.randomUUID(), ent.name, 'insert', String(record.id), JSON.stringify(record), tid);
+
+          // Handle children
+          if (ent.name === 'sale') {
+            const items = dbInstance.prepare('SELECT * FROM sale_items WHERE sale_id = ?').all(record.id) as any[];
+            for (const it of items) insertOutbox.run(crypto.randomUUID(), 'sale_item', 'insert', String(it.id), JSON.stringify({ ...it, tenant_id: tid }), tid);
+          }
+          if (ent.name === 'order') {
+            const items = dbInstance.prepare('SELECT * FROM order_items WHERE order_id = ?').all(record.id) as any[];
+            for (const it of items) insertOutbox.run(crypto.randomUUID(), 'order_item', 'insert', String(it.id), JSON.stringify({ ...it, tenant_id: tid }), tid);
+          }
+        }
+      }
+
+      // 2. Backfill DELETES (deleted_at IS NOT NULL)
+      const pendingDeletes = dbInstance.prepare(`
+        SELECT t.* FROM ${ent.table} t
+        WHERE t.deleted_at IS NOT NULL AND t.deleted_at != ''
+        AND NOT EXISTS (SELECT 1 FROM sync_outbox WHERE entity = ? AND record_id = CAST(t.id AS TEXT) AND operation = 'delete')
+        LIMIT 500
+      `).all(ent.name) as any[];
+
+      if (pendingDeletes.length > 0) {
+        console.log(`[Database] Backfilling ${pendingDeletes.length} ${ent.name} (deletes) into sync_outbox`);
+        for (const record of pendingDeletes) {
+          const tid = record.tenant_id || record.business_id;
+          if (!tid) continue;
+          insertOutbox.run(crypto.randomUUID(), ent.name, 'delete', String(record.id), JSON.stringify(record), tid);
         }
       }
     }
@@ -706,19 +785,6 @@ function ensureTenantSyncColumns(): void {
   try { dbInstance.prepare(`ALTER TABLE tenant_users ADD COLUMN remote_id INTEGER`).run(); } catch {}
   try { dbInstance.prepare(`CREATE INDEX IF NOT EXISTS idx_tenant_users_remote_id ON tenant_users(remote_id) WHERE remote_id IS NOT NULL`).run(); } catch {}
   try { dbInstance.prepare(`CREATE INDEX IF NOT EXISTS idx_tenant_users_tenant_id ON tenant_users(tenant_id)`).run(); } catch {}
-  
-  // Ensure users have remote_id for sync (needed for user sync to work)
-  try {
-    const usersNeedingRemoteId = dbInstance.prepare(
-      "SELECT id FROM users WHERE remote_id IS NULL"
-    ).all() as { id: number }[];
-    
-    if (usersNeedingRemoteId.length > 0) {
-      console.log(`[Database] ${usersNeedingRemoteId.length} users need remote_id assignment`);
-    }
-  } catch (e) {
-    console.warn('[Database] Could not check users for remote_id:', e);
-  }
 }
 
 function seedAdmin(): void {
@@ -765,12 +831,12 @@ function seedTables(): void {
 
   if (count === 0) {
     const stmt = dbInstance.prepare(`
-      INSERT INTO restaurant_tables (table_number, capacity, tenant_id) VALUES (?, 4, 5)
+      INSERT INTO restaurant_tables (table_number, capacity, tenant_id) VALUES (?, 4, 1)
     `);
     ['T1', 'T2', 'T3', 'T4', 'T5', 'Bar 1', 'Bar 2'].forEach(n => stmt.run(n));
   } else {
-    // Ensure existing tables have tenant_id set
-    dbInstance.prepare(`UPDATE restaurant_tables SET tenant_id = 5 WHERE tenant_id IS NULL`).run();
+    // Ensure existing tables have tenant_id set to 1 (default tenant)
+    dbInstance.prepare(`UPDATE restaurant_tables SET tenant_id = 1 WHERE tenant_id IS NULL`).run();
   }
 }
 
@@ -790,12 +856,12 @@ function seedCategories(): void {
       ['Food',        'Restaurant food items'],
     ];
     const stmt = dbInstance.prepare(`
-      INSERT INTO categories (name, description, tenant_id) VALUES (?, ?, 5)
+      INSERT INTO categories (name, description, tenant_id) VALUES (?, ?, 1)
     `);
     for (const [name, desc] of seedData) stmt.run(name, desc);
   } else {
     // Ensure existing categories have tenant_id set
-    dbInstance.prepare(`UPDATE categories SET tenant_id = 5 WHERE tenant_id IS NULL`).run();
+    dbInstance.prepare(`UPDATE categories SET tenant_id = 1 WHERE tenant_id IS NULL`).run();
   }
 }
 
@@ -822,7 +888,7 @@ function seedProducts(): void {
 
     const stmt = dbInstance.prepare(`
       INSERT INTO products (category_id, name, selling_price, buying_price, stock_quantity, minimum_stock, is_available, description, unit, price, updated_at, tenant_id)
-      VALUES (?, ?, ?, ?, ?, 5, 1, '', ?, ?, '1970-01-01 00:00:00', 5)
+      VALUES (?, ?, ?, ?, ?, 5, 1, '', ?, ?, '1970-01-01 00:00:00', 1)
     `);
     
     for (const p of products) {
@@ -832,7 +898,7 @@ function seedProducts(): void {
     console.log(`[Database] Seeded ${products.length} products with past updated_at`);
   } else {
     // Ensure existing products have tenant_id set
-    dbInstance.prepare(`UPDATE products SET tenant_id = 5 WHERE tenant_id IS NULL`).run();
+    dbInstance.prepare(`UPDATE products SET tenant_id = 1 WHERE tenant_id IS NULL`).run();
   }
 }
 

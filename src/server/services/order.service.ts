@@ -1,6 +1,7 @@
 import db from '../db/database';
 import { notifyOrderCheckout, loadRawSettings } from '../services/notification.service';
 import { getOrderSyncService, getProductSyncService, withOutboxTransaction } from '../../sync';
+import { getCurrentTenantId } from '../db/tenant-context';
 
 export interface OrderItem {
   id?: number;
@@ -24,12 +25,15 @@ export interface OrderData {
   customer_phone?: string;
   customer_id?: number | null;
   remote_id?: number;
+  table_waiter_name?: string | null;
+  order_waiter_name?: string | null;
   created_at?: string;
   updated_at?: string;
 }
 
 export class OrderService {
   private static getItemsForOrder(orderId: number, fallbackJson?: string, isRemote: boolean = false): OrderItem[] {
+    const tenantId = getCurrentTenantId();
     try {
       // Cloud mode guard: if db is null, we can only rely on fallbackJson (JSON snapshot in orders.items)
       if (!db) {
@@ -73,7 +77,7 @@ export class OrderService {
           const pid = it.product_id || it.productId;
           if (!pid) return null;
 
-          const prod = db.prepare('SELECT selling_price FROM products WHERE id = ?').get(pid) as any;
+          const prod = db.prepare('SELECT selling_price FROM products WHERE id = ? AND tenant_id = ?').get(pid, tenantId) as any;
           const price = Number(prod?.selling_price ?? it.price ?? it.unit_price ?? 0);
           return {
             id: it.id,
@@ -96,8 +100,8 @@ export class OrderService {
           oi.notes
         FROM order_items oi
         LEFT JOIN products p ON oi.product_id = p.id
-        WHERE oi.order_id = ?
-      `).all(orderId) as any[];
+        WHERE oi.order_id = ? AND oi.tenant_id = ?
+      `).all(orderId, tenantId) as any[];
 
       if (items.length > 0) {
         return items.map(item => ({
@@ -118,7 +122,7 @@ export class OrderService {
         }
       }
 
-      const order = db.prepare('SELECT items FROM orders WHERE id = ?').get(orderId) as any;
+      const order = db.prepare('SELECT items FROM orders WHERE id = ? AND tenant_id = ?').get(orderId, tenantId) as any;
       return order ? JSON.parse(order.items || '[]') : [];
     } catch (error) {
       console.error('[OrderService] Error fetching order items:', error);
@@ -126,12 +130,24 @@ export class OrderService {
     }
   }
 
+  private static resolveEffectiveWaiterId(table_id: number | null, waiter_id: number): number {
+    const tenantId = getCurrentTenantId();
+    if (!db || !table_id) return waiter_id || 1;
+
+    const table = db.prepare(
+      'SELECT assigned_waiter_id FROM restaurant_tables WHERE id = ? AND tenant_id = ?'
+    ).get(table_id, tenantId) as { assigned_waiter_id: number | null } | undefined;
+
+    return table?.assigned_waiter_id || waiter_id || 1;
+  }
+
   private static insertOrderItems(orderId: number, items: OrderItem[]): void {
     if (!db) return;
+    const tenantId = getCurrentTenantId();
     const itemStmt = db.prepare(`
       INSERT INTO order_items (
-        order_id, product_id, quantity, unit_price, total_price, notes
-      ) VALUES (?, ?, ?, ?, ?, ?)
+        order_id, product_id, quantity, unit_price, total_price, notes, tenant_id
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)
     `);
 
     for (const item of items as any[]) {
@@ -143,16 +159,18 @@ export class OrderService {
         Number(item.quantity),
         Number(item.price),
         Number(item.price) * Number(item.quantity),
-        item.notes ?? null
+        item.notes ?? null,
+        tenantId
       );
     }
   }
 
   private static replaceOrderItems(orderId: number, items: OrderItem[]): void {
     if (!db) return;
+    const tenantId = getCurrentTenantId();
     // Queue deletions for sync
     try {
-      const oldItems = db.prepare('SELECT id FROM order_items WHERE order_id = ?').all(orderId) as { id: number }[];
+      const oldItems = db.prepare('SELECT id FROM order_items WHERE order_id = ? AND tenant_id = ?').all(orderId, tenantId) as { id: number }[];
       const sync = getProductSyncService();
       for (const item of oldItems) {
         sync.queueChangeInsideTransaction('order_item', 'delete', { id: item.id });
@@ -161,13 +179,10 @@ export class OrderService {
       console.warn('[OrderService] Failed to queue item deletions for sync:', e);
     }
 
-    db.prepare('DELETE FROM order_items WHERE order_id = ?').run(orderId);
+    db.prepare('DELETE FROM order_items WHERE order_id = ? AND tenant_id = ?').run(orderId, tenantId);
     this.insertOrderItems(orderId, items);
   }
 
-  /**
-   * Get all orders with filtering
-   */
   static async getAll(params: {
     waiter_id?: number;
     role?: string;
@@ -175,17 +190,19 @@ export class OrderService {
     status?: string;
   } = {}): Promise<OrderData[]> {
     const { waiter_id, role, table_id, status } = params;
+    const tenantId = getCurrentTenantId();
 
     // Cloud mode guard: if db is null, we must fall back to Supabase
     if (!db) {
-      console.log('[OrderService] SQLite disabled (db is null). Falling back to Supabase for getAll');
+      console.log(`[OrderService] SQLite disabled (db is null). Falling back to Supabase for getAll (tenant=${tenantId})`);
       try {
         const { getSupabaseClient } = require('../database/supabase.client');
         const supabase = getSupabaseClient();
 
         let query = supabase
           .from('orders')
-          .select('*, table:restaurant_tables(table_number), waiter:users(full_name, role)');
+          .select('*, table:restaurant_tables(table_number, assigned_waiter_id, waiter:users(full_name, username)), waiter:users(full_name, username)')
+          .eq('tenant_id', tenantId);
 
         if (role === 'waiter' && waiter_id) {
           query = query.eq('waiter_id', waiter_id);
@@ -201,39 +218,48 @@ export class OrderService {
 
         if (error) throw error;
 
-        return (data || []).map((order: any) => ({
-          ...order,
-          table_number: order.table?.table_number,
-          waiter_name: order.waiter?.full_name,
-          waiter_role: order.waiter?.role,
-          items: typeof order.items === 'string' ? JSON.parse(order.items) : (order.items || [])
-        }));
+        return (data || []).map((order: any) => {
+          const tableWaiterName = order.table?.waiter?.full_name || order.table?.waiter?.username;
+          const orderWaiterName = order.waiter?.full_name || order.waiter?.username;
+          return {
+            ...order,
+            table_number: order.table?.table_number,
+            table_waiter_name: tableWaiterName,
+            order_waiter_name: orderWaiterName,
+            waiter_name: tableWaiterName || orderWaiterName,
+            waiter_role: order.table?.waiter?.role || order.waiter?.role,
+            items: typeof order.items === 'string' ? JSON.parse(order.items) : (order.items || [])
+          };
+        });
       } catch (err: any) {
         console.error('[OrderService] Supabase getAll failed:', err?.message || err);
         throw new Error('Failed to fetch orders via Supabase');
       }
     }
 
-    console.log('[OrderService] Using SQLite as source of truth');
+    console.log(`[OrderService] Using SQLite as source of truth (tenant=${tenantId})`);
 
     let query = `
       SELECT
         o.*,
         COALESCE(t.table_number, t2.table_number) as table_number,
-        u.full_name as waiter_name,
-        u.role as waiter_role
+        COALESCE(ut.full_name, ut.username, u.full_name, u.username) as waiter_name,
+        TRIM(COALESCE(ut.full_name, '') || ' ' || COALESCE(ut.username, '')) as table_waiter_name,
+        TRIM(COALESCE(u.full_name, '') || ' ' || COALESCE(u.username, '')) as order_waiter_name,
+        ut.role as waiter_role
       FROM orders o
       LEFT JOIN restaurant_tables t ON o.table_id = t.id
       LEFT JOIN restaurant_tables t2 ON o.table_id = t2.remote_id AND t2.id != t.id
-      LEFT JOIN users u ON o.waiter_id = u.id
-      WHERE 1=1
+      LEFT JOIN users ut ON (t.assigned_waiter_id = ut.id OR t.assigned_waiter_id = ut.remote_id)
+      LEFT JOIN users u ON (o.waiter_id = u.id OR o.waiter_id = u.remote_id)
+      WHERE o.tenant_id = ?
     `;
-    const queryParams: any[] = [];
+    const queryParams: any[] = [tenantId];
 
     // RBAC filtering
     if (role === 'waiter' && waiter_id) {
-      query += ` AND o.waiter_id = ?`;
-      queryParams.push(waiter_id);
+      query += ` AND (o.waiter_id = ? OR o.waiter_id = (SELECT remote_id FROM users WHERE id = ?))`;
+      queryParams.push(waiter_id, waiter_id);
     }
 
     if (table_id) {
@@ -255,10 +281,25 @@ export class OrderService {
       // that doesn't match local restaurant_tables.id. Fix by re-resolving.
       for (const order of orders) {
         if (order.table_id && !order.table_number) {
-          // table_id didn't match local id, try remote_id
-          const matchByRemote = db.prepare(
-            `SELECT id, table_number FROM restaurant_tables WHERE remote_id = ?`
-          ).get(order.table_id) as any;
+          // table_id didn't match local id, try remote_id first
+          let matchByRemote = db.prepare(
+            `SELECT id, table_number FROM restaurant_tables WHERE remote_id = ? AND tenant_id = ?`
+          ).get(order.table_id, tenantId) as any;
+          
+          // Fallback: try by table_number if we can extract it from table_id
+          if (!matchByRemote && typeof order.table_id === 'string') {
+            matchByRemote = db.prepare(
+              `SELECT id, table_number FROM restaurant_tables WHERE table_number = ? AND tenant_id = ?`
+            ).get(order.table_id, tenantId) as any;
+          }
+          
+          // Fallback: try by id directly
+          if (!matchByRemote) {
+            matchByRemote = db.prepare(
+              `SELECT id, table_number FROM restaurant_tables WHERE id = ? AND tenant_id = ?`
+            ).get(order.table_id, tenantId) as any;
+          }
+          
           if (matchByRemote) {
             order.table_id = matchByRemote.id;
             order.table_number = matchByRemote.table_number;
@@ -277,27 +318,24 @@ export class OrderService {
     }
   }
 
-  /**
-   * Get order by ID
-   */
   static async getById(id: number): Promise<OrderData | null> {
+    const tenantId = getCurrentTenantId();
     // Cloud mode guard: db might be null (SQLite disabled on Render)
     if (!db) {
-      console.log(`[OrderService] SQLite disabled (db is null). Falling back to Supabase for getById (id=${id})`);
+      console.log(`[OrderService] SQLite disabled (db is null). Falling back to Supabase for getById (id=${id}, tenant=${tenantId})`);
       try {
         const { getSupabaseClient } = require('../database/supabase.client');
         const supabase = getSupabaseClient();
 
         const { data, error } = await supabase
           .from('orders')
-          .select('*, table:restaurant_tables(table_number), waiter:users(full_name)')
+          .select('*, table:restaurant_tables(table_number, assigned_waiter_id, waiter:users(full_name, username)), waiter:users(full_name, username)')
           .eq('id', id)
-          .single();
+          .eq('tenant_id', tenantId)
+          .maybeSingle();
 
-        if (error) {
-          if (error.code === 'PGRST116') return null; // Not found
-          throw error;
-        }
+        if (error) throw error;
+        if (!data) return null;
 
         const rawItems = typeof data.items === 'string' ? JSON.parse(data.items) : (data.items || []);
         
@@ -310,7 +348,8 @@ export class OrderService {
           const { data: products } = await supabase
             .from('products')
             .select('id, name, selling_price')
-            .in('id', productIds);
+            .in('id', productIds)
+            .eq('tenant_id', tenantId);
           
           if (products) {
             products.forEach((p: any) => productsMap.set(p.id, p));
@@ -330,10 +369,15 @@ export class OrderService {
           };
         });
 
+        const tableWaiterName = data.table?.waiter?.full_name || data.table?.waiter?.username;
+        const orderWaiterName = data.waiter?.full_name || data.waiter?.username;
+
         return {
           ...data,
           table_number: data.table?.table_number,
-          waiter_name: data.waiter?.full_name,
+          table_waiter_name: tableWaiterName,
+          order_waiter_name: orderWaiterName,
+          waiter_name: tableWaiterName || orderWaiterName,
           items: enrichedItems
         };
       } catch (err: any) {
@@ -347,13 +391,16 @@ export class OrderService {
         SELECT
           o.*,
           COALESCE(t.table_number, t2.table_number) as table_number,
-          u.full_name as waiter_name
+          COALESCE(ut.full_name, ut.username, u.full_name, u.username) as waiter_name,
+          TRIM(COALESCE(ut.full_name, '') || ' ' || COALESCE(ut.username, '')) as table_waiter_name,
+          TRIM(COALESCE(u.full_name, '') || ' ' || COALESCE(u.username, '')) as order_waiter_name
         FROM orders o
         LEFT JOIN restaurant_tables t ON o.table_id = t.id
         LEFT JOIN restaurant_tables t2 ON o.table_id = t2.remote_id AND t2.id != t.id
-        LEFT JOIN users u ON o.waiter_id = u.id
-        WHERE o.id = ?
-      `).get(id) as any;
+        LEFT JOIN users ut ON (t.assigned_waiter_id = ut.id OR t.assigned_waiter_id = ut.remote_id)
+        LEFT JOIN users u ON (o.waiter_id = u.id OR o.waiter_id = u.remote_id)
+        WHERE o.id = ? AND o.tenant_id = ?
+      `).get(id, tenantId) as any;
 
       if (order) {
         return {
@@ -368,19 +415,17 @@ export class OrderService {
     }
   }
 
-  /**
-   * Create new order with item merging logic
-   */
   static async create(orderData: Omit<OrderData, 'id' | 'created_at' | 'updated_at'>): Promise<OrderData> {
-      const tenantId = process.env.TENANT_ID || '5';
+    const tenantId = getCurrentTenantId();
 
     // Cloud mode guard: db might be null (SQLite disabled on Render)
     if (!db) {
-      console.log('[OrderService] SQLite disabled (db is null). Falling back to Supabase for create');
+      console.log(`[OrderService] SQLite disabled (db is null). Falling back to Supabase for create (tenant=${tenantId})`);
       try {
         const { getSupabaseClient } = require('../database/supabase.client');
         const supabase = getSupabaseClient();
         const { table_id, waiter_id, items, status, customer_id } = orderData;
+        const effectiveWaiterId = this.resolveEffectiveWaiterId(table_id, waiter_id);
 
         const normalizedItems = items.map((item: any) => ({
           ...item,
@@ -388,7 +433,8 @@ export class OrderService {
           name: item.name || '',
           quantity: Number(item.quantity),
           price: Number(item.price),
-          notes: item.notes ?? null
+          notes: item.notes ?? null,
+          tenant_id: tenantId
         }));
 
         const total = normalizedItems.reduce((sum, item) => sum + item.price * item.quantity, 0);
@@ -397,12 +443,14 @@ export class OrderService {
           .from('orders')
           .insert([{
             table_id,
-            waiter_id,
+            waiter_id: effectiveWaiterId,
             customer_id,
             items: normalizedItems,
             status: status || 'pending',
             total,
             version: 1,
+            tenant_id: tenantId,
+            source: 'local',
             created_at: new Date().toISOString(),
             updated_at: new Date().toISOString()
           }])
@@ -420,9 +468,10 @@ export class OrderService {
       }
     }
 
-    return withOutboxTransaction(db, tenantId, () => {
+    return withOutboxTransaction(db, String(tenantId), () => {
       try {
         const { table_id, waiter_id, items, status } = orderData;
+        const effectiveWaiterId = this.resolveEffectiveWaiterId(table_id, waiter_id);
 
         const normalizedItems = items.map((item: any) => ({
           ...item,
@@ -430,7 +479,8 @@ export class OrderService {
           name: item.name || '',
           quantity: Number(item.quantity),
           price: Number(item.price),
-          notes: item.notes ?? null
+          notes: item.notes ?? null,
+          tenant_id: tenantId
         }));
 
         const total = normalizedItems.reduce((sum, item) => sum + item.price * item.quantity, 0);
@@ -438,9 +488,9 @@ export class OrderService {
         if (table_id) {
           const existingOrder = db.prepare(`
             SELECT id, items, version FROM orders
-            WHERE table_id = ? AND status NOT IN ('paid', 'cancelled')
+            WHERE table_id = ? AND tenant_id = ? AND status NOT IN ('paid', 'cancelled')
             ORDER BY created_at DESC LIMIT 1
-          `).get(table_id) as any;
+          `).get(table_id, tenantId) as any;
 
           if (existingOrder) {
             console.log(`[OrderService] Merging items into existing order ${existingOrder.id}`);
@@ -463,8 +513,8 @@ export class OrderService {
             db.prepare(`
               UPDATE orders
               SET items = ?, total = ?, updated_at = CURRENT_TIMESTAMP
-              WHERE id = ?
-            `).run(JSON.stringify(mergedItems), mergedTotal, existingOrder.id);
+              WHERE id = ? AND tenant_id = ?
+            `).run(JSON.stringify(mergedItems), mergedTotal, existingOrder.id, tenantId);
 
             this.replaceOrderItems(existingOrder.id, mergedItems);
 
@@ -472,51 +522,58 @@ export class OrderService {
               SELECT
                 o.*,
                 t.table_number,
-                u.full_name as waiter_name
+                COALESCE(ut.full_name, ut.username, u.full_name, u.username) as waiter_name,
+                TRIM(COALESCE(ut.full_name, '') || ' ' || COALESCE(ut.username, '')) as table_waiter_name,
+                TRIM(COALESCE(u.full_name, '') || ' ' || COALESCE(u.username, '')) as order_waiter_name
               FROM orders o
               LEFT JOIN restaurant_tables t ON o.table_id = t.id
-              LEFT JOIN users u ON o.waiter_id = u.id
-              WHERE o.id = ?
-            `).get(existingOrder.id) as any;
+              LEFT JOIN users ut ON (t.assigned_waiter_id = ut.id OR t.assigned_waiter_id = ut.remote_id)
+              LEFT JOIN users u ON (o.waiter_id = u.id OR o.waiter_id = u.remote_id)
+              WHERE o.id = ? AND o.tenant_id = ?
+            `).get(existingOrder.id, tenantId) as any;
 
             const finalOrder = { ...updatedOrder, items: mergedItems };
-            getOrderSyncService().queueOrderChange('update', finalOrder, tenantId);
-            getOrderSyncService().pushPendingOrders(tenantId).catch(e => console.warn('[OrderService] Sync push failed:', e));
+            getOrderSyncService().queueOrderChange('update', finalOrder, String(tenantId));
+            getOrderSyncService().pushPendingOrders(String(tenantId)).catch(e => console.warn('[OrderService] Sync push failed:', e));
 
             return finalOrder;
           }
         }
 
         const result = db.prepare(`
-          INSERT INTO orders (table_id, waiter_id, items, status, total, tenant_id, created_at, updated_at, version)
-          VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 1)
+          INSERT INTO orders (table_id, waiter_id, items, status, total, tenant_id, source, created_at, updated_at, version)
+          VALUES (?, ?, ?, ?, ?, ?, 'local', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 1)
         `).run(
           table_id,
-          waiter_id,
+          effectiveWaiterId,
           JSON.stringify(normalizedItems),
           status || 'pending',
           total,
-          Number(tenantId)
+          tenantId
         );
 
         const orderId = Number(result.lastInsertRowid);
         this.insertOrderItems(orderId, normalizedItems);
 
         const newOrder = db.prepare(`
-          SELECT o.*, t.table_number, u.full_name as waiter_name
+          SELECT o.*, t.table_number,
+            COALESCE(ut.full_name, ut.username, u.full_name, u.username) as waiter_name,
+            TRIM(COALESCE(ut.full_name, '') || ' ' || COALESCE(ut.username, '')) as table_waiter_name,
+            TRIM(COALESCE(u.full_name, '') || ' ' || COALESCE(u.username, '')) as order_waiter_name
           FROM orders o
           LEFT JOIN restaurant_tables t ON o.table_id = t.id
-          LEFT JOIN users u ON o.waiter_id = u.id
-          WHERE o.id = ?
-        `).get(orderId) as any;
+          LEFT JOIN users ut ON (t.assigned_waiter_id = ut.id OR t.assigned_waiter_id = ut.remote_id)
+          LEFT JOIN users u ON (o.waiter_id = u.id OR o.waiter_id = u.remote_id)
+          WHERE o.id = ? AND o.tenant_id = ?
+        `).get(orderId, tenantId) as any;
 
         const finalOrder = {
           ...newOrder,
           items: this.getItemsForOrder(orderId, JSON.stringify(normalizedItems))
         };
         
-        getOrderSyncService().queueOrderChange('insert', finalOrder, tenantId);
-        getOrderSyncService().pushPendingOrders(tenantId).catch(e => console.warn('[OrderService] Sync push failed:', e));
+        getOrderSyncService().queueOrderChange('insert', finalOrder, String(tenantId));
+        getOrderSyncService().pushPendingOrders(String(tenantId)).catch(e => console.warn('[OrderService] Sync push failed:', e));
 
         return finalOrder;
       } catch (error) {
@@ -525,15 +582,12 @@ export class OrderService {
     });
   }
 
-  /**
-   * Update order items
-   */
   static async updateItems(id: number, items: OrderItem[]): Promise<OrderData> {
-      const tenantId = process.env.TENANT_ID || '5';
+    const tenantId = getCurrentTenantId();
 
     // Cloud mode guard: db might be null (SQLite disabled on Render)
     if (!db) {
-      console.log('[OrderService] SQLite disabled (db is null). Falling back to Supabase for updateItems');
+      console.log(`[OrderService] SQLite disabled (db is null). Falling back to Supabase for updateItems (tenant=${tenantId})`);
       try {
         const { getSupabaseClient } = require('../database/supabase.client');
         const supabase = getSupabaseClient();
@@ -543,7 +597,8 @@ export class OrderService {
           name: item.name || '',
           quantity: Number(item.quantity),
           price: Number(item.price),
-          notes: item.notes ?? null
+          notes: item.notes ?? null,
+          tenant_id: tenantId
         }));
 
         const total = normalizedItems.reduce((sum, item) => sum + item.price * item.quantity, 0);
@@ -556,6 +611,7 @@ export class OrderService {
             updated_at: new Date().toISOString()
           })
           .eq('id', id)
+          .eq('tenant_id', tenantId)
           .select()
           .single();
 
@@ -572,9 +628,9 @@ export class OrderService {
       }
     }
 
-    return withOutboxTransaction(db, tenantId, () => {
+    return withOutboxTransaction(db, String(tenantId), () => {
       try {
-        const existingOrder = db.prepare('SELECT id FROM orders WHERE id = ?').get(id);
+        const existingOrder = db.prepare('SELECT id FROM orders WHERE id = ? AND tenant_id = ?').get(id, tenantId);
         if (!existingOrder) {
           throw new Error('Order not found');
         }
@@ -584,7 +640,8 @@ export class OrderService {
           name: item.name || '',
           quantity: Number(item.quantity),
           price: Number(item.price),
-          notes: item.notes ?? null
+          notes: item.notes ?? null,
+          tenant_id: tenantId
         }));
 
         const total = normalizedItems.reduce((sum, item) => sum + item.price * item.quantity, 0);
@@ -592,8 +649,8 @@ export class OrderService {
         db.prepare(`
           UPDATE orders
           SET items = ?, total = ?, updated_at = CURRENT_TIMESTAMP
-          WHERE id = ?
-        `).run(JSON.stringify(normalizedItems), total, id);
+          WHERE id = ? AND tenant_id = ?
+        `).run(JSON.stringify(normalizedItems), total, id, tenantId);
 
         this.replaceOrderItems(id, normalizedItems);
 
@@ -601,19 +658,22 @@ export class OrderService {
           SELECT
             o.*,
             t.table_number,
-            u.full_name as waiter_name
+            COALESCE(ut.full_name, ut.username, u.full_name, u.username) as waiter_name,
+            TRIM(COALESCE(ut.full_name, '') || ' ' || COALESCE(ut.username, '')) as table_waiter_name,
+            TRIM(COALESCE(u.full_name, '') || ' ' || COALESCE(u.username, '')) as order_waiter_name
           FROM orders o
           LEFT JOIN restaurant_tables t ON o.table_id = t.id
-          LEFT JOIN users u ON o.waiter_id = u.id
-          WHERE o.id = ?
-        `).get(id) as any;
+          LEFT JOIN users ut ON (t.assigned_waiter_id = ut.id OR t.assigned_waiter_id = ut.remote_id)
+          LEFT JOIN users u ON (o.waiter_id = u.id OR o.waiter_id = u.remote_id)
+          WHERE o.id = ? AND o.tenant_id = ?
+        `).get(id, tenantId) as any;
 
         const result = {
           ...updatedOrder,
           items: normalizedItems
         };
 
-        getOrderSyncService().queueOrderChange('update', result, tenantId);
+        getOrderSyncService().queueOrderChange('update', result, String(tenantId));
 
         return result;
       } catch (error) {
@@ -622,15 +682,12 @@ export class OrderService {
     });
   }
 
-  /**
-   * Update order status
-   */
   static async updateStatus(id: number, status: OrderData['status']): Promise<OrderData> {
-      const tenantId = process.env.TENANT_ID || '5';
+    const tenantId = getCurrentTenantId();
 
     // Cloud mode guard: db might be null (SQLite disabled on Render)
     if (!db) {
-      console.log(`[OrderService] SQLite disabled (db is null). Falling back to Supabase for updateStatus (id=${id}, status=${status})`);
+      console.log(`[OrderService] SQLite disabled (db is null). Falling back to Supabase for updateStatus (id=${id}, status=${status}, tenant=${tenantId})`);
       try {
         const { getSupabaseClient } = require('../database/supabase.client');
         const supabase = getSupabaseClient();
@@ -643,7 +700,8 @@ export class OrderService {
             updated_at: new Date().toISOString() 
           })
           .eq('id', id)
-          .select()
+          .eq('tenant_id', tenantId)
+          .select('*, table:restaurant_tables(table_number, assigned_waiter_id, waiter:users(full_name, username)), waiter:users(full_name, username)')
           .single();
 
         if (error) throw error;
@@ -654,25 +712,35 @@ export class OrderService {
           await supabase
             .from('restaurant_tables')
             .update({ status: 'cleaning' })
-            .eq('id', data.table_id);
+            .eq('id', data.table_id)
+            .eq('tenant_id', tenantId);
         } else if (status === 'cancelled' && data.table_id) {
           // Check if there are other active orders for this table
           const { count } = await supabase
             .from('orders')
             .select('*', { count: 'exact', head: true })
             .eq('table_id', data.table_id)
+            .eq('tenant_id', tenantId)
             .not('status', 'in', '("paid","cancelled")');
           
           if (count === 0) {
             await supabase
               .from('restaurant_tables')
               .update({ status: 'available' })
-              .eq('id', data.table_id);
+              .eq('id', data.table_id)
+              .eq('tenant_id', tenantId);
           }
         }
 
+        const tableWaiterName = data.table?.waiter?.full_name || data.table?.waiter?.username;
+        const orderWaiterName = data.waiter?.full_name || data.waiter?.username;
+
         return {
           ...data,
+          table_number: data.table?.table_number,
+          table_waiter_name: tableWaiterName,
+          order_waiter_name: orderWaiterName,
+          waiter_name: tableWaiterName || orderWaiterName,
           items: typeof data.items === 'string' ? JSON.parse(data.items) : (data.items || [])
         };
       } catch (err: any) {
@@ -681,40 +749,43 @@ export class OrderService {
       }
     }
 
-    return withOutboxTransaction(db, tenantId, () => {
+    return withOutboxTransaction(db, String(tenantId), () => {
       try {
-        const wasPaid = (db.prepare('SELECT status FROM orders WHERE id = ?').get(id) as any)?.status === 'paid';
+        const wasPaid = (db.prepare('SELECT status FROM orders WHERE id = ? AND tenant_id = ?').get(id, tenantId) as any)?.status === 'paid';
         
         if (status === 'paid') {
-          const order = db.prepare('SELECT table_id FROM orders WHERE id = ?').get(id) as any;
+          const order = db.prepare('SELECT table_id FROM orders WHERE id = ? AND tenant_id = ?').get(id, tenantId) as any;
           if (order && order.table_id) {
-            db.prepare("UPDATE restaurant_tables SET status = 'cleaning' WHERE id = ?").run(order.table_id);
+            db.prepare("UPDATE restaurant_tables SET status = 'cleaning' WHERE id = ? AND tenant_id = ?").run(order.table_id, tenantId);
           }
         } else if (status === 'cancelled') {
-          const order = db.prepare('SELECT table_id FROM orders WHERE id = ?').get(id) as any;
+          const order = db.prepare('SELECT table_id FROM orders WHERE id = ? AND tenant_id = ?').get(id, tenantId) as any;
           if (order && order.table_id) {
             const activeOrders = db.prepare(`
               SELECT COUNT(*) as count FROM orders
-              WHERE table_id = ? AND status NOT IN ('paid', 'cancelled')
-            `).get(order.table_id) as any;
+              WHERE table_id = ? AND tenant_id = ? AND status NOT IN ('paid', 'cancelled')
+            `).get(order.table_id, tenantId) as any;
             if (activeOrders.count === 0) {
-              db.prepare("UPDATE restaurant_tables SET status = 'available' WHERE id = ?").run(order.table_id);
+              db.prepare("UPDATE restaurant_tables SET status = 'available' WHERE id = ? AND tenant_id = ?").run(order.table_id, tenantId);
             }
           }
         }
 
-        db.prepare('UPDATE orders SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(status, id);
+        db.prepare('UPDATE orders SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND tenant_id = ?').run(status, id, tenantId);
 
         const updatedOrder = db.prepare(`
           SELECT
             o.*,
             t.table_number,
-            u.full_name as waiter_name
+            COALESCE(ut.full_name, ut.username, u.full_name, u.username) as waiter_name,
+            TRIM(COALESCE(ut.full_name, '') || ' ' || COALESCE(ut.username, '')) as table_waiter_name,
+            TRIM(COALESCE(u.full_name, '') || ' ' || COALESCE(u.username, '')) as order_waiter_name
           FROM orders o
           LEFT JOIN restaurant_tables t ON o.table_id = t.id
-          LEFT JOIN users u ON o.waiter_id = u.id
-          WHERE o.id = ?
-        `).get(id) as any;
+          LEFT JOIN users ut ON (t.assigned_waiter_id = ut.id OR t.assigned_waiter_id = ut.remote_id)
+          LEFT JOIN users u ON (o.waiter_id = u.id OR o.waiter_id = u.remote_id)
+          WHERE o.id = ? AND o.tenant_id = ?
+        `).get(id, tenantId) as any;
 
         const result = {
           ...updatedOrder,
@@ -723,11 +794,11 @@ export class OrderService {
 
         // Queue for sync - CRITICAL for real-time status consistency
         console.log(`[OrderService] Queuing sync for order ${id} with status ${status}`);
-        getOrderSyncService().queueOrderChange('update', result, tenantId);
-        getOrderSyncService().pushPendingOrders(tenantId).catch(e => console.warn('[OrderService] Sync push failed:', e));
+        getOrderSyncService().queueOrderChange('update', result, String(tenantId));
+        getOrderSyncService().pushPendingOrders(String(tenantId)).catch(e => console.warn('[OrderService] Sync push failed:', e));
 
         if (!wasPaid && status === 'paid') {
-          const saleExists = db.prepare('SELECT 1 FROM sales WHERE order_id = ? LIMIT 1').get(id);
+          const saleExists = db.prepare('SELECT 1 FROM sales WHERE order_id = ? AND tenant_id = ? LIMIT 1').get(id, tenantId);
           if (saleExists) {
             console.log('[OrderService] Order already has sale record, skipping duplicate checkout notification.');
           } else {
@@ -800,11 +871,11 @@ export class OrderService {
    * Hard delete order + its items (used for rejecting pending QR orders)
    */
   static async deleteOrder(id: number): Promise<void> {
-      const tenantId = process.env.TENANT_ID || '5';
+    const tenantId = getCurrentTenantId();
 
     // Cloud mode guard: db might be null (SQLite disabled on Render)
     if (!db) {
-      console.log(`[OrderService] SQLite disabled (db is null). Falling back to Supabase for deleteOrder (id=${id})`);
+      console.log(`[OrderService] SQLite disabled (db is null). Falling back to Supabase for deleteOrder (id=${id}, tenant=${tenantId})`);
       try {
         const { getSupabaseClient } = require('../database/supabase.client');
         const supabase = getSupabaseClient();
@@ -813,7 +884,8 @@ export class OrderService {
         const { error } = await supabase
           .from('orders')
           .delete()
-          .eq('id', id);
+          .eq('id', id)
+          .eq('tenant_id', tenantId);
 
         if (error) throw error;
         return;
@@ -823,16 +895,16 @@ export class OrderService {
       }
     }
 
-    return withOutboxTransaction(db, tenantId, () => {
+    return withOutboxTransaction(db, String(tenantId), () => {
       try {
         // delete items first (FK safety)
-        db.prepare('DELETE FROM order_items WHERE order_id = ?').run(id);
-        const result = db.prepare('DELETE FROM orders WHERE id = ?').run(id);
+        db.prepare('DELETE FROM order_items WHERE order_id = ? AND tenant_id = ?').run(id, tenantId);
+        const result = db.prepare('DELETE FROM orders WHERE id = ? AND tenant_id = ?').run(id, tenantId);
         if (result.changes === 0) {
           throw new Error('Order not found');
         }
 
-        getOrderSyncService().queueOrderChange('delete', { id } as any, tenantId);
+        getOrderSyncService().queueOrderChange('delete', { id } as any, String(tenantId));
       } catch (error) {
         throw error;
       }

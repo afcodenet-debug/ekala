@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../stores/useAuthStore';
 import { useI18n } from '../lib/i18n';
@@ -27,21 +28,22 @@ import {
 } from 'lucide-react';
 import { SettingsSelector } from './SettingsSelector';
 import { NotificationBadge } from './NotificationBadge';
+import { UpgradeModal } from './UpgradeModal';
 
 const MENU = [
-  { path: '/',           labelKey: 'sidebar.dashboard',    icon: LayoutDashboard, roles: ['admin', 'manager', 'cashier'] },
-  { path: '/pos',        labelKey: 'sidebar.pos',          icon: UtensilsCrossed, roles: ['admin', 'manager', 'cashier', 'waiter'] },
-  { path: '/orders',     labelKey: 'sidebar.ordersLive',   icon: Wallet,          roles: ['admin', 'manager', 'cashier', 'waiter'] },
-  { path: '/tables',     labelKey: 'sidebar.floorPlan',    icon: TableIcon,       roles: ['admin', 'manager', 'cashier', 'waiter'] },
-  { path: '/sales',      labelKey: 'sidebar.salesHistory', icon: History,         roles: ['admin', 'manager', 'cashier'] },
-  { path: '/products',   labelKey: 'sidebar.stock',        icon: Package,         roles: ['admin', 'manager'] },
-  { path: '/categories', labelKey: 'sidebar.categories',   icon: Tag,             roles: ['admin', 'manager'] },
-  { path: '/analytics',  labelKey: 'sidebar.analytics',    icon: LineChart,       roles: ['admin', 'manager'] },
-  { path: '/staff',      labelKey: 'sidebar.team',         icon: Users,           roles: ['admin', 'manager'] },
-  { path: '/reports',    labelKey: 'sidebar.reports',      icon: BarChart3,       roles: ['admin', 'manager', 'cashier'] },
-  { path: '/expenses',   labelKey: 'sidebar.expenses',     icon: DollarSign,      roles: ['admin', 'manager', 'cashier'] },
-  { path: '/users',      labelKey: 'sidebar.systemAccess', icon: Settings,        roles: ['admin'] },
-  { path: '/settings',   labelKey: 'sidebar.settings',     icon: Settings,        roles: ['admin'] },
+  { path: '/',           labelKey: 'sidebar.dashboard',    icon: LayoutDashboard, roles: ['owner', 'admin', 'manager', 'cashier'] },
+  { path: '/pos',        labelKey: 'sidebar.pos',          icon: UtensilsCrossed, roles: ['owner', 'admin', 'manager', 'cashier', 'waiter'] },
+  { path: '/orders',     labelKey: 'sidebar.ordersLive',   icon: Wallet,          roles: ['owner', 'admin', 'manager', 'cashier', 'waiter'] },
+  { path: '/tables',     labelKey: 'sidebar.floorPlan',    icon: TableIcon,       roles: ['owner', 'admin', 'manager', 'cashier', 'waiter'] },
+  { path: '/sales',      labelKey: 'sidebar.salesHistory', icon: History,         roles: ['owner', 'admin', 'manager', 'cashier'] },
+  { path: '/products',   labelKey: 'sidebar.stock',        icon: Package,         roles: ['owner', 'admin', 'manager'] },
+  { path: '/categories', labelKey: 'sidebar.categories',   icon: Tag,             roles: ['owner', 'admin', 'manager'] },
+  { path: '/analytics',  labelKey: 'sidebar.analytics',    icon: LineChart,       roles: ['owner', 'admin', 'manager'] },
+  { path: '/staff',      labelKey: 'sidebar.team',         icon: Users,           roles: ['owner', 'admin', 'manager'] },
+  { path: '/reports',    labelKey: 'sidebar.reports',      icon: BarChart3,       roles: ['owner', 'admin', 'manager', 'cashier'] },
+  { path: '/expenses',   labelKey: 'sidebar.expenses',     icon: DollarSign,      roles: ['owner', 'admin', 'manager', 'cashier'] },
+  { path: '/users',      labelKey: 'sidebar.systemAccess', icon: Settings,        roles: ['owner', 'admin'] },
+  { path: '/settings',   labelKey: 'sidebar.settings',     icon: Settings,        roles: ['owner', 'admin'] },
 ];
 
 const SECTIONS = [
@@ -74,8 +76,10 @@ const Sidebar = ({ onClose }: SidebarProps) => {
     items: filteredMenu.filter(item => section.paths.includes(item.path)),
   })).filter(g => g.items.length > 0);
 
+  const [showUpgradeModal, setShowUpgradeModal] = useState(false);
+
   const handleClose = () => {
-    if (onClose) onClose();
+    onClose?.();
     setSidebarOpen(false);
   };
 
@@ -251,7 +255,7 @@ const Sidebar = ({ onClose }: SidebarProps) => {
           text-decoration: none;
           border: 1px solid transparent;
           transition: background 180ms ease, border-color 180ms ease;
-          min-height: 44px; /* WCAG touch target */
+          min-height: 44px;
           position: relative;
         }
         .sb-link:active { transform: scale(0.98); }
@@ -363,10 +367,8 @@ const Sidebar = ({ onClose }: SidebarProps) => {
            RESPONSIVE — mobile-first
         ═══════════════════════════════════════════════════════ */
 
-        /* ── Tablets landscape + small laptops (≤ 1024 px) ────── */
         @media (max-width: 1024px) {
           .sb-aside {
-            /* Overlay drawer on tablet/mobile */
             position: fixed;
             top: 0;
             left: 0;
@@ -383,49 +385,25 @@ const Sidebar = ({ onClose }: SidebarProps) => {
             transform: translateX(-100%);
             width: min(300px, 88vw) !important;
           }
-          .sb-close-btn {
-            display: flex;
-          }
-          .sb-toggle-btn {
-            display: none;
-          }
-          .sb-header {
-            /* Leave room for the close button */
-            padding-right: 56px;
-          }
-          .sb-footer {
-            padding-bottom: 32px;
-          }
-          .sb-link {
-            border-radius: 12px;
-          }
+          .sb-close-btn { display: flex; }
+          .sb-toggle-btn { display: none; }
+          .sb-header { padding-right: 56px; }
+          .sb-footer { padding-bottom: 32px; }
+          .sb-link { border-radius: 12px; }
         }
 
-        /* ── Large phones (≤ 768 px) ───────────────────────────── */
         @media (max-width: 768px) {
-          .sb-aside {
-            width: min(280px, 90vw) !important;
-          }
-          .sb-header {
-            padding: 24px 52px 20px 20px;
-            gap: 12px;
-          }
-          .sb-logo {
-            width: 38px;
-            height: 38px;
-            border-radius: 10px;
-          }
+          .sb-aside { width: min(280px, 90vw) !important; }
+          .sb-header { padding: 24px 52px 20px 20px; gap: 12px; }
+          .sb-logo { width: 38px; height: 38px; border-radius: 10px; }
           .sb-brand-name { font-size: 14px; }
           .sb-status-label { font-size: 9.5px; }
-
           .sb-nav { padding: 8px 14px; }
           .sb-nav-section { margin-bottom: 22px; }
           .sb-section-label { font-size: 9.5px; margin-bottom: 10px; padding-left: 10px; }
-
           .sb-link { padding: 10px 12px; margin-bottom: 3px; }
           .sb-link-label { font-size: 13px; }
           .sb-link-inner { gap: 10px; }
-
           .sb-footer { padding: 10px 14px 24px; gap: 8px; }
           .sb-user-card { padding: 12px; gap: 10px; }
           .sb-user-avatar { width: 34px; height: 34px; border-radius: 9px; }
@@ -433,22 +411,15 @@ const Sidebar = ({ onClose }: SidebarProps) => {
           .sb-user-role { font-size: 9.5px; }
         }
 
-        /* ── Small phones (≤ 480 px) ───────────────────────────── */
         @media (max-width: 480px) {
-          .sb-aside {
-            /* Full-width drawer on very small screens */
-            width: 100vw !important;
-            border-right: none;
-          }
+          .sb-aside { width: 100vw !important; border-right: none; }
           .sb-header { padding: 20px 56px 16px 16px; }
           .sb-logo { width: 36px; height: 36px; }
           .sb-brand-name { font-size: 14px; }
-
           .sb-nav { padding: 6px 12px; }
           .sb-section-label { font-size: 9px; padding-left: 8px; margin-bottom: 8px; }
           .sb-link { padding: 10px 10px; }
           .sb-link-label { font-size: 12.5px; }
-
           .sb-footer { padding: 8px 12px 20px; gap: 7px; }
           .sb-user-card { padding: 10px 12px; }
           .sb-user-avatar { width: 32px; height: 32px; }
@@ -457,7 +428,6 @@ const Sidebar = ({ onClose }: SidebarProps) => {
           .sb-notif-btn { font-size: 10.5px; }
         }
 
-        /* ── Touch — ensure tap targets ≥ 44 × 44 px ─────────── */
         @media (pointer: coarse) {
           .sb-link { min-height: 48px; }
           .sb-logout-btn { min-height: 48px; }
@@ -465,7 +435,6 @@ const Sidebar = ({ onClose }: SidebarProps) => {
           .sb-close-btn { width: 40px; height: 40px; }
         }
 
-        /* ── Very tall devices: don't clip footer ─────────────── */
         @supports (height: 100dvh) {
           .sb-aside { height: 100dvh; }
         }
@@ -500,11 +469,81 @@ const Sidebar = ({ onClose }: SidebarProps) => {
             <Zap size={20} color="#fff" fill="#fff" />
           </div>
           <div style={{ minWidth: 0, flex: 1 }}>
-            <div className="sb-brand-name">{APP_NAME}</div>
-            <div className="sb-brand-status">
-              <div className="sb-status-dot" />
-              <span className="sb-status-label">{t('sidebar.enterpriseCloud')}</span>
+            <div className="sb-brand-name">{user?.tenant_name || APP_NAME}</div>
+            
+            {/* Subscription Status Badge */}
+            <div className="sb-brand-status" style={{ marginTop: 2 }}>
+              <div 
+                className="sb-status-dot" 
+                style={{ 
+                  background: user?.status === 'trial' ? colors.accent.gold : 
+                             user?.status === 'active' ? '#10b981' : colors.accent.red,
+                  boxShadow: `0 0 8px ${user?.status === 'trial' ? colors.accent.gold : 
+                             user?.status === 'active' ? '#10b981' : colors.accent.red}`
+                }} 
+              />
+              <span className="sb-status-label" style={{ 
+                color: user?.status === 'active' ? '#10b981' : user?.status === 'trial' ? colors.accent.gold : colors.accent.red,
+                fontWeight: 900
+              }}>
+                {user?.status === 'trial' ? 'MODE ESSAI' : 
+                 user?.status === 'active' ? 'COMPTE PRO' : 
+                 user?.status === 'past_due' ? 'PAIEMENT REQUIS' : 'EXPIRÉ'}
+              </span>
             </div>
+
+            {/* Plan Details & Countdown */}
+            {user?.plan_name && (
+              <div style={{ marginTop: 6, padding: '6px 10px', background: 'rgba(255,255,255,0.03)', borderRadius: 8, border: '1px solid rgba(255,255,255,0.05)' }}>
+                <div className="sb-status-label" style={{ color: colors.text1, letterSpacing: '0.02em', display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, textTransform: 'none' }}>
+                  <ShieldCheck size={12} color={colors.accent.gold} /> {user.plan_name}
+                </div>
+                
+                {user.expires_at && (
+                  <div style={{ fontSize: 10, color: colors.text3, fontWeight: 600, marginTop: 2, paddingLeft: 18 }}>
+                    {(() => {
+                      const days = Math.ceil((new Date(user.expires_at).getTime() - Date.now()) / 86400000);
+                      if (days <= 0) return 'Expiré';
+                      if (user.status === 'trial') return `${days} jours restants`;
+                      return `Jusqu'au ${new Date(user.expires_at).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', year: '2-digit' })}`;
+                    })()}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Action Button */}
+            {(user?.status === 'trial' || user?.status === 'past_due' || user?.status === 'expired') && (
+              <div style={{ marginTop: 10 }}>
+                <button
+                  onClick={() => { setShowUpgradeModal(true); handleClose(); }}
+                  style={{
+                    width: '100%',
+                    fontSize: 10,
+                    fontWeight: 800,
+                    color: '#fff',
+                    background: user.status === 'trial' ? 'linear-gradient(135deg, #D4AF37, #92400e)' : 'linear-gradient(135deg, #ef4444, #991b1b)',
+                    border: 'none',
+                    borderRadius: 8,
+                    padding: '8px 12px',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: 6,
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.06em',
+                    boxShadow: '0 4px 15px rgba(0,0,0,0.3)',
+                    transition: 'transform 0.2s',
+                  }}
+                  onMouseOver={e => e.currentTarget.style.transform = 'translateY(-1px)'}
+                  onMouseOut={e => e.currentTarget.style.transform = 'translateY(0)'}
+                >
+                  <Zap size={12} fill="#fff" />
+                  {user.status === 'trial' ? 'Passer au Plan Pro' : 'Réactiver mon compte'}
+                </button>
+              </div>
+            )}
           </div>
         </div>
 
@@ -552,7 +591,6 @@ const Sidebar = ({ onClose }: SidebarProps) => {
                         {t(item.labelKey)}
                       </span>
 
-                      {/* Notification badge on Orders */}
                       {item.path === '/orders' && pendingQrCount > 0 && (
                         <NotificationBadge count={pendingQrCount} color="#f59e0b" />
                       )}
@@ -569,7 +607,6 @@ const Sidebar = ({ onClose }: SidebarProps) => {
         <div className="sb-footer">
           <SettingsSelector />
 
-          {/* User card */}
           <div className="sb-user-card">
             <div className="sb-user-avatar">
               <ShieldCheck size={20} color={colors.accent.blue} />
@@ -580,10 +617,9 @@ const Sidebar = ({ onClose }: SidebarProps) => {
             </div>
           </div>
 
-          {/* Notifications bell */}
           <button
             className="sb-notif-btn"
-            onClick={() => { openCenter(); markAllAsRead(); }}
+            onClick={() => { openCenter?.(); markAllAsRead?.(); }}
             title="Notifications"
           >
             <div className="sb-notif-inner">
@@ -593,7 +629,6 @@ const Sidebar = ({ onClose }: SidebarProps) => {
             <NotificationBadge />
           </button>
 
-          {/* Logout */}
           <button className="sb-logout-btn" onClick={handleLogout}>
             <LogOut size={14} />
             {t('sidebar.quitSession')}
@@ -601,6 +636,12 @@ const Sidebar = ({ onClose }: SidebarProps) => {
         </div>
 
       </aside>
+
+      <UpgradeModal
+        isOpen={showUpgradeModal}
+        onClose={() => setShowUpgradeModal(false)}
+        onSuccess={() => { /* will reload */ }}
+      />
     </>
   );
 };

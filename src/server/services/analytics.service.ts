@@ -2,6 +2,7 @@
 import db from '../db/database';
 import { createClient } from '@supabase/supabase-js';
 import { env } from '../config/env';
+import { getCurrentTenantId } from '../db/tenant-context';
 
 export interface AnalyticsData {
   valuation: {
@@ -20,6 +21,7 @@ export interface AnalyticsData {
 
 export class AnalyticsService {
   static async getInventoryAnalytics(): Promise<AnalyticsData> {
+    const tenantId = getCurrentTenantId();
     try {
       if (!db) {
         if (!env.SUPABASE_URL || !env.SUPABASE_SERVICE_ROLE_KEY) {
@@ -31,11 +33,11 @@ export class AnalyticsService {
         });
 
         const [productsResult, saleItemsResult, salesResult, movementsResult, categoriesResult] = await Promise.all([
-          supabase.from('products').select('id, name, category_id, price:selling_price, cost_price:buying_price, stock_quantity, minimum_stock, is_available'),
-          supabase.from('sale_items').select('sale_id, product_id, quantity, unit_price, total_price'),
-          supabase.from('sales').select('id, created_at'),
-          supabase.from('inventory_movements').select('movement_type, quantity_changed, total_value'),
-          supabase.from('categories').select('id, name')
+          supabase.from('products').select('id, name, category_id, price:selling_price, cost_price:buying_price, stock_quantity, minimum_stock, is_available').eq('tenant_id', tenantId),
+          supabase.from('sale_items').select('sale_id, product_id, quantity, unit_price, total_price').eq('tenant_id', tenantId),
+          supabase.from('sales').select('id, created_at').eq('tenant_id', tenantId),
+          supabase.from('inventory_movements').select('movement_type, quantity_changed, total_value').eq('tenant_id', tenantId),
+          supabase.from('categories').select('id, name').eq('tenant_id', tenantId)
         ]);
 
         if (productsResult.error) throw productsResult.error;
@@ -223,15 +225,16 @@ export class AnalyticsService {
           COALESCE(SUM(stock_quantity * (selling_price - buying_price)), 0) AS potential_gross_profit,
           COUNT(*) AS active_skus
         FROM products 
-        WHERE is_available = 1
-      `).get() as any;
+        WHERE is_available = 1 AND tenant_id = ?
+      `).get(tenantId) as any;
 
       // 2. Realised Gross Profit
       const realised = db.prepare(`
         SELECT COALESCE(SUM(si.quantity * (si.unit_price - p.buying_price)), 0) AS actual_gross_profit
         FROM sale_items si
         JOIN products p ON si.product_id = p.id
-      `).get() as any;
+        WHERE si.tenant_id = ?
+      `).get(tenantId) as any;
 
       // 3. Top Selling Products (All time)
       const topSellers = db.prepare(`
@@ -245,10 +248,11 @@ export class AnalyticsService {
         FROM sale_items si
         JOIN products p ON si.product_id = p.id
         LEFT JOIN categories c ON p.category_id = c.id
+        WHERE si.tenant_id = ?
         GROUP BY p.id
         ORDER BY units_sold DESC
         LIMIT 10
-      `).all();
+      `).all(tenantId);
 
       // 4. Low Stock Alerts
       const lowStock = db.prepare(`
@@ -265,10 +269,10 @@ export class AnalyticsService {
           c.name AS category_name
         FROM products p
         LEFT JOIN categories c ON p.category_id = c.id
-        WHERE p.is_available = 1 AND p.stock_quantity <= p.minimum_stock
+        WHERE p.is_available = 1 AND p.stock_quantity <= p.minimum_stock AND p.tenant_id = ?
         ORDER BY p.stock_quantity ASC
         LIMIT 20
-      `).all();
+      `).all(tenantId);
 
       // 5. Dead Stock (90 days no sales)
       const ninetyDaysAgo = new Date(Date.now() - 90 * 86400000).toISOString();
@@ -285,12 +289,12 @@ export class AnalyticsService {
         LEFT JOIN sale_items si ON si.product_id = p.id
         LEFT JOIN sales s ON si.sale_id = s.id AND s.created_at >= ?
         LEFT JOIN categories c ON p.category_id = c.id
-        WHERE p.is_available = 1 AND p.stock_quantity > 0
+        WHERE p.is_available = 1 AND p.stock_quantity > 0 AND p.tenant_id = ?
         GROUP BY p.id
         HAVING units_sold_90d = 0
         ORDER BY dead_stock_value DESC
         LIMIT 20
-      `).all(ninetyDaysAgo);
+      `).all(ninetyDaysAgo, tenantId);
 
       // 6. Fast Moving (30 days)
       const thirtyDaysAgo = new Date(Date.now() - 30 * 86400000).toISOString();
@@ -304,11 +308,11 @@ export class AnalyticsService {
         JOIN products p ON si.product_id = p.id
         LEFT JOIN categories c ON p.category_id = c.id
         JOIN sales s ON si.sale_id = s.id
-        WHERE s.created_at >= ?
+        WHERE s.created_at >= ? AND s.tenant_id = ?
         GROUP BY p.id
         ORDER BY units_sold_30d DESC
         LIMIT 15
-      `).all(thirtyDaysAgo);
+      `).all(thirtyDaysAgo, tenantId);
 
       // 7. Waste Analytics
       const waste = db.prepare(`
@@ -318,10 +322,10 @@ export class AnalyticsService {
           SUM(ABS(quantity_changed)) AS total_qty,
           SUM(COALESCE(total_value, 0)) AS total_cost
         FROM inventory_movements
-        WHERE movement_type IN ('waste', 'damaged', 'loss')
+        WHERE movement_type IN ('waste', 'damaged', 'loss') AND tenant_id = ?
         GROUP BY movement_type
         ORDER BY total_cost DESC
-      `).all();
+      `).all(tenantId);
 
       // 8. Stock Turnover
       const turnover = db.prepare(`
@@ -337,11 +341,12 @@ export class AnalyticsService {
         FROM products p
         LEFT JOIN sale_items si ON si.product_id = p.id
         LEFT JOIN sales s ON si.sale_id = s.id AND s.created_at >= ?
+        WHERE p.tenant_id = ?
         GROUP BY p.id
         HAVING units_sold_90d > 0
         ORDER BY turnover_days ASC
         LIMIT 15
-      `).all(ninetyDaysAgo);
+      `).all(ninetyDaysAgo, tenantId);
 
       return {
         valuation: {

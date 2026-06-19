@@ -443,9 +443,31 @@ const OrdersPage = () => {
 
   const getQuickActions = (order: any) => {
     const actions: Array<{ label: string; action: () => void; icon: any; style?: React.CSSProperties }> = [];
-    const canManage = user?.role === 'admin' || user?.role === 'manager' ||
-                     (user?.role === 'waiter' && order.waiter_id === user.id);
-    if (!canManage) return actions;
+    const canManage = user?.role === 'owner' || user?.role === 'admin' || user?.role === 'manager' || user?.role === 'cashier' ||
+                      (user?.role === 'waiter' && order.waiter_id === user.id);
+    
+    const handleViewOrder = async () => {
+      if (!user) return;
+      setDetailsModalOrderId(order.id);
+      try {
+        const full = await api.orders.getById(order.id);
+        setModalOrder(full);
+      } catch (e) {
+        console.error('Failed to load order details', e);
+        setModalOrder(order);
+      }
+    };
+
+    if (!canManage) {
+      // Non-managers can only view
+      actions.push({
+        label: t('orders.actions.view') || 'Voir',
+        action: handleViewOrder,
+        icon: Eye,
+        style: { background: 'var(--blue-dim)', color: 'var(--blue)', border: '1px solid rgba(59,130,246,0.2)' }
+      });
+      return actions;
+    }
 
     switch (order.status) {
       case 'pending':
@@ -458,6 +480,12 @@ const OrdersPage = () => {
           },
           icon: CheckCircle2,
           style: { background: 'var(--green-dim)', color: 'var(--green)', border: '1px solid rgba(16,185,129,0.25)' }
+        });
+        actions.push({
+          label: t('orders.actions.cashout') || 'Payer',
+          action: () => navigate(`/pos?tableId=${order.table_id}&orderId=${order.id}`),
+          icon: CreditCard,
+          style: { background: 'var(--gold-dim)', color: 'var(--gold)', border: '1px solid rgba(212,175,55,0.2)' }
         });
         actions.push({
           label: t('orders.actions.reject') || 'Rejeter',
@@ -475,17 +503,6 @@ const OrdersPage = () => {
         actions.push({ label: t('orders.actions.startPrep') || 'Cuisine', action: () => updateOrderStatus(order.id, 'preparing'), icon: ChefHat, style: { background: 'var(--amber-dim)', color: 'var(--amber)', border: '1px solid rgba(245,158,11,0.2)' } });
         actions.push({ label: t('orders.actions.markReady') || 'Prête', action: () => updateOrderStatus(order.id, 'ready'), icon: Package, style: { background: 'var(--purple-dim)', color: 'var(--purple)', border: '1px solid rgba(167,139,250,0.2)' } });
         actions.push({ label: t('orders.actions.serve') || 'Servir', action: () => updateOrderStatus(order.id, 'served'), icon: UtensilsCrossed, style: { background: 'var(--green-dim)', color: 'var(--green)', border: '1px solid rgba(16,185,129,0.2)' } });
-        actions.push({
-          label: t('orders.actions.view') || 'Voir',
-          action: async () => {
-            if (!user) return;
-            setDetailsModalOrderId(order.id);
-            try { const full = await api.orders.getById(order.id); setModalOrder(full); }
-            catch (e) { console.error('Failed to load order details', e); setModalOrder(order); }
-          },
-          icon: Eye,
-          style: { background: 'var(--blue-dim)', color: 'var(--blue)', border: '1px solid rgba(59,130,246,0.2)' }
-        });
         break;
 
       case 'preparing':
@@ -502,6 +519,17 @@ const OrdersPage = () => {
 
       default: break;
     }
+
+    // Always add 'View' as the last action if there is space or as a primary action
+    if (actions.length < 4) {
+      actions.push({
+        label: t('orders.actions.view') || 'Détails',
+        action: handleViewOrder,
+        icon: Eye,
+        style: { background: 'rgba(255,255,255,0.05)', color: 'var(--text-2)', border: '1px solid var(--border)' }
+      });
+    }
+
     return actions;
   };
 
@@ -534,18 +562,27 @@ const OrdersPage = () => {
     <div className="orders-root">
       <div className="orders-container">
 
-        {/* ── Pending QR Toast ── */}
+        {/* ── Pending Orders Toast ── */}
         {pendingQrOrderIds.length > 0 && !toastDismissed && (
           <StatusToast
             key={toastKey}
             variant="info"
             title="Commandes en attente"
             subtitle="Action requise"
-            message="Les commandes créées depuis le QR Menu ne sont pas encore confirmées/validées."
+            message={(() => {
+              const pendingOrders = pendingQrOrderIds.map(id => ordersList.find((o: any) => Number(o.id) === id)).filter(Boolean);
+              const hasQr = pendingOrders.some((o: any) => o.source === 'qr');
+              const hasPos = pendingOrders.some((o: any) => o.source === 'local' || !o.source);
+              
+              if (hasQr && !hasPos) return "Les commandes créées depuis le QR Menu ne sont pas encore confirmées/validées.";
+              if (!hasQr && hasPos) return "Les commandes créées depuis le POS ne sont pas encore confirmées/validées.";
+              return "Des commandes (QR et POS) sont en attente de confirmation.";
+            })()}
             details={pendingQrOrderIds.slice(0, 5).map((id) => {
               const o: any = ordersList.find((x: any) => Number(x.id) === id);
               const tableLabel = o?.table_number ? `Table ${o.table_number}` : 'Table --';
-              return { label: `Commande #${id}`, value: tableLabel, highlight: true };
+              const sourceLabel = o?.source === 'qr' ? ' (QR)' : ' (POS)';
+              return { label: `Commande #${id}${sourceLabel}`, value: tableLabel, highlight: true };
             })}
             actions={
               <button
@@ -639,6 +676,7 @@ const OrdersPage = () => {
             const status = getStatusConfig(order.status);
             const actions = getQuickActions(order);
             const isHighlighted = highlightOrderId === order.id || highlightOrderForToast === order.id;
+            const displayedWaiterName = order.table_waiter_name || order.waiter_name;
 
             return (
               <div
@@ -674,7 +712,7 @@ const OrdersPage = () => {
                           <Layers size={12} style={{ color: 'var(--blue)' }} /> {t('orders.table')} {order.table_number || '--'}
                         </div>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12, color: 'var(--text-3)' }}>
-                          <User size={12} /> {order.waiter_name?.split(' ')[0]}
+                          <User size={12} /> {displayedWaiterName?.split(' ')[0] || '--'}
                         </div>
                       </div>
                     </div>
@@ -716,12 +754,23 @@ const OrdersPage = () => {
                       ))}
                     </div>
                   ) : (
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, color: 'var(--text-3)', padding: '10px' }}>
+                    <button 
+                      className="action-btn"
+                      onClick={() => {
+                        setDetailsModalOrderId(order.id);
+                        api.orders.getById(order.id).then(full => setModalOrder(full)).catch(() => setModalOrder(order));
+                      }}
+                      style={{ 
+                        display: 'flex', width: '100%', alignItems: 'center', justifyContent: 'center', gap: 8, 
+                        color: 'var(--text-2)', background: 'rgba(255,255,255,0.05)', border: '1px solid var(--border)',
+                        cursor: 'pointer'
+                      }}
+                    >
                       {order.status === 'paid' ? <CheckCircle2 size={14} style={{ color: 'var(--green)' }}/> : <Eye size={14}/>}
                       <span style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
                         {order.status === 'paid' ? t('orders.orderClosed') : t('orders.viewDetails')}
                       </span>
-                    </div>
+                    </button>
                   )}
                 </div>
               </div>

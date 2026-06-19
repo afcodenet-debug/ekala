@@ -40,13 +40,13 @@ BEGIN
       AND table_name = 'restaurant_tables'
       AND column_name = 'tenant_id'
   ) THEN
-    ALTER TABLE restaurant_tables ADD COLUMN tenant_id TEXT;
+    ALTER TABLE restaurant_tables ADD COLUMN tenant_id INTEGER;
   END IF;
 END
 $$;
 
--- Set tenant_id = '5' for existing rows where tenant_id is NULL
-UPDATE restaurant_tables SET tenant_id = '5' WHERE tenant_id IS NULL;
+-- Set tenant_id = 5 for existing rows where tenant_id is NULL
+UPDATE restaurant_tables SET tenant_id = 5 WHERE tenant_id IS NULL;
 
 -- 2) Add remote_id + updated_at + tenant_id to categories if missing (for sync engine)
 DO $$
@@ -75,13 +75,13 @@ BEGIN
       AND table_name = 'categories'
       AND column_name = 'tenant_id'
   ) THEN
-    ALTER TABLE categories ADD COLUMN tenant_id TEXT;
+    ALTER TABLE categories ADD COLUMN tenant_id INTEGER;
   END IF;
 END
 $$;
 
--- Set tenant_id = '5' for existing rows where tenant_id is NULL
-UPDATE categories SET tenant_id = '5' WHERE tenant_id IS NULL;
+-- Set tenant_id = 5 for existing rows where tenant_id is NULL
+UPDATE categories SET tenant_id = 5 WHERE tenant_id IS NULL;
 
 -- 3) Helpful indexes (CREATE INDEX IF NOT EXISTS is supported by PostgreSQL 9.5+)
 CREATE INDEX IF NOT EXISTS idx_tables_remote_id
@@ -114,13 +114,13 @@ BEGIN
       AND table_name = 'orders'
       AND column_name = 'tenant_id'
   ) THEN
-    ALTER TABLE orders ADD COLUMN tenant_id TEXT;
+    ALTER TABLE orders ADD COLUMN tenant_id INTEGER;
   END IF;
 END
 $$;
 
--- Set tenant_id = '5' for existing rows where tenant_id is NULL
-UPDATE orders SET tenant_id = '5' WHERE tenant_id IS NULL;
+-- Set tenant_id = 5 for existing rows where tenant_id is NULL
+UPDATE orders SET tenant_id = 5 WHERE tenant_id IS NULL;
 
 -- 5) Add tenant_id to products if missing (for sync engine)
 DO $$
@@ -131,13 +131,13 @@ BEGIN
       AND table_name = 'products'
       AND column_name = 'tenant_id'
   ) THEN
-    ALTER TABLE products ADD COLUMN tenant_id TEXT;
+    ALTER TABLE products ADD COLUMN tenant_id INTEGER;
   END IF;
 END
 $$;
 
--- Set tenant_id = '5' for existing rows where tenant_id is NULL
-UPDATE products SET tenant_id = '5' WHERE tenant_id IS NULL;
+-- Set tenant_id = 5 for existing rows where tenant_id is NULL
+UPDATE products SET tenant_id = 5 WHERE tenant_id IS NULL;
 
 -- 6) Add tenant_id to users, tenants, tenant_users if missing (for sync engine)
 -- Note: users table in Supabase uses Supabase Auth, so we only add tenant_id
@@ -150,7 +150,7 @@ BEGIN
       AND table_name = 'users'
       AND column_name = 'tenant_id'
   ) THEN
-    ALTER TABLE users ADD COLUMN tenant_id TEXT;
+    ALTER TABLE users ADD COLUMN tenant_id INTEGER;
   END IF;
 
   IF NOT EXISTS (
@@ -159,7 +159,7 @@ BEGIN
       AND table_name = 'tenants'
       AND column_name = 'tenant_id'
   ) THEN
-    ALTER TABLE tenants ADD COLUMN tenant_id TEXT;
+    ALTER TABLE tenants ADD COLUMN tenant_id INTEGER;
   END IF;
 
   IF NOT EXISTS (
@@ -168,15 +168,15 @@ BEGIN
       AND table_name = 'tenant_users'
       AND column_name = 'tenant_id'
   ) THEN
-    ALTER TABLE tenant_users ADD COLUMN tenant_id TEXT;
+    ALTER TABLE tenant_users ADD COLUMN tenant_id INTEGER;
   END IF;
 END
 $$;
 
--- Set tenant_id = '5' for existing rows where tenant_id is NULL
-UPDATE users SET tenant_id = '5' WHERE tenant_id IS NULL AND id IN (SELECT id FROM users LIMIT 100);
-UPDATE tenants SET tenant_id = '5' WHERE tenant_id IS NULL;
-UPDATE tenant_users SET tenant_id = '5' WHERE tenant_id IS NULL;
+-- Set tenant_id = 5 for existing rows where tenant_id is NULL
+UPDATE users SET tenant_id = 5 WHERE tenant_id IS NULL AND id IN (SELECT id FROM users LIMIT 100);
+UPDATE tenants SET tenant_id = 5 WHERE tenant_id IS NULL;
+UPDATE tenant_users SET tenant_id = 5 WHERE tenant_id IS NULL;
 
 -- 7) The Supabase CHECK for status is:
 --    CHECK (status IN ('available','occupied','cleaning','reserved'))

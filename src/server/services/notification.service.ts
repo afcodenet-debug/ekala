@@ -20,6 +20,7 @@
 import nodemailer from 'nodemailer';
 import { db } from '../db/database';
 import { NOTIFICATION_TYPES } from '../../constants/notificationTypes';
+import { getCurrentTenantId } from '../db/tenant-context';
 
 /* ══════════════════════════════════════════════════════════════════════════
  * Settings — loaded from the server settings store (SQLite-backed).
@@ -1085,11 +1086,12 @@ export async function notifyStockAdjustment(
 }
 
 export async function loadRawSettingsAsync(): Promise<SettingsReader> {
+  const tenantId = getCurrentTenantId();
   if (!db) {
     try {
       const { getSupabaseClient } = require('../database/supabase.client');
       const supabase = getSupabaseClient();
-      const { data, error } = await supabase.from('settings').select('key, value');
+      const { data, error } = await supabase.from('settings').select('key, value').eq('tenant_id', tenantId);
       if (error) throw error;
       return (data || []).reduce((acc: any, row: any) => {
         acc[row.key] = row.value;
@@ -1100,7 +1102,7 @@ export async function loadRawSettingsAsync(): Promise<SettingsReader> {
       return {};
     }
   }
-  const rows = db.prepare('SELECT key, value FROM settings').all() as Array<{ key: string; value: string }>;
+  const rows = db.prepare('SELECT key, value FROM settings WHERE tenant_id = ?').all(tenantId) as Array<{ key: string; value: string }>;
   return rows.reduce((acc, row) => {
     acc[row.key] = row.value;
     return acc;
@@ -1108,10 +1110,11 @@ export async function loadRawSettingsAsync(): Promise<SettingsReader> {
 }
 
 export function loadRawSettings(): SettingsReader {
+  const tenantId = getCurrentTenantId();
   if (!db) {
     return {}; // Synchronous version returns empty in cloud mode; callers should use loadRawSettingsAsync if possible
   }
-  const rows = db.prepare('SELECT key, value FROM settings').all() as Array<{ key: string; value: string }>;
+  const rows = db.prepare('SELECT key, value FROM settings WHERE tenant_id = ?').all(tenantId) as Array<{ key: string; value: string }>;
   return rows.reduce((acc, row) => {
     acc[row.key] = row.value;
     return acc;
@@ -1207,6 +1210,8 @@ function getRecipientsForNotification(
     const placeholders =
       allowedRoles.map(() => '?').join(',');
 
+    const tenantId = getCurrentTenantId();
+
     const users = db.prepare(`
       SELECT email, role
       FROM users
@@ -1214,7 +1219,8 @@ function getRecipientsForNotification(
         AND email IS NOT NULL
         AND TRIM(email) != ''
         AND is_active = 1
-    `).all(...allowedRoles) as Array<{
+        AND tenant_id = ?
+    `).all(...allowedRoles, tenantId) as Array<{
       email: string;
       role: string;
     }>;
@@ -1310,11 +1316,13 @@ async function notifyInventorySummary(settingsRaw: SettingsReader): Promise<void
   const currency = asStr(settingsRaw.app_currency, 'USD');
   const businessName = asStr(settingsRaw.app_name, 'Great Olive');
 
+  const tenantId = getCurrentTenantId();
+
   const rows = db.prepare(`
     SELECT id, name, stock_quantity, minimum_stock, unit, buying_price
     FROM products
-    WHERE is_available = 1
-  `).all() as Array<{
+    WHERE is_available = 1 AND tenant_id = ?
+  `).all(tenantId) as Array<{
     name: string;
     stock_quantity: number;
     minimum_stock: number;
@@ -1842,11 +1850,12 @@ function getSettingsValueAsNumber(raw: SettingsReader, key: string, def: number)
 function persistSettingsValue(key: string, value: string | number | boolean): void {
   // Persist into settings as text
   const v = String(value);
-  const existing = db.prepare('SELECT key FROM settings WHERE key = ?').get(key) as any;
+  const tenantId = getCurrentTenantId();
+  const existing = db.prepare('SELECT key FROM settings WHERE key = ? AND tenant_id = ?').get(key, tenantId) as any;
   if (existing) {
-    db.prepare('UPDATE settings SET value = ? WHERE key = ?').run(v, key);
+    db.prepare('UPDATE settings SET value = ? WHERE key = ? AND tenant_id = ?').run(v, key, tenantId);
   } else {
-    db.prepare('INSERT INTO settings (key, value) VALUES (?, ?)').run(key, v);
+    db.prepare('INSERT INTO settings (key, value, tenant_id) VALUES (?, ?, ?)').run(key, v, tenantId);
   }
 }
 
@@ -1869,6 +1878,8 @@ export function scheduleStockMovementEmails(): void {
       }
 
       const lastNotified = getSettingsValueAsNumber(settingsRaw, 'last_stock_movement_email_id', 0);
+
+      const tenantId = getCurrentTenantId();
 
       // Load next confirmed movements
       // Note: inventory_movements already contains quantity_before/changed/after in your schema.
@@ -1893,9 +1904,10 @@ export function scheduleStockMovementEmails(): void {
         LEFT JOIN products p ON p.id = m.product_id
         WHERE m.status = 'confirmed'
           AND m.id > ?
+          AND m.tenant_id = ?
         ORDER BY m.id ASC
         LIMIT 50
-      `).all(lastNotified) as StockMovementEmailRow[];
+      `).all(lastNotified, tenantId) as StockMovementEmailRow[];
 
       if (!rows.length) return;
 

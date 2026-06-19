@@ -7,12 +7,17 @@ const router = express.Router();
 // ─── Suppliers ───────────────────────────────────────────────────────────────
 
 // GET /suppliers
-router.get('/', (req, res) => {
+router.get('/', (req: any, res) => {
+  const tenantId = req.tenant_id;
+  if (!tenantId) {
+    return res.status(401).json({ error: 'TENANT_REQUIRED', message: 'tenant_id requis' });
+  }
   try {
     const rows = db.prepare(`
       SELECT * FROM suppliers
+      WHERE tenant_id = ?
       ORDER BY is_active DESC, name ASC
-    `).all();
+    `).all(tenantId);
     res.json(rows);
   } catch (e: any) {
     res.status(500).json({ error: e.message });
@@ -20,10 +25,14 @@ router.get('/', (req, res) => {
 });
 
 // GET /suppliers/:id
-router.get('/:id', (req, res) => {
+router.get('/:id', (req: any, res) => {
   const { id } = req.params;
+  const tenantId = req.tenant_id;
+  if (!tenantId) {
+    return res.status(401).json({ error: 'TENANT_REQUIRED', message: 'tenant_id requis' });
+  }
   try {
-    const row = db.prepare(`SELECT * FROM suppliers WHERE id = ?`).get(id) as any;
+    const row = db.prepare(`SELECT * FROM suppliers WHERE id = ? AND tenant_id = ?`).get(id, tenantId) as any;
     if (!row) return res.status(404).json({ error: 'Supplier not found' });
     res.json(row);
   } catch (e: any) {
@@ -32,18 +41,31 @@ router.get('/:id', (req, res) => {
 });
 
 // POST /suppliers
-router.post('/', requireRole(['admin', 'manager']), (req, res) => {
+router.post('/', requireRole(['admin', 'manager']), (req: any, res) => {
   const { name, contact_name, email, phone, address, tax_number, payment_terms } = req.body;
+  const tenantId = req.tenant_id;
+  if (!tenantId) {
+    return res.status(401).json({ error: 'TENANT_REQUIRED', message: 'tenant_id requis' });
+  }
 
   if (!name) return res.status(400).json({ error: 'Supplier name is required' });
 
   try {
     const result = db.prepare(`
-      INSERT INTO suppliers (name, contact_name, email, phone, address, tax_number, payment_terms)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-    `).run(name, contact_name ?? null, email ?? null, phone ?? null, address ?? null, tax_number ?? null, payment_terms ?? 'net_30');
+      INSERT INTO suppliers (name, contact_name, email, phone, address, tax_number, payment_terms, tenant_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(name, contact_name ?? null, email ?? null, phone ?? null, address ?? null, tax_number ?? null, payment_terms ?? 'net_30', tenantId);
 
-    const created = db.prepare('SELECT * FROM suppliers WHERE id = ?').get(result.lastInsertRowid);
+    const created = db.prepare('SELECT * FROM suppliers WHERE id = ? AND tenant_id = ?').get(result.lastInsertRowid, tenantId);
+
+    // Queue for sync to Supabase
+    try {
+      const { syncAfterWrite } = require('../../sync/sync-helper');
+      syncAfterWrite('supplier', 'insert', { ...created, tenant_id: tenantId });
+    } catch (syncErr) {
+      console.warn('[Suppliers] Could not queue sync:', syncErr);
+    }
+
     res.status(201).json(created);
   } catch (e: any) {
     res.status(500).json({ error: e.message });
@@ -51,9 +73,13 @@ router.post('/', requireRole(['admin', 'manager']), (req, res) => {
 });
 
 // PATCH /suppliers/:id
-router.patch('/:id', requireRole(['admin', 'manager']), (req, res) => {
+router.patch('/:id', requireRole(['admin', 'manager']), (req: any, res) => {
   const { id } = req.params;
   const data = req.body;
+  const tenantId = req.tenant_id;
+  if (!tenantId) {
+    return res.status(401).json({ error: 'TENANT_REQUIRED', message: 'tenant_id requis' });
+  }
 
   const allowed = ['name', 'contact_name', 'email', 'phone', 'address', 'tax_number', 'payment_terms', 'is_active'];
   const updates: string[] = [];
@@ -69,22 +95,46 @@ router.patch('/:id', requireRole(['admin', 'manager']), (req, res) => {
   if (updates.length === 0) return res.status(400).json({ error: 'No valid fields to update' });
 
   values.push(id);
-  db.prepare(`UPDATE suppliers SET ${updates.join(', ')}, updated_at = CURRENT_TIMESTAMP WHERE id = ?`).run(...values);
-  res.json(db.prepare('SELECT * FROM suppliers WHERE id = ?').get(id) as any);
+  values.push(tenantId);
+  db.prepare(`UPDATE suppliers SET ${updates.join(', ')}, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND tenant_id = ?`).run(...values);
+  const updated = db.prepare('SELECT * FROM suppliers WHERE id = ? AND tenant_id = ?').get(id, tenantId) as any;
+
+  // Queue for sync to Supabase
+  try {
+    const { syncAfterWrite } = require('../../sync/sync-helper');
+    syncAfterWrite('supplier', 'update', { ...updated, tenant_id: tenantId });
+  } catch (syncErr) {
+    console.warn('[Suppliers] Could not queue update sync:', syncErr);
+  }
+
+  res.json(updated);
 });
 
 // DELETE /suppliers/:id  (soft: is_active = 0)
-router.delete('/:id', requireRole(['admin']), (req, res) => {
+router.delete('/:id', requireRole(['admin']), (req: any, res) => {
   const { id } = req.params;
+  const tenantId = req.tenant_id;
+  if (!tenantId) {
+    return res.status(401).json({ error: 'TENANT_REQUIRED', message: 'tenant_id requis' });
+  }
   const { c: activePOs } = db.prepare(
-    `SELECT COUNT(*) AS c FROM purchase_orders WHERE supplier_id = ? AND status NOT IN ('cancelled')`
-  ).get(id) as { c: number };
+    `SELECT COUNT(*) AS c FROM purchase_orders WHERE supplier_id = ? AND tenant_id = ? AND status NOT IN ('cancelled')`
+  ).get(id, tenantId) as { c: number };
 
   if (activePOs > 0) {
     return res.status(400).json({ error: 'Cannot deactivate supplier with active purchase orders' });
   }
 
-  db.prepare(`UPDATE suppliers SET is_active = 0 WHERE id = ?`).run(id);
+  db.prepare(`UPDATE suppliers SET is_active = 0 WHERE id = ? AND tenant_id = ?`).run(id, tenantId);
+
+  // Queue for sync to Supabase
+  try {
+    const { syncAfterWrite } = require('../../sync/sync-helper');
+    syncAfterWrite('supplier', 'update', { id: Number(id), is_active: 0, tenant_id: tenantId });
+  } catch (syncErr) {
+    console.warn('[Suppliers] Could not queue deactivate sync:', syncErr);
+  }
+
   res.json({ success: true });
 });
 

@@ -16,6 +16,7 @@ import { InventoryActivityPreview } from './components/inventory/InventoryActivi
 import { InventoryAnalyticsPage as InventoryAnalytics } from './components/InventoryAnalytics';
 import { CategoryManager } from './components/CategoryManager';
 import { InventoryMovementTable } from './components/InventoryMovementTable';
+import { ConfirmDialog } from '../../components/ConfirmDialog';
 import { useInventoryFilters } from './hooks/useInventoryFilters';
 import { useInventoryStats } from './hooks/useInventoryStats';
 import { useInventoryPagination } from './hooks/useInventoryPagination';
@@ -785,6 +786,9 @@ const ProductsPage = () => {
   const [sortField, setSortField]           = useState<'name' | 'stock_quantity' | 'selling_price'>('name');
   const [sortDirection, setSortDirection]   = useState<'asc' | 'desc'>('asc');
   const [toast, setToast]                   = useState<{ type: 'success' | 'error'; msg: string } | null>(null);
+  const [bulkArchiveConfirm, setBulkArchiveConfirm] = useState(false);
+  const [bulkDeleteConfirm, setBulkDeleteConfirm]   = useState(false);
+  const [deleteConfirmId, setDeleteConfirmId]       = useState<number | null>(null);
 
   const { movements, loading: movementsLoading }          = useInventoryMovements(6);
   const { movements: fullMovements, loading: fullMovementsLoading } = useInventoryMovements(500);
@@ -835,7 +839,12 @@ const ProductsPage = () => {
 
   const handleBulkArchive = useCallback(async () => {
     if (!selectedIds.length) return;
-    if (!window.confirm(t('products.bulkArchiveConfirm', { count: selectedIds.length }))) return;
+    setBulkArchiveConfirm(true);
+  }, [selectedIds]);
+
+  const confirmBulkArchive = useCallback(async () => {
+    if (!selectedIds.length) return;
+    setBulkArchiveConfirm(false);
     const role = useAuthStore.getState().user?.role;
     let ok = 0;
     for (const id of selectedIds) if (await updateProduct(id, { is_available: false }, role)) ok++;
@@ -845,7 +854,12 @@ const ProductsPage = () => {
 
   const handleBulkDelete = useCallback(async () => {
     if (!selectedIds.length) return;
-    if (!window.confirm(t('products.bulkDeleteConfirm', { count: selectedIds.length }))) return;
+    setBulkDeleteConfirm(true);
+  }, [selectedIds]);
+
+  const confirmBulkDelete = useCallback(async () => {
+    if (!selectedIds.length) return;
+    setBulkDeleteConfirm(false);
     let ok = 0;
     for (const id of selectedIds) if (await deleteProduct(id)) ok++;
     setToast({ type: ok === selectedIds.length ? 'success' : 'error', msg: t('products.bulkDeleteResult', { success: ok, total: selectedIds.length }) });
@@ -861,30 +875,40 @@ const ProductsPage = () => {
       minimum_stock: product.minimum_stock, unit: product.unit,
       is_available: true, description: product.description,
     };
-    const ok = await createProduct(dup, role);
-    setToast(ok
+    const res = await createProduct(dup, role);
+    setToast(res.success
       ? { type: 'success', msg: t('products.createdSuccess', { name: dup.name ?? 'Copy' }) }
       : { type: 'error',   msg: t('products.failedToCreate') });
-    if (ok) fetchProducts();
+    if (res.success) fetchProducts();
   }, [createProduct, fetchProducts, t]);
 
   const handleArchive = useCallback(async (product: Product) => {
     const role = useAuthStore.getState().user?.role;
-    const ok = await updateProduct(product.id, { is_available: false }, role);
-    setToast(ok
+    const res = await updateProduct(product.id, { is_available: false }, role);
+    setToast(res.success
       ? { type: 'success', msg: t('products.deletedSuccess') }
       : { type: 'error',   msg: t('products.failedToSave') });
-    if (ok) fetchProducts();
+    if (res.success) fetchProducts();
   }, [fetchProducts, t, updateProduct]);
 
-  const handleDelete = useCallback(async (id: number) => {
-    if (!window.confirm(t('products.deleteConfirm'))) return;
+  const requestDelete = useCallback((id: number) => {
+    setDeleteConfirmId(id);
+  }, []);
+
+  const confirmDelete = useCallback(async () => {
+    if (!deleteConfirmId) return;
+    const id = deleteConfirmId;
+    setDeleteConfirmId(null);
     const ok = await deleteProduct(id);
     setToast(ok
       ? { type: 'success', msg: t('products.deletedSuccess') }
       : { type: 'error',   msg: t('products.failedToDelete') });
     fetchCategories(); fetchProducts();
-  }, [deleteProduct, fetchCategories, fetchProducts, t]);
+  }, [deleteConfirmId, deleteProduct, fetchCategories, fetchProducts, t]);
+
+  const handleDelete = useCallback(async (id: number) => {
+    requestDelete(id);
+  }, [requestDelete]);
 
   const handleStockConfirm = async (qty: number, type: 'addition' | 'subtraction', reason: string) => {
     if (!selectedProduct) return;
@@ -917,10 +941,16 @@ const ProductsPage = () => {
   const handleProductSaved = useCallback(async (data: any) => {
     const role = useAuthStore.getState().user?.role;
     try {
-      const ok = editingProduct
+      const res = editingProduct
         ? await updateProduct(editingProduct.id, data, role)
         : await createProduct(data, role);
-      if (!ok) { setToast({ type: 'error', msg: editingProduct ? t('products.failedToSave') : t('products.failedToCreate') }); return; }
+      if (!res.success) {
+        let msg = editingProduct ? t('products.failedToSave') : t('products.failedToCreate');
+        if (res.error === 'PRODUCT_NAME_DUPLICATE') msg = t('products.nameDuplicate');
+        if (res.error === 'PRODUCT_SKU_DUPLICATE') msg = t('products.skuDuplicate');
+        setToast({ type: 'error', msg });
+        return;
+      }
       setToast({ type: 'success', msg: editingProduct ? t('products.savedSuccess', { name: data.name }) : t('products.createdSuccess', { name: data.name }) });
     } catch (err: any) {
       console.error('[ProductsPage] save error:', err);
@@ -959,8 +989,8 @@ const ProductsPage = () => {
               <BulkBar
                 count={selectedIds.length}
                 onAdjust={handleBulkAdjust}
-                onArchive={handleBulkArchive}
-                onDelete={handleBulkDelete}
+                onArchive={() => setBulkArchiveConfirm(true)}
+                onDelete={() => setBulkDeleteConfirm(true)}
                 onClear={() => setSelectedIds([])}
                 t={t} isMobile={isMobile} colors={colors}
               />
@@ -1178,6 +1208,35 @@ const ProductsPage = () => {
         onClose={() => { setShowStockModal(false); setSelectedProduct(null); }}
         product={selectedProduct}
         onConfirm={handleStockConfirm}
+      />
+
+      {/* Premium delete confirmation dialogs */}
+      <ConfirmDialog
+        open={!!deleteConfirmId}
+        title={t('products.deleteConfirm') || 'Confirmer la suppression'}
+        message={t('products.deleteConfirmMsg') || 'Cette action est irréversible. Êtes-vous sûr de vouloir supprimer ce produit ?'}
+        confirmLabel={t('products.delete') || 'Supprimer'}
+        danger
+        onConfirm={confirmDelete}
+        onCancel={() => setDeleteConfirmId(null)}
+      />
+      <ConfirmDialog
+        open={bulkArchiveConfirm}
+        title={t('products.bulkArchiveConfirmTitle') || 'Confirmer l\'archivage'}
+        message={t('products.bulkArchiveConfirm', { count: selectedIds.length })}
+        confirmLabel={t('products.bulkArchive') || 'Archiver'}
+        danger={false}
+        onConfirm={confirmBulkArchive}
+        onCancel={() => setBulkArchiveConfirm(false)}
+      />
+      <ConfirmDialog
+        open={bulkDeleteConfirm}
+        title={t('products.bulkDeleteConfirmTitle') || 'Confirmer la suppression'}
+        message={t('products.bulkDeleteConfirm', { count: selectedIds.length })}
+        confirmLabel={t('products.bulkDelete') || 'Supprimer'}
+        danger
+        onConfirm={confirmBulkDelete}
+        onCancel={() => setBulkDeleteConfirm(false)}
       />
     </div>
   );

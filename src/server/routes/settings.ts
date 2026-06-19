@@ -14,6 +14,10 @@ const SENSITIVE_KEYS = ['smtp_pass', 'smtp_user'];
  * Returns sanitized settings for frontend (excludes sensitive fields like smtp_pass)
  */
 router.get('/', async (req, res) => {
+  const tenantId = (req as any).tenant_id;
+  if (!tenantId) {
+    return res.status(401).json({ error: 'TENANT_REQUIRED', message: 'tenant_id requis' });
+  }
   try {
     // Cloud mode: read from Supabase
     if (env.RENDER_CLOUD_MODE || env.USE_SUPABASE_PRODUCTS) {
@@ -21,7 +25,7 @@ router.get('/', async (req, res) => {
         return res.status(500).json({ error: 'Supabase not configured' });
       }
       const supabase = createClient(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false } });
-      const { data, error } = await supabase.from('settings').select('key, value');
+      const { data, error } = await supabase.from('settings').select('key, value').eq('tenant_id', tenantId);
       if (error) return res.status(500).json({ error: error.message });
       
       const settings: Record<string, any> = {};
@@ -66,8 +70,8 @@ router.get('/', async (req, res) => {
     }
 
     const rows = hasNewColumns
-      ? (db.prepare('SELECT setting_key, setting_value FROM settings').all() as Array<{ setting_key: string; setting_value: string }>)
-      : (db.prepare('SELECT key, value FROM settings').all() as Array<{ key: string; value: string }>);
+      ? (db.prepare('SELECT setting_key, setting_value FROM settings WHERE tenant_id = ?').all(tenantId) as Array<{ setting_key: string; setting_value: string }>)
+      : (db.prepare('SELECT key, value FROM settings WHERE tenant_id = ?').all(tenantId) as Array<{ key: string; value: string }>);
 
     const settings: Record<string, any> = {};
 
@@ -111,12 +115,16 @@ router.get('/', async (req, res) => {
  * Updates settings from frontend data
  * Expects partial settings object with camelCase keys
  */
-router.patch('/', requireAdminOrManager, async (req, res) => {
+router.patch('/', requireAdminOrManager, async (req: any, res) => {
   const updates = req.body;
+  const tenantId = req.tenant_id;
+  if (!tenantId) {
+    return res.status(401).json({ error: 'TENANT_REQUIRED', message: 'tenant_id requis' });
+  }
 
   try {
-    // Always use the real schema present in database.db: settings(key, value, updated_at)
-    const stmt = db.prepare(`INSERT OR REPLACE INTO settings (key, value) VALUES ($key, $value)`);
+    // Always use the real schema present in database.db: settings(key, value, tenant_id, updated_at)
+    const stmt = db.prepare(`INSERT OR REPLACE INTO settings (key, value, tenant_id) VALUES (?, ?, ?)`);
 
     // Avoid long-lived sqlite write transactions; improves resilience under DB lock.
     const entries = Object.entries(updates || {});
@@ -228,7 +236,7 @@ router.patch('/', requireAdminOrManager, async (req, res) => {
 
       const storeKey = mappedKey;
 
-      stmt.run({ key: storeKey, value: dbValue });
+      stmt.run(storeKey, dbValue, tenantId);
     }
 
     res.json({ success: true });

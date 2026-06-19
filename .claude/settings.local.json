@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npx tsc --noEmit --skipLibCheck)",
+      "Bash(pkill -f \"vite\")",
+      "Bash(pkill -f \"node.*server\")"
+    ]
+  }
+}

@@ -10,6 +10,7 @@ import { Router, Request, Response } from 'express';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { env } from '../config/env';
 import crypto from 'crypto';
+import bcrypt from 'bcryptjs';
 
 const router = Router();
 
@@ -57,28 +58,36 @@ function getSupabase(): SupabaseClient | null {
   });
 }
 
+// ── Password & PIN Hashing (bcryptjs) ─────────────────────────────────────────
+
 function hashPassword(password: string): string {
-  const salt = crypto.randomBytes(16).toString('hex');
-  const hash = crypto.pbkdf2Sync(password, salt, 100000, 64, 'sha512').toString('hex');
-  return `${salt}:${hash}`;
+  return bcrypt.hashSync(password, 10);
 }
 
 function verifyPassword(password: string, stored: string): boolean {
-  const [salt, hash] = stored.split(':');
-  const verify = crypto.pbkdf2Sync(password, salt, 100000, 64, 'sha512').toString('hex');
-  return crypto.timingSafeEqual(Buffer.from(hash), Buffer.from(verify));
+  if (!stored) return false;
+  if (!stored.startsWith('$2')) {
+    const [salt, hash] = stored.split(':');
+    if (!salt || !hash) return false;
+    const verify = crypto.pbkdf2Sync(password, salt, 100000, 64, 'sha512').toString('hex');
+    return crypto.timingSafeEqual(Buffer.from(hash), Buffer.from(verify));
+  }
+  return bcrypt.compareSync(password, stored);
 }
 
 function hashPin(pin: string): string {
-  const salt = crypto.randomBytes(16).toString('hex');
-  const hash = crypto.pbkdf2Sync(pin, salt, 100000, 64, 'sha512').toString('hex');
-  return `${salt}:${hash}`;
+  return bcrypt.hashSync(pin, 10);
 }
 
 function verifyPin(pin: string, stored: string): boolean {
-  const [salt, hash] = stored.split(':');
-  const verify = crypto.pbkdf2Sync(pin, salt, 100000, 64, 'sha512').toString('hex');
-  return crypto.timingSafeEqual(Buffer.from(hash), Buffer.from(verify));
+  if (!stored) return false;
+  if (!stored.startsWith('$2')) {
+    const [salt, hash] = stored.split(':');
+    if (!salt || !hash) return false;
+    const verify = crypto.pbkdf2Sync(pin, salt, 100000, 64, 'sha512').toString('hex');
+    return crypto.timingSafeEqual(Buffer.from(hash), Buffer.from(verify));
+  }
+  return bcrypt.compareSync(pin, stored);
 }
 
 // ── POST /api/auth/setup — Crée le compte admin après signup ──

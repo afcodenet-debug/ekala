@@ -75,11 +75,15 @@ export class SyncOrchestratorV2 {
     this.saleSync = saleSync;
     this.userTenantSync = userTenantSync;
 
-    // Initialisation (résiliente - les tables manquantes sont skip silencieusement)
+    // Initialisation (résiliente - continue même si le schéma a des problèmes)
     try {
       ensureSyncTables(db);
+      console.log('[SyncOrchestratorV2] Sync tables initialized successfully');
     } catch (err: any) {
-      console.warn('[SyncOrchestratorV2] ensureSyncTables partial failure:', err?.message);
+      console.warn('[SyncOrchestratorV2] ensureSyncTables encountered issues (non-critical):', err?.message);
+      console.warn('[SyncOrchestratorV2] Sync will attempt to work with existing schema');
+      // Don't throw - allow sync to attempt working with whatever schema exists
+      // The individual sync operations have their own error handling
     }
     this.recoverInProgressItems();
   }
@@ -158,13 +162,10 @@ export class SyncOrchestratorV2 {
     let totalPushed = 0, totalPulled = 0, totalErrors = 0;
 
     try {
-      // Phase 1: Legacy User/Tenant sync (PUSH ONLY - pas de pull pour ne pas écraser)
-      const uPushed = await this.userTenantSync.pushPendingByEntity('tenant', tenantId);
-      const uPushed2 = await this.userTenantSync.pushPendingByEntity('user', tenantId);
-      const uPushed3 = await this.userTenantSync.pushPendingByEntity('tenant_user', tenantId);
-      totalPushed += uPushed + uPushed2 + uPushed3;
+      // Phase 1: Skip legacy sync - GenericSync in Phase 3 handles all entities (tenant, user, tenant_user)
+      // with proper foreign key resolution and ordering.
 
-      // Vérifier si le tenant existe
+      // Vérifier si le tenant existe localement
       const tenant = this.db.prepare('SELECT id FROM tenants WHERE id = ?').get(Number(tenantId));
       if (!tenant) {
         console.warn(`[SyncV2] Tenant #${tenantId} not found, skipping data sync`);
@@ -185,6 +186,14 @@ export class SyncOrchestratorV2 {
         if (orphanDeletes > 0) console.log(`[SyncV2] Queued ${orphanDeletes} orphan deletes for products`);
       } catch (orphanErr: any) {
         console.warn('[SyncV2] Orphan delete sync partial failure:', orphanErr?.message);
+      }
+
+      // Phase 2c: Correction des mouvements d'inventaire avec product_id NULL
+      try {
+        const fixedMovements = await this.genericSync.fixInventoryMovementsProductIds(tenantId);
+        if (fixedMovements > 0) console.log(`[SyncV2] Fixed ${fixedMovements} inventory movements with product_id`);
+      } catch (fixErr: any) {
+        console.warn('[SyncV2] Inventory movement product_id fix partial failure:', fixErr?.message);
       }
 
       // Phase 3: Generic sync pour TOUTES les entités (dans l'ordre)

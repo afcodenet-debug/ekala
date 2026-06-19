@@ -763,7 +763,7 @@ const ExpensesPage = () => {
                       </span>
 
                       {/* Delete (admin) */}
-                      {user?.role === 'admin' && (
+                      {(user?.role === 'owner' || user?.role === 'admin') && (
                         <button className="exp-row-del" onClick={() => handleDelete(expense.id)} title={t('common.delete')}>
                           {IC.trash}
                         </button>

@@ -31,6 +31,7 @@ import BillingPage from './pages/saas/BillingPage';
 import CheckoutPage from './pages/saas/CheckoutPage';
 import SetupAccountPage from './pages/saas/SetupAccountPage';
 import SubscriptionExpirationBanner from './components/SubscriptionExpirationBanner';
+import { SubscriptionGate, SubscriptionState } from './components/SubscriptionGate';
 import GlobalQrOrderNotifier from './components/GlobalQrOrderNotifier';
 import { GlobalNotificationToast } from './components/GlobalNotificationToast';
 import { NotificationCenter } from './components/NotificationCenter';
@@ -58,7 +59,49 @@ const queryClient = new QueryClient({
 function App() {
   const { language } = useSettingsStore();
   const { isSidebarCollapsed, setSidebarCollapsed, isSidebarOpen, setSidebarOpen } = useUIStore();
+  const { isAuthenticated, refreshProfile, user } = useAuthStore();
   const [windowWidth, setWindowWidth] = useState(window.innerWidth);
+  const [subscriptionInfo, setSubscriptionInfo] = useState<{ state: SubscriptionState; planName: string | null; daysUntilRenewal: number | null; graceDaysRemaining: number | null; isExpired: boolean; isGracePeriod: boolean } | null>(null);
+
+  // Compute subscription status from user profile
+  useEffect(() => {
+    if (isAuthenticated && user) {
+      const now = Date.now();
+      const expiresAt = user.expires_at ? new Date(user.expires_at).getTime() : null;
+      const isExpired = expiresAt ? expiresAt < now : false;
+      
+      // Professional grace period (7 days)
+      const graceEnd = expiresAt ? expiresAt + 7 * 86_400_000 : null;
+      const isGracePeriod = isExpired && graceEnd ? now < graceEnd : false;
+      
+      let state: SubscriptionState = 'active';
+      if (user.status === 'cancelled') state = 'cancelled';
+      else if (user.status === 'suspended') state = 'suspended';
+      else if (isExpired && isGracePeriod) state = 'grace';
+      else if (isExpired) state = 'expired';
+      else if (user.status === 'trial') state = 'trial';
+      else if (user.status === 'active') state = 'active';
+      else if (user.status === 'past_due') state = 'expired';
+      else state = 'no_plan';
+
+      setSubscriptionInfo({
+        state,
+        planName: user.plan_name || null,
+        daysUntilRenewal: expiresAt ? Math.ceil((expiresAt - now) / 86_400_000) : null,
+        graceDaysRemaining: isGracePeriod && graceEnd ? Math.max(0, Math.ceil((graceEnd - now) / 86_400_000)) : null,
+        isExpired,
+        isGracePeriod,
+      });
+    } else {
+      setSubscriptionInfo(null);
+    }
+  }, [isAuthenticated, user]);
+
+  useEffect(() => {
+    if (isAuthenticated) {
+      refreshProfile().catch(err => console.error('[App] Profile refresh failed:', err));
+    }
+  }, [isAuthenticated, refreshProfile]);
 
   useEffect(() => {
     const handleResize = () => setWindowWidth(window.innerWidth);
@@ -147,8 +190,8 @@ function App() {
                     <GlobalQrOrderNotifier />
                     <GlobalNotificationToast />
                     <NotificationCenter 
-                      isOpen={useNotificationStore.getState().isCenterOpen} 
-                      onClose={() => useNotificationStore.getState().closeCenter()} 
+                      isOpen={useNotificationStore.getState().isCenterOpen ?? false} 
+                      onClose={() => useNotificationStore.getState().closeCenter?.()} 
                     />
 
                     <main style={{
@@ -162,61 +205,63 @@ function App() {
                         <Route path="/dashboard" element={<Dashboard />} />
                         <Route path="/tables" element={<TablesPage />} />
                         <Route path="/staff" element={
-                          <ProtectedRoute roles={['admin', 'manager']}>
+                          <ProtectedRoute roles={['owner', 'admin', 'manager']}>
                             <Staff />
                           </ProtectedRoute>
                         } />
                         <Route path="/pos" element={<POS />} />
                         <Route path="/orders" element={<OrdersPage />} />
-                        <Route path="/sales" element={
-                           <ProtectedRoute roles={['admin', 'manager', 'cashier']}>
-                             <SalesHistoryPage />
-                           </ProtectedRoute>
-                         } />
-                         <Route path="/analytics" element={
-                           <ProtectedRoute roles={['admin', 'manager']}>
-                             <InventoryAnalyticsPage />
-                           </ProtectedRoute>
-                         } />
-                         <Route path="/categories" element={
-                           <ProtectedRoute roles={['admin', 'manager']}>
-                             <CategoriesPage />
-                           </ProtectedRoute>
-                         } />
-                        <Route path="/products" element={
-                          <ProtectedRoute roles={['admin', 'manager']}>
+<Route path="/sales" element={
+                           <ProtectedRoute roles={['owner', 'admin', 'manager', 'cashier']}>
+                              <SalesHistoryPage />
+                            </ProtectedRoute>
+                          } />
+<Route path="/analytics" element={
+                            <ProtectedRoute roles={['owner', 'admin', 'manager']}>
+                              <InventoryAnalyticsPage />
+                            </ProtectedRoute>
+                          } />
+<Route path="/categories" element={
+                            <ProtectedRoute roles={['owner', 'admin', 'manager']}>
+                              <CategoriesPage />
+                            </ProtectedRoute>
+                          } />
+<Route path="/products" element={
+                          <ProtectedRoute roles={['owner', 'admin', 'manager']}>
                             <ProductsPage />
                           </ProtectedRoute>
                         } />
-                        <Route path="/products/:id" element={
-                          <ProtectedRoute roles={['admin', 'manager']}>
+                         <Route path="/products/:id" element={
+                          <ProtectedRoute roles={['owner', 'admin', 'manager']}>
                             <ProductDetailsPage />
                           </ProtectedRoute>
                         } />
                         <Route path="/reports" element={
-                          <ProtectedRoute roles={['admin', 'manager', 'cashier']}>
+                          <ProtectedRoute roles={['owner', 'admin', 'manager', 'cashier']}>
                             <Reports />
                           </ProtectedRoute>
                         } />
                         <Route path="/expenses" element={
-                          <ProtectedRoute roles={['admin', 'manager', 'cashier']}>
+                          <ProtectedRoute roles={['owner', 'admin', 'manager', 'cashier']}>
                             <Expenses />
                           </ProtectedRoute>
                         } />
                         <Route path="/users" element={
-                          <ProtectedRoute roles={['admin']}>
+                          <ProtectedRoute roles={['owner', 'admin']}>
                             <UsersPage />
                           </ProtectedRoute>
                         } />
-                         <Route path="/settings" element={
-                           <ProtectedRoute roles={['admin']}>
-                             <SettingsPage />
-                           </ProtectedRoute>
-                         } />
+<Route path="/settings" element={
+                            <ProtectedRoute roles={['owner', 'admin']}>
+                              <SettingsPage />
+                            </ProtectedRoute>
+                          } />
                          <Route path="/billing" element={<BillingPage />} />
                       </Routes>
                     </main>
-                    <SubscriptionExpirationBanner />
+                    <SubscriptionGate subscriptionInfo={subscriptionInfo}>
+                      <SubscriptionExpirationBanner />
+                    </SubscriptionGate>
                   </div>
                 </ProtectedRoute>
               }

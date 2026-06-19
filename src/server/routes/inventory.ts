@@ -3,12 +3,15 @@ import db from '../db/database';
 import { notifyStockAdjustment } from '../services/notification.service';
 import { env } from '../config/env';
 import { createClient } from '@supabase/supabase-js';
-// import { syncService } from '../sync';
 
 const router = express.Router();
 
 // Get stock levels for dashboard
-router.get('/stock-levels', async (req, res) => {
+router.get('/stock-levels', async (req: any, res) => {
+  const tenantId = req.tenant_id;
+  if (!tenantId) {
+    return res.status(401).json({ error: 'TENANT_REQUIRED', message: 'tenant_id requis' });
+  }
   // Cloud mode: read from Supabase
   if (env.RENDER_CLOUD_MODE || env.USE_SUPABASE_PRODUCTS) {
     if (!env.SUPABASE_URL || !env.SUPABASE_SERVICE_ROLE_KEY) {
@@ -18,7 +21,8 @@ router.get('/stock-levels', async (req, res) => {
     const { data, error } = await supabase
       .from('products')
       .select('id, name, stock_quantity, minimum_stock')
-      .eq('is_available', true);
+      .eq('is_available', true)
+      .eq('tenant_id', tenantId);
     
     if (error) return res.status(500).json({ error: error.message });
     
@@ -36,8 +40,8 @@ router.get('/stock-levels', async (req, res) => {
     const items = db.prepare(`
       SELECT id, name, stock_quantity, minimum_stock
       FROM products
-      WHERE is_available = 1
-    `).all() as any[];
+      WHERE is_available = 1 AND tenant_id = ?
+    `).all(tenantId) as any[];
 
     const lowStock = items.filter((item: any) => item.stock_quantity <= item.minimum_stock);
 
@@ -52,7 +56,11 @@ router.get('/stock-levels', async (req, res) => {
 });
 
 // Get all products (legacy /api/inventory compatibility)
-router.get('/', async (req, res) => {
+router.get('/', async (req: any, res) => {
+  const tenantId = req.tenant_id;
+  if (!tenantId) {
+    return res.status(401).json({ error: 'TENANT_REQUIRED', message: 'tenant_id requis' });
+  }
   if (env.RENDER_CLOUD_MODE || env.USE_SUPABASE_PRODUCTS) {
     try {
       if (!env.SUPABASE_URL || !env.SUPABASE_SERVICE_ROLE_KEY) {
@@ -63,6 +71,7 @@ router.get('/', async (req, res) => {
         .from('products')
         .select('id, name, barcode, price:selling_price, quantity:stock_quantity, categories(name), created_at, updated_at')
         .eq('is_available', true)
+        .eq('tenant_id', tenantId)
         .order('name', { ascending: true });
       
       if (error) throw error;
@@ -85,9 +94,9 @@ router.get('/', async (req, res) => {
              c.name as category, p.created_at, p.updated_at
       FROM products p
       LEFT JOIN categories c ON p.category_id = c.id
-      WHERE p.is_available = 1
+      WHERE p.is_available = 1 AND p.tenant_id = ?
       ORDER BY p.name ASC
-    `).all();
+    `).all(tenantId);
     res.json(items);
   } catch (error) {
     console.error('[INVENTORY_ROUTE_ERROR] Error fetching inventory:', error);
@@ -96,20 +105,22 @@ router.get('/', async (req, res) => {
 });
 
 // Update stock manually with movement logging
-router.patch('/:id/stock', (req, res) => {
+router.patch('/:id/stock', (req: any, res) => {
   const { quantity, movement_type = 'adjustment', reason = 'Manual stock adjustment', user_id } = req.body;
   const { id } = req.params;
+  const tenantId = req.tenant_id;
+  if (!tenantId) {
+    return res.status(401).json({ error: 'TENANT_REQUIRED', message: 'tenant_id requis' });
+  }
 
   if (quantity === undefined || Number.isNaN(Number(quantity))) {
     return res.status(400).json({ error: 'Quantity must be a valid number' });
   }
 
-  // Cloud mode: Not implemented yet for PATCH via direct route (should use sync or dedicated service)
   if (!db) {
     return res.status(501).json({ error: 'Manual stock adjustment not supported in Cloud Mode via this endpoint yet.' });
   }
 
-  // ── Snapshot captured by the transaction closure ──────────────────
   let notifyPayload: {
     productName: string;
     qtyBefore:   number;
@@ -128,8 +139,8 @@ router.patch('/:id/stock', (req, res) => {
 
   const transaction = db.transaction(() => {
     const productRow = db.prepare(
-      'SELECT stock_quantity, buying_price, name FROM products WHERE id = ?'
-    ).get(id) as any;
+      'SELECT stock_quantity, buying_price, name FROM products WHERE id = ? AND tenant_id = ?'
+    ).get(id, tenantId) as any;
     if (!productRow) throw new Error('Product not found');
 
     const qtyBefore = productRow.stock_quantity ?? 0;
@@ -146,28 +157,29 @@ router.patch('/:id/stock', (req, res) => {
     db.prepare(`
       UPDATE products
       SET stock_quantity = ?, updated_at = CURRENT_TIMESTAMP, version = version + 1
-      WHERE id = ?
-    `).run(qtyAfter, id);
+      WHERE id = ? AND tenant_id = ?
+    `).run(qtyAfter, id, tenantId);
 
-    // Queue for sync
     try {
       const { getProductSyncService } = require('../../sync');
       getProductSyncService().queueChangeInsideTransaction('product', 'update', {
         id: Number(id),
         stock_quantity: qtyAfter,
-        updated_at: new Date().toISOString()
+        updated_at: new Date().toISOString(),
+        tenant_id: tenantId
       });
     } catch (syncErr) {
       console.warn('[Sync] Could not queue stock adjustment for sync:', syncErr);
     }
 
-    db.prepare(`
+    const movementResult = db.prepare(`
       INSERT INTO inventory_movements (
         product_id, movement_type,
         quantity_before, quantity_changed, quantity_after,
         unit_cost, total_value,
-        reason, created_by, reference_type
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        reason, created_by, reference_type,
+        tenant_id
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       id,
       movement_type,
@@ -178,22 +190,43 @@ router.patch('/:id/stock', (req, res) => {
       totalValue,
       reason,
       user_id ?? null,
-      'manual'
+      'manual',
+      tenantId
     );
 
-    return db.prepare('SELECT * FROM products WHERE id = ?').get(id);
+    // Queue inventory movement for sync
+    try {
+      const { syncAfterWrite } = require('../../sync/sync-helper');
+      syncAfterWrite('inventory_movement', 'insert', {
+        id: movementResult.lastInsertRowid,
+        product_id: Number(id),
+        movement_type,
+        quantity_before: qtyBefore,
+        quantity_changed: qtyChanged,
+        quantity_after: qtyAfter,
+        unit_cost: unitCost,
+        total_value: totalValue,
+        reason,
+        created_by: user_id ?? null,
+        reference_type: 'manual',
+        tenant_id: tenantId
+      });
+    } catch (syncErr) {
+      console.warn('[Inventory] Could not queue movement sync:', syncErr);
+    }
+
+    return db.prepare('SELECT * FROM products WHERE id = ? AND tenant_id = ?').get(id, tenantId);
   });
 
   try {
     const updated = transaction();
     res.json(updated);
 
-    // ── Fire-and-forget: email notification (non-blocking) ──────────
     setImmediate(async () => {
       try {
         const settingsRows = db.prepare(
-          "SELECT key, value FROM settings"
-        ).all() as { key: string; value: string }[];
+          "SELECT key, value FROM settings WHERE tenant_id = ?"
+        ).all(tenantId) as { key: string; value: string }[];
         const rawSettings = Object.fromEntries(
           settingsRows.map(r => [r.key, r.value])
         );
@@ -218,15 +251,15 @@ router.patch('/:id/stock', (req, res) => {
   }
 });
 
-// ─── Professional Inventory History ───────────────────────────────────
-// GET /inventory/movements — unified stock movement log
-// Query params: ?product_id=123&limit=50
-router.get('/movements', async (req, res) => {
+router.get('/movements', async (req: any, res) => {
+  const tenantId = req.tenant_id;
+  if (!tenantId) {
+    return res.status(401).json({ error: 'TENANT_REQUIRED', message: 'tenant_id requis' });
+  }
   try {
     const productId = req.query.product_id ? parseInt(req.query.product_id as string) : null;
     const limit = Math.min(1000, Math.max(1, parseInt(req.query.limit as string) || 50));
 
-    // Cloud mode: read from Supabase
     if (env.RENDER_CLOUD_MODE || env.USE_SUPABASE_PRODUCTS) {
       if (!env.SUPABASE_URL || !env.SUPABASE_SERVICE_ROLE_KEY) {
         return res.status(500).json({ error: 'Supabase not configured' });
@@ -236,6 +269,7 @@ router.get('/movements', async (req, res) => {
       let queryBuilder = supabase
         .from('inventory_movements')
         .select('*, products(name, barcode)')
+        .eq('tenant_id', tenantId)
         .order('created_at', { ascending: false })
         .limit(limit);
 
@@ -265,11 +299,12 @@ router.get('/movements', async (req, res) => {
       SELECT m.*, p.name as product_name, p.barcode
       FROM inventory_movements m
       LEFT JOIN products p ON m.product_id = p.id
+      WHERE m.tenant_id = ?
     `;
-    const params: any[] = [];
+    const params: any[] = [tenantId];
 
     if (productId) {
-      query += ` WHERE m.product_id = ?`;
+      query += ` AND m.product_id = ?`;
       params.push(productId);
     }
 

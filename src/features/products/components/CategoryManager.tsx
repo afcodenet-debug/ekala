@@ -27,7 +27,7 @@ export const CategoryManager: React.FC<CategoryManagerProps> = ({ categories, on
   const { t } = useI18n();
   const { user } = useAuthStore();
   const role = user?.role || '';
-  const isAdminOrManager = ['admin', 'manager'].includes(role);
+  const isAdminOrManager = ['owner', 'admin', 'manager'].includes(role);
   const bp = useBreakpoint();
   const { isMobile, isTablet } = bp;
 

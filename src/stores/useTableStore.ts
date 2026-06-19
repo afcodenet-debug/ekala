@@ -108,10 +108,8 @@ export const useTableStore = create<TableStore>((set, get) => ({
   openTable: async (tableId, waiterId) => {
     try {
       await api.tables.open(tableId, waiterId);
-      const tables = get().tables.map(table =>
-        table.id === tableId ? { ...table, status: 'active' as TableStatus, assigned_waiter_id: waiterId } : table
-      );
-      set({ tables });
+      // Re-fetch to get the waiter_name and updated status correctly
+      await get().fetchTables(true);
       return true;
     } catch (err: any) {
       console.error('Failed to open table', err);
@@ -137,11 +135,9 @@ export const useTableStore = create<TableStore>((set, get) => ({
 
   assignWaiter: async (tableId, waiterId) => {
     try {
-      await api.tables.update(tableId, { assigned_waiter_id: waiterId }, get().role);
-      const tables = get().tables.map(table =>
-        table.id === tableId ? { ...table, assigned_waiter_id: waiterId } : table
-      );
-      set({ tables });
+      await api.tables.assignWaiter(tableId, waiterId);
+      // Re-fetch to get the waiter_name joined from the users table
+      await get().fetchTables(true);
     } catch (err: any) {
       console.error('Failed to assign waiter', err);
       set({ error: err.message });

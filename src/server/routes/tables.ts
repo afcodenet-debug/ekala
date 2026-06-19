@@ -13,15 +13,13 @@ function remoteToLocalStatus(s: string): string {
   return s;
 }
 
-function localToRemoteStatus(s: string): string {
-  if (s === 'active') return 'occupied';
-  if (s === 'out_of_service') return 'available';
-  return s;
-}
-
 // Get tables (Role-based filtering)
 router.get('/', async (req, res) => {
   const { waiter_id, role } = req.query;
+  const tenantId = (req as any).tenant_id;
+  if (!tenantId) {
+    return res.status(401).json({ error: 'TENANT_REQUIRED', message: 'tenant_id requis' });
+  }
   const isSupabaseMode = env.RENDER_CLOUD_MODE || env.USE_SUPABASE_TABLES;
 
   if (isSupabaseMode) {
@@ -34,7 +32,13 @@ router.get('/', async (req, res) => {
       const supabase = createClient(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, {
         auth: { persistSession: false }
       });
-      let query = supabase.from('restaurant_tables').select('*').order('table_number', { ascending: true });
+      
+      // Utiliser une jointure pour récupérer le nom du serveur (full_name ou username)
+      let query = supabase
+        .from('restaurant_tables')
+        .select('*, waiter:users(full_name, username)')
+        .eq('tenant_id', tenantId)
+        .order('table_number', { ascending: true });
 
       if (role === 'waiter' && waiter_id) {
         query = query.eq('assigned_waiter_id', Number(waiter_id));
@@ -48,9 +52,9 @@ router.get('/', async (req, res) => {
         return res.status(500).json({ error: 'Failed to fetch tables from Supabase' });
       }
 
-      // Normalize status for the local frontend
       const normalized = (data || []).map((t: any) => ({
         ...t,
+        waiter_name: t.waiter?.full_name || t.waiter?.username || null,
         status: remoteToLocalStatus(t.status),
       }));
 
@@ -66,7 +70,7 @@ router.get('/', async (req, res) => {
     if (waiter_id) params.waiter_id = Number(waiter_id);
     if (role) params.role = role as string;
 
-    const tables = await TableService.getAll(params);
+    const tables = await TableService.getAll(params, tenantId);
     res.json(tables);
   } catch (error: any) {
     console.error('[Tables] GET error:', error);
@@ -77,6 +81,10 @@ router.get('/', async (req, res) => {
 // Get tables assigned to a specific waiter (for staff management)
 router.get('/waiter/:waiterId', async (req, res) => {
   const { waiterId } = req.params;
+  const tenantId = (req as any).tenant_id;
+  if (!tenantId) {
+    return res.status(401).json({ error: 'TENANT_REQUIRED', message: 'tenant_id requis' });
+  }
   const isSupabaseMode = env.RENDER_CLOUD_MODE || env.USE_SUPABASE_TABLES;
 
   try {
@@ -93,12 +101,14 @@ router.get('/waiter/:waiterId', async (req, res) => {
         .from('restaurant_tables')
         .select('*')
         .eq('assigned_waiter_id', Number(waiterId))
+        .eq('tenant_id', tenantId)
         .order('table_number', { ascending: true });
 
       if (error) {
         console.error('[Tables Supabase] GET by waiter error:', error);
         return res.status(500).json({ error: 'Failed to fetch waiter tables from Supabase' });
       }
+
       const normalized = (data || []).map((t: any) => ({ ...t, status: remoteToLocalStatus(t.status) }));
       return res.json(normalized);
     }
@@ -109,12 +119,12 @@ router.get('/waiter/:waiterId', async (req, res) => {
     const tables = localDb.prepare(`
       SELECT t.*
       FROM restaurant_tables t
-      WHERE t.assigned_waiter_id = ?
+      WHERE t.assigned_waiter_id = ? AND t.tenant_id = ?
       ORDER BY t.table_number
-    `).all(waiterId);
+    `).all(Number(waiterId), tenantId);
 
     res.json(tables);
-  } catch (error) {
+  } catch (error: any) {
     console.error('[Tables] GET by waiter error:', error);
     res.status(500).json({ error: 'Failed to fetch waiter tables' });
   }
@@ -124,12 +134,16 @@ router.get('/waiter/:waiterId', async (req, res) => {
 router.post('/:id/open', async (req, res) => {
   const { id } = req.params;
   const { waiter_id } = req.body;
+  const tenantId = (req as any).tenant_id;
+  if (!tenantId) {
+    return res.status(401).json({ error: 'TENANT_REQUIRED', message: 'tenant_id requis' });
+  }
 
   try {
     const tableId = Number(id);
     const waiterId = Number(waiter_id);
 
-    const table = await TableService.openTable(tableId, waiterId);
+    const table = await TableService.openTable(tableId, waiterId, tenantId);
     res.json({ table, success: true });
   } catch (error: any) {
     console.error(`[Tables] Open table error:`, error.message);
@@ -141,9 +155,13 @@ router.post('/:id/open', async (req, res) => {
 router.patch('/:id', requireAdminOrManager, async (req, res) => {
   const { id } = req.params;
   const updates = req.body;
+  const tenantId = (req as any).tenant_id;
+  if (!tenantId) {
+    return res.status(401).json({ error: 'TENANT_REQUIRED', message: 'tenant_id requis' });
+  }
 
   try {
-    const updatedTable = await TableService.update(Number(id), updates);
+    const updatedTable = await TableService.update(Number(id), updates, tenantId);
     res.json(updatedTable);
   } catch (error: any) {
     console.error('[Tables] PATCH error:', error);
@@ -154,12 +172,16 @@ router.patch('/:id', requireAdminOrManager, async (req, res) => {
 // Regenerate QR token (Admin/Manager only)
 router.post('/:id/regenerate-qr', requireAdminOrManager, async (req, res) => {
   const { id } = req.params;
+  const tenantId = (req as any).tenant_id;
+  if (!tenantId) {
+    return res.status(401).json({ error: 'TENANT_REQUIRED', message: 'tenant_id requis' });
+  }
 
   try {
-    const updatedTable = await TableService.regenerateQrToken(Number(id));
+    const updatedTable = await TableService.regenerateQrToken(Number(id), tenantId);
     res.json(updatedTable);
   } catch (error: any) {
-    console.error('[Tables] Regenerate QR error:', error);
+    console.error('[Tables] Regenerate QR error:', error.message);
     res.status(400).json({ error: error.message || 'Failed to regenerate QR token' });
   }
 });
@@ -167,12 +189,16 @@ router.post('/:id/regenerate-qr', requireAdminOrManager, async (req, res) => {
 // Reserve table
 router.post('/:id/reserve', async (req, res) => {
   const { id } = req.params;
+  const tenantId = (req as any).tenant_id;
+  if (!tenantId) {
+    return res.status(401).json({ error: 'TENANT_REQUIRED', message: 'tenant_id requis' });
+  }
 
   try {
-    const reservedTable = await TableService.reserveTable(Number(id));
+    const reservedTable = await TableService.reserveTable(Number(id), tenantId);
     res.json(reservedTable);
   } catch (error: any) {
-    console.error('[Tables] Reserve error:', error);
+    console.error('[Tables] Reserve error:', error.message);
     res.status(400).json({ error: error.message });
   }
 });
@@ -180,12 +206,16 @@ router.post('/:id/reserve', async (req, res) => {
 // Mark table for cleaning
 router.post('/:id/cleaning', async (req, res) => {
   const { id } = req.params;
+  const tenantId = (req as any).tenant_id;
+  if (!tenantId) {
+    return res.status(401).json({ error: 'TENANT_REQUIRED', message: 'tenant_id requis' });
+  }
 
   try {
-    const cleaningTable = await TableService.markCleaning(Number(id));
+    const cleaningTable = await TableService.markCleaning(Number(id), tenantId);
     res.json(cleaningTable);
   } catch (error: any) {
-    console.error('[Tables] Cleaning error:', error);
+    console.error('[Tables] Cleaning error:', error.message);
     res.status(400).json({ error: error.message });
   }
 });
@@ -193,12 +223,16 @@ router.post('/:id/cleaning', async (req, res) => {
 // Set table available
 router.post('/:id/available', async (req, res) => {
   const { id } = req.params;
+  const tenantId = (req as any).tenant_id;
+  if (!tenantId) {
+    return res.status(401).json({ error: 'TENANT_REQUIRED', message: 'tenant_id requis' });
+  }
 
   try {
-    const availableTable = await TableService.setAvailable(Number(id));
+    const availableTable = await TableService.setAvailable(Number(id), tenantId);
     res.json(availableTable);
   } catch (error: any) {
-    console.error('[Tables] Available error:', error);
+    console.error('[Tables] Available error:', error.message);
     res.status(400).json({ error: error.message });
   }
 });
@@ -206,12 +240,16 @@ router.post('/:id/available', async (req, res) => {
 // Set table out of service
 router.post('/:id/out-of-service', async (req, res) => {
   const { id } = req.params;
+  const tenantId = (req as any).tenant_id;
+  if (!tenantId) {
+    return res.status(401).json({ error: 'TENANT_REQUIRED', message: 'tenant_id requis' });
+  }
 
   try {
-    const outOfServiceTable = await TableService.updateStatus(Number(id), 'out_of_service');
+    const outOfServiceTable = await TableService.updateStatus(Number(id), 'out_of_service', tenantId);
     res.json(outOfServiceTable);
   } catch (error: any) {
-    console.error('[Tables] Out of service error:', error);
+    console.error('[Tables] Out of service error:', error.message);
     res.status(400).json({ error: error.message });
   }
 });
@@ -219,6 +257,10 @@ router.post('/:id/out-of-service', async (req, res) => {
 // Create new table (Admin/Manager only)
 router.post('/', requireAdminOrManager, async (req, res) => {
   const { table_number, capacity, status, assigned_waiter_id } = req.body;
+  const tenantId = (req as any).tenant_id;
+  if (!tenantId) {
+    return res.status(401).json({ error: 'TENANT_REQUIRED', message: 'tenant_id requis' });
+  }
 
   try {
     const tableData = {
@@ -228,10 +270,10 @@ router.post('/', requireAdminOrManager, async (req, res) => {
       assigned_waiter_id: assigned_waiter_id ? Number(assigned_waiter_id) : null
     };
 
-    const newTable = await TableService.create(tableData as any);
+    const newTable = await TableService.create(tableData as any, tenantId);
     res.status(201).json(newTable);
   } catch (error: any) {
-    console.error('[Tables] POST error:', error);
+    console.error('[Tables] POST error:', error.message);
     res.status(400).json({ error: error.message || 'Failed to create table' });
   }
 });
@@ -239,16 +281,20 @@ router.post('/', requireAdminOrManager, async (req, res) => {
 // Delete table (Admin only)
 router.delete('/:id', requireAdmin, async (req, res) => {
   const { id } = req.params;
+  const tenantId = (req as any).tenant_id;
+  if (!tenantId) {
+    return res.status(401).json({ error: 'TENANT_REQUIRED', message: 'tenant_id requis' });
+  }
 
   try {
-    const success = await TableService.delete(Number(id));
+    const success = await TableService.delete(Number(id), tenantId);
     if (success) {
       res.json({ success: true });
     } else {
       res.status(404).json({ error: 'Table not found' });
     }
   } catch (error: any) {
-    console.error('[Tables] DELETE error:', error);
+    console.error('[Tables] DELETE error:', error.message);
     res.status(400).json({ error: error.message });
   }
 });

@@ -125,9 +125,8 @@ export class SupabaseProductRepository implements IProductRepository {
   async softDelete(id: string, tenantId?: string): Promise<void> {
     let qb = this.supabase
       .from('products')
-      .update({ deleted_at: new Date().toISOString() })
-      .eq('id', id)
-      .is('deleted_at', null);
+      .delete()
+      .eq('id', id);
 
     if (tenantId) {
       qb = qb.eq('tenant_id', tenantId);

@@ -5,32 +5,24 @@ import type { Order } from '../shared/ordersStore';
 
 /**
  * Base URL compatible Node/CommonJS (tsc server) et Vite.
- * Évite `import.meta` pour ne plus avoir TS1343.
  */
 const API_BASE: string = (() => {
   const normalizeBaseUrl = (raw: string) => {
     const base = String(raw).replace(/\/$/, '');
-    // If someone configures "...onrender.com" but backend is mounted under "/api",
-    // force it to include "/api".
     if (base.endsWith('.onrender.com') || base.includes('reat-olive-api.onrender.com')) {
       return `${base}/api`;
     }
-    // If env already includes "/api", keep it.
     if (base.includes('/api')) return base;
-    // Generic hardening: if base looks like a backend root but doesn't include /api, append it.
     return `${base}/api`;
   };
 
-  // 1. Explicit VITE_API_BASE_URL always wins (set in Vercel, .env, or local overrides)
   try {
-    // @ts-ignore - safe in browser ESM (Vite). Hidden from server CommonJS tsc.
+    // @ts-ignore
     const viteEnv = (typeof import.meta !== 'undefined' ? (import.meta as any).env : undefined);
     const explicit = viteEnv?.VITE_API_BASE_URL;
     if (explicit) return normalizeBaseUrl(String(explicit));
   } catch {}
 
-  // 2. In Vite development (local `npm run dev:web` or full dev), ALWAYS use relative /api
-  //    so Vite proxy forwards to your local backend (port 3001 + SQLite).
   try {
     // @ts-ignore
     const viteEnv = (typeof import.meta !== 'undefined' ? (import.meta as any).env : undefined);
@@ -39,19 +31,61 @@ const API_BASE: string = (() => {
     }
   } catch {}
 
-  // 3. Node / build-time / older dev detection
   const p = typeof process !== 'undefined' ? process : ({} as any);
   const fromProcess = p.env?.API_BASE_URL || p.env?.VITE_API_BASE_URL;
   if (fromProcess) return normalizeBaseUrl(String(fromProcess));
 
   if (p.env?.NODE_ENV === 'development') return '/api';
 
-  // 4. Last resort ONLY for production Vercel build when no VITE_API_BASE_URL is configured:
-  //    Point to the Render backend.
-  //    Backend exposes admin endpoints under `/api/*` (tables/products/orders/expenses).
-  //    Primary: ekala-api.onrender.com (confirmed by user)
   return 'https://ekala-api.onrender.com/api';
 })();
+
+// ── JWT Token Management ──────────────────────────────────────────────────────
+
+const AUTH_STORAGE_KEY = 'ekala-auth';
+
+interface AuthPersistedState {
+  state: {
+    token: string | null;
+    user: User | null;
+    isAuthenticated: boolean;
+  };
+}
+
+function getToken(): string | null {
+  try {
+    const raw = localStorage.getItem(AUTH_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed: AuthPersistedState = JSON.parse(raw);
+    return parsed?.state?.token || null;
+  } catch {
+    return null;
+  }
+}
+
+export function setAuthToken(token: string): void {
+  try {
+    const raw = localStorage.getItem(AUTH_STORAGE_KEY);
+    if (!raw) return;
+    const parsed = JSON.parse(raw);
+    parsed.state = parsed.state || {};
+    parsed.state.token = token;
+    localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(parsed));
+  } catch {}
+}
+
+export function clearAuthToken(): void {
+  try {
+    const raw = localStorage.getItem(AUTH_STORAGE_KEY);
+    if (!raw) return;
+    const parsed = JSON.parse(raw);
+    parsed.state = parsed.state || {};
+    parsed.state.token = null;
+    localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(parsed));
+  } catch {}
+}
+
+// ── Request helper with auto-Bearer token ─────────────────────────────────────
 
 export async function request<T>(
   endpoint: string,
@@ -81,15 +115,22 @@ export async function request<T>(
     !(options.body instanceof FormData) &&
     !(options.body instanceof URLSearchParams)
   ) {
-    // Force typage: JSON.stringify retourne une string (compatible BodyInit)
     resolvedBody = JSON.stringify(options.body) as unknown as BodyInit;
   } else {
     resolvedBody = options.body as unknown as BodyInit | null | undefined;
   }
 
+  // Auto-attach JWT Bearer token if available
+  const token = getToken();
+  const authHeaders: Record<string, string> = {};
+  if (token && !options.headers?.Authorization) {
+    authHeaders['Authorization'] = `Bearer ${token}`;
+  }
+
   const config: RequestInit = {
     headers: {
       'Content-Type': 'application/json',
+      ...authHeaders,
       ...(options.role && { 'X-User-Role': options.role }),
       ...options.headers
     },
@@ -98,19 +139,31 @@ export async function request<T>(
   };
 
   try {
-    console.log(`[API] Fetching: ${url}`);
     const response = await fetch(url, config);
+
+    // If 401, clear auth state so user gets redirected to login
+    if (response.status === 401) {
+      const errorText = await response.text().catch(() => '');
+      let errorJson: any;
+      try { errorJson = JSON.parse(errorText); } catch { errorJson = {}; }
+
+      // Don't clear auth on login endpoints (they're expected to 401 on bad creds)
+      if (!endpoint.includes('/auth/login')) {
+        clearAuthToken();
+        // Dispatch a custom event so the auth store can react
+        window.dispatchEvent(new CustomEvent('auth:token-expired'));
+      }
+
+      const apiError = new Error(errorJson?.message || 'Session expirée. Veuillez vous reconnecter.');
+      (apiError as any).status = 401;
+      (apiError as any).body = errorJson;
+      throw apiError;
+    }
 
     if (!response.ok) {
       const text = await response.text().catch(() => 'No response body');
-      console.error(`API Error ${response.status} on ${endpoint}:`, text);
-
       let parsedError: any;
-      try {
-        parsedError = JSON.parse(text);
-      } catch {
-        parsedError = null;
-      }
+      try { parsedError = JSON.parse(text); } catch { parsedError = null; }
 
       let errorMessage = parsedError?.error || parsedError?.message || text || `HTTP ${response.status}`;
       
@@ -127,20 +180,27 @@ export async function request<T>(
     return response.json();
   } catch (error: any) {
     if (error.name === 'AbortError') {
-      console.log(`[API] Request aborted for ${endpoint}`);
       throw error;
     }
-    console.error(`API request failed for ${endpoint}:`, error.message);
     throw error;
   }
 }
 
 export const api = {
-  // Auth
+  // Auth — new JWT-based endpoints
   auth: {
+    loginEmail: (email: string, password: string) =>
+      request<{ token: string; user: User }>('/auth/login/email', { method: 'POST', body: { email, password } }),
+    loginPin: (pin_code: string, identity?: string, tenant_slug?: string) =>
+      request<{ token: string; user: User }>('/auth/login/pin', { method: 'POST', body: { pin_code, identity, tenant_slug } }),
+    refresh: (token: string) =>
+      request<{ token: string }>('/auth/refresh', { method: 'POST', body: { token } }),
+    me: () => request<User>('/auth/me'),
+    status: () => request('/auth/status'),
+    getTenant: (slug: string) => request(`/auth/tenants/${slug}`),
+    // Legacy PIN login (backward compatibility)
     login: (pin_code: string, identity?: string) =>
       request<User>('/auth/login', { method: 'POST', body: { pin_code, identity } }),
-    status: () => request('/auth/status')
   },
 
   // Tables
@@ -223,6 +283,7 @@ export const api = {
     getMovements: (productId?: number, params?: Record<string, string | number>) =>
       request(productId ? `/inventory/movements?product_id=${productId}` : '/inventory/movements', { params })
   },
+
   // Inventory
   inventory: {
     adjust: (productId: number, quantity: number, type: string) =>
@@ -232,6 +293,7 @@ export const api = {
     getAnalytics: () => request('/products/analytics'),
     getProductHistory: (productId: number) => request(`/products/${productId}/history`),
   },
+
   // Expenses
   expenses: {
     getAll: () => request('/expenses'),
@@ -285,26 +347,26 @@ export const api = {
       request('/sales/checkout', { method: 'POST', body: data, role }),
   },
 
-// Reports
-   reports: {
-     dailySales: (date: string) => request('/reports/daily-sales', { params: { date } }),
-     weeklySales: (start: string, end: string) => 
-       request('/reports/weekly-sales', { params: { start, end } }),
-     monthlySales: (month: string, year: string) =>
-       request('/reports/monthly-sales', { params: { month, year } }),
-     topProducts: (limit?: number) => request('/reports/top-products', { params: { limit } }),
-     lowStock: () => request('/reports/low-stock'),
-     paymentMethods: (params?: { start?: string; end?: string }) => 
-       request('/reports/payment-methods', { params }),
-     categoriesPerformance: (params?: { start?: string; end?: string }) =>
-       request('/reports/categories-performance', { params }),
-     inventoryMovements: (params?: { start?: string; end?: string; product_id?: number; limit?: number }) =>
-       request('/reports/inventory-movements', { params }),
-     summary: (params?: { start?: string; end?: string }) =>
-       request('/reports/summary', { params })
-   },
+  // Reports
+  reports: {
+    dailySales: (date: string) => request('/reports/daily-sales', { params: { date } }),
+    weeklySales: (start: string, end: string) => 
+      request('/reports/weekly-sales', { params: { start, end } }),
+    monthlySales: (month: string, year: string) =>
+      request('/reports/monthly-sales', { params: { month, year } }),
+    topProducts: (limit?: number) => request('/reports/top-products', { params: { limit } }),
+    lowStock: () => request('/reports/low-stock'),
+    paymentMethods: (params?: { start?: string; end?: string }) => 
+      request('/reports/payment-methods', { params }),
+    categoriesPerformance: (params?: { start?: string; end?: string }) =>
+      request('/reports/categories-performance', { params }),
+    inventoryMovements: (params?: { start?: string; end?: string; product_id?: number; limit?: number }) =>
+      request('/reports/inventory-movements', { params }),
+    summary: (params?: { start?: string; end?: string }) =>
+      request('/reports/summary', { params })
+  },
 
-  // Dashboard - professional unified endpoint
+  // Dashboard
   dashboard: {
     summary: () => request('/dashboard/summary')
   },

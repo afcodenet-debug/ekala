@@ -45,12 +45,13 @@ const TablesManagement = () => {
 
   const loadData = async () => {
     try {
-      const [tablesData, usersData] = await Promise.all([
+      const [tablesData, usersResp] = await Promise.all([
         api.tables.getAll(),
         api.users.getAll()
       ]);
       setTables(tablesData as Table[]);
-      setWaiters((usersData as any[]).filter((u: any) => u.role === 'waiter'));
+      const usersData = (usersResp as any)?.users ?? usersResp;
+      setWaiters(Array.isArray(usersData) ? usersData.filter((u: any) => u.role === 'waiter') : []);
     } catch (error: any) {
       useNotificationStore.getState().addNotification({
         type: 'systemError',
@@ -73,7 +74,7 @@ const TablesManagement = () => {
         setFormData({ table_number: '', capacity: 4, status: 'available', assigned_waiter_id: null });
         loadData();
       } else {
-        await api.tables.create(formData, 'admin');
+        await api.tables.create(formData);
         setShowModal(false);
         setEditingTable(null);
         setFormData({ table_number: '', capacity: 4, status: 'available', assigned_waiter_id: null });

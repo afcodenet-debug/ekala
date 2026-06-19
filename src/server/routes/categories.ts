@@ -9,6 +9,10 @@ const router = express.Router();
 
 // ── GET /api/categories ──────────────────────────────────────────────
 router.get('/', async (req, res) => {
+  const tenantId = (req as any).tenant_id;
+  if (!tenantId) {
+    return res.status(401).json({ error: 'TENANT_REQUIRED', message: 'tenant_id requis' });
+  }
   try {
     if (env.USE_SUPABASE_PRODUCTS || env.RENDER_CLOUD_MODE) {
       const supabase = createClient(env.SUPABASE_URL!, env.SUPABASE_SERVICE_ROLE_KEY!, {
@@ -17,6 +21,7 @@ router.get('/', async (req, res) => {
       const { data, error } = await supabase
         .from('categories')
         .select('id, name, description, created_at, updated_at')
+        .eq('tenant_id', tenantId)
         .order('name', { ascending: true });
 
       if (error) {
@@ -27,8 +32,8 @@ router.get('/', async (req, res) => {
     }
 
     const categories = db.prepare(
-      'SELECT id, name, description, created_at, updated_at FROM categories ORDER BY name ASC'
-    ).all();
+      'SELECT id, name, description, created_at, updated_at FROM categories WHERE tenant_id = ? ORDER BY name ASC'
+    ).all(tenantId);
     res.json(categories);
   } catch (error: any) {
     console.error('[Categories] GET error:', error.message);
@@ -51,21 +56,21 @@ router.post('/', requireRole(['admin', 'manager']), (req, res) => {
 
     const trimmedName = name.trim();
 
-    const newCategory = withOutboxTransaction(db, businessId, () => {
+    const newCategory = withOutboxTransaction(db, (req as any).tenant_id, () => {
       // Check for duplicate name (case-insensitive)
-      const existing = db.prepare('SELECT id FROM categories WHERE LOWER(name) = LOWER(?)').get(trimmedName);
+      const existing = db.prepare('SELECT id FROM categories WHERE LOWER(name) = LOWER(?) AND tenant_id = ?').get(trimmedName, (req as any).tenant_id);
       if (existing) {
         throw new Error(`La catégorie "${trimmedName}" existe déjà`);
       }
 
       const now = new Date().toISOString();
-      const result = db.prepare('INSERT INTO categories (name, description, updated_at) VALUES (?, ?, ?)').run(trimmedName, description ?? null, now);
-      const cat = db.prepare('SELECT id, name, description, created_at, updated_at FROM categories WHERE id = ?').get(result.lastInsertRowid) as any;
+      const result = db.prepare('INSERT INTO categories (name, description, updated_at, tenant_id) VALUES (?, ?, ?, ?)').run(trimmedName, description ?? null, now, (req as any).tenant_id);
+      const cat = db.prepare('SELECT id, name, description, created_at, updated_at FROM categories WHERE id = ? AND tenant_id = ?').get(result.lastInsertRowid, (req as any).tenant_id) as any;
       
       try {
         getProductSyncService().queueChangeInsideTransaction('category', 'insert', {
           ...cat,
-          tenant_id: businessId
+          tenant_id: (req as any).tenant_id
         });
       } catch (syncErr) {
         console.warn('[Sync] Could not queue category insert:', syncErr);
@@ -94,7 +99,7 @@ router.patch('/:id', requireRole(['admin', 'manager']), (req, res) => {
     const { id } = req.params;
     const { name, description } = req.body;
 
-    const updated = withOutboxTransaction(db, businessId, () => {
+    const updated = withOutboxTransaction(db, (req as any).tenant_id, () => {
       const toUpdate: Record<string, any> = {};
       if (name !== undefined) toUpdate.name = name.trim();
       if (description !== undefined) toUpdate.description = description ?? null;
@@ -105,7 +110,7 @@ router.patch('/:id', requireRole(['admin', 'manager']), (req, res) => {
 
       // Check for duplicate name when renaming
       if (toUpdate.name) {
-        const dup = db.prepare('SELECT id FROM categories WHERE LOWER(name) = LOWER(?) AND id != ?').get(toUpdate.name, id);
+        const dup = db.prepare('SELECT id FROM categories WHERE LOWER(name) = LOWER(?) AND id != ? AND tenant_id = ?').get(toUpdate.name, id, (req as any).tenant_id);
         if (dup) {
           throw new Error(`La catégorie "${toUpdate.name}" existe déjà`);
         }
@@ -118,15 +123,15 @@ router.patch('/:id', requireRole(['admin', 'manager']), (req, res) => {
       vals.push(toUpdate.updated_at);
       
       const setClause = cols.map(c => `"${c}" = ?`).join(', ');
-      db.prepare(`UPDATE categories SET ${setClause} WHERE id = ?`).run(...vals, id);
+      db.prepare(`UPDATE categories SET ${setClause} WHERE id = ? AND tenant_id = ?`).run(...vals, id, (req as any).tenant_id);
 
-      const cat = db.prepare('SELECT id, name, description, created_at, updated_at FROM categories WHERE id = ?').get(id) as any;
+      const cat = db.prepare('SELECT id, name, description, created_at, updated_at FROM categories WHERE id = ? AND tenant_id = ?').get(id, (req as any).tenant_id) as any;
       if (!cat) throw new Error('Category not found');
       
       try {
         getProductSyncService().queueChangeInsideTransaction('category', 'update', {
           ...cat,
-          tenant_id: businessId
+          tenant_id: (req as any).tenant_id
         });
       } catch (syncErr) {
         console.warn('[Sync] Could not queue category update:', syncErr);
@@ -157,29 +162,30 @@ router.delete('/:id', requireRole(['admin', 'manager']), (req, res) => {
     const categoryId = parseInt(id as string, 10);
     if (isNaN(categoryId)) return res.status(400).json({ error: 'Invalid category id' });
 
-    const ok = withOutboxTransaction(db, businessId, () => {
+    const ok = withOutboxTransaction(db, (req as any).tenant_id, () => {
       // Prevent deletion of the last remaining category
-      const count = db.prepare('SELECT COUNT(*) AS c FROM categories').get() as { c: number };
+      const count = db.prepare('SELECT COUNT(*) AS c FROM categories WHERE tenant_id = ?').get((req as any).tenant_id) as { c: number };
       if (count.c <= 1) throw new Error('Cannot delete the last remaining category');
 
       // Find fallback
-      const fallback = db.prepare('SELECT id FROM categories WHERE id != ? ORDER BY id ASC LIMIT 1').get(categoryId) as { id: number } | undefined;
+      const fallback = db.prepare('SELECT id FROM categories WHERE id != ? AND tenant_id = ? ORDER BY id ASC LIMIT 1').get(categoryId, (req as any).tenant_id) as { id: number } | undefined;
       if (!fallback) throw new Error('No fallback category available');
 
-      // Reassign products locally
-      const reassignResult = db.prepare('UPDATE products SET category_id = ?, updated_at = CURRENT_TIMESTAMP WHERE category_id = ?').run(fallback.id, categoryId);
+      // Get remote_id BEFORE deletion (needed for Supabase sync)
+      const catToDelete = db.prepare('SELECT id, remote_id FROM categories WHERE id = ? AND tenant_id = ?').get(categoryId, (req as any).tenant_id) as { id: number, remote_id: number | null } | undefined;
       
-      // Queue product updates for sync if any were reassigned
-      if (reassignResult.changes > 0) {
-        // Ideally we'd queue every product but for simplicity we'll rely on next full resync or just update the ones we know
-        // Better: let's queue the category deletion which Supabase should handle (cascading or manual)
-      }
+      // Reassign products locally
+      const reassignResult = db.prepare('UPDATE products SET category_id = ?, updated_at = CURRENT_TIMESTAMP WHERE category_id = ? AND tenant_id = ?').run(fallback.id, categoryId, (req as any).tenant_id);
 
       // Delete category locally
-      const result = db.prepare('DELETE FROM categories WHERE id = ?').run(categoryId);
+      const result = db.prepare('DELETE FROM categories WHERE id = ? AND tenant_id = ?').run(categoryId, (req as any).tenant_id);
       if (result.changes > 0) {
         try {
-          getProductSyncService().queueChangeInsideTransaction('category', 'delete', { id: categoryId, tenant_id: businessId });
+          getProductSyncService().queueChangeInsideTransaction('category', 'delete', {
+            id: categoryId,
+            remote_id: catToDelete?.remote_id || null,
+            tenant_id: (req as any).tenant_id
+          });
         } catch (syncErr) {
           console.warn('[Sync] Could not queue category deletion:', syncErr);
         }

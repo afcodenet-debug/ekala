@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { api } from '../lib/api-client';
 import { useProductStore } from '../features/products/hooks/useProductStore';
+import { useTableStore } from './useTableStore';
 import { ReceiptData } from '../utils/receiptPrinter';
 import { APP_NAME } from '../lib/app-config';
 
@@ -221,9 +222,10 @@ export const usePOSStore = create<POSStore>((set, get) => ({
     set({ isProcessing: true, error: null });
 
     try {
+      const selectedTable = useTableStore.getState().tables.find(t => t.id === selectedTableId);
       const orderData = {
         table_id: selectedTableId,
-        waiter_id: authUser?.id || 1,
+        waiter_id: selectedTable?.assigned_waiter_id || authUser?.id || 1,
         items: cart,
         total: cart.reduce((sum, item) => sum + (item.price * item.quantity), 0),
         status: 'pending' as const
@@ -299,6 +301,9 @@ export const usePOSStore = create<POSStore>((set, get) => ({
       const discount = result.partial ? Math.round((subtotal / (get().cart.reduce((sum, item) => sum + (item.price * item.quantity), 0) || 1)) * (currentOrder.discount || 0)) : (currentOrder.discount || 0);
       const tax = result.partial ? Math.round((subtotal / (get().cart.reduce((sum, item) => sum + (item.price * item.quantity), 0) || 1)) * (currentOrder.tax || 0)) : (currentOrder.tax || 0);
 
+      const { tables } = useTableStore.getState();
+      const selectedTable = tables.find(t => t.id === currentOrder.table_id);
+
       const receiptData = {
         business: {
           name: APP_NAME,
@@ -308,7 +313,7 @@ export const usePOSStore = create<POSStore>((set, get) => ({
         invoice: {
           number: result.invoiceNumber || `INV-${Date.now()}`,
           date: new Date().toISOString(),
-          table: `Table ${currentOrder.table_id || 'N/A'}`,
+          table: selectedTable ? `Table ${selectedTable.table_number}` : `Table ${currentOrder.table_id || 'N/A'}`,
           waiter: (currentOrder as any).waiter_name || authUser?.full_name || 'Staff',
           cashier: authUser?.full_name || 'Staff'
         },

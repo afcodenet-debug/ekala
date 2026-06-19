@@ -51,6 +51,17 @@ export class ProductSyncService {
     this.dlq = new DeadLetterQueue(db);
   }
 
+  private normalizeTenantId(tenantIdRaw: any): number | null {
+    if (tenantIdRaw === undefined || tenantIdRaw === null) return null;
+    const asStr = String(tenantIdRaw).trim();
+    if (asStr === '') return null;
+
+    const num = Number(asStr);
+    if (!Number.isFinite(num)) return null;
+
+    return Math.trunc(num);
+  }
+
   private getRemoteId(table: string, localId: any): number | null {
     if (!localId) return null;
     try {
@@ -99,12 +110,13 @@ export class ProductSyncService {
     const id = newId();
     const payload = JSON.stringify(record);
     const version = (record as any).version || 1;
-    const tenantId = (record as any).tenant_id !== undefined ? String((record as any).tenant_id) : null;
+    const tIdRaw = (record as any).tenant_id !== undefined ? (record as any).tenant_id : null;
+    const tenantId = this.normalizeTenantId(tIdRaw);
 
     this.db.prepare(`
       INSERT INTO sync_outbox (id, entity, operation, record_id, payload, version, tenant_id)
       VALUES (?, ?, ?, ?, ?, ?, ?)
-    `).run(id, entity, operation, record.id, payload, version, tenantId);
+    `).run(id, entity, operation, String(record.id), payload, version, tenantId);
 
     console.log(`[Sync] ${entity} ${operation} queued for ${record.id}`);
   }
@@ -113,12 +125,13 @@ export class ProductSyncService {
     const id = newId();
     const payload = JSON.stringify(record);
     const version = (record as any).version || 1;
-    const tenantId = (record as any).tenant_id !== undefined ? String((record as any).tenant_id) : null;
+    const tIdRaw = (record as any).tenant_id !== undefined ? (record as any).tenant_id : null;
+    const tenantId = this.normalizeTenantId(tIdRaw);
 
     this.db.prepare(`
       INSERT INTO sync_outbox (id, entity, operation, record_id, payload, version, tenant_id)
       VALUES (?, ?, ?, ?, ?, ?, ?)
-    `).run(id, entity, operation, record.id, payload, version, tenantId);
+    `).run(id, entity, operation, String(record.id), payload, version, tenantId);
   }
 
   /* ------------------------------------------------------------------ */
@@ -292,28 +305,35 @@ export class ProductSyncService {
     }
 
     if (entity === 'product') {
-      const cols = ['name', 'stock_quantity', 'is_available', 'category_id', 'barcode', 'description', 'unit', 'image_url', 'minimum_stock', 'sku', 'status', 'cost_method', 'archived_at', 'tenant_id', 'is_featured', 'sort_order', 'metadata', 'version'];
+      const cols = ['name', 'stock_quantity', 'is_available', 'category_id', 'barcode', 'description', 'unit', 'image_url', 'minimum_stock', 'sku', 'status', 'cost_method', 'archived_at', 'tenant_id', 'is_featured', 'sort_order', 'metadata', 'version', 'created_by', 'updated_by'];
       cols.forEach(c => {
         if (payload[c] !== undefined) safeUpdate[c] = payload[c];
       });
 
-      // Mappage vers les colonnes Supabase (selling_price / buying_price sont les noms réels pour ce client)
-      // On garde 'price' et 'cost_price' en fallbacks au cas où
-      if (payload.selling_price !== undefined) safeUpdate.selling_price = payload.selling_price;
-      if (payload.price !== undefined && safeUpdate.selling_price === undefined) safeUpdate.selling_price = payload.price;
+      // Mappage des prix (Supabase utilise selling_price/buying_price ET price/cost_price)
+      // On s'assure que si selling_price est présent, on l'utilise pour remplir price si price est absent ou 0
+      const sPrice = payload.selling_price ?? payload.price;
+      const bPrice = payload.buying_price ?? payload.cost_price;
       
-      if (payload.buying_price !== undefined) safeUpdate.buying_price = payload.buying_price;
-      if (payload.cost_price !== undefined && safeUpdate.buying_price === undefined) safeUpdate.buying_price = payload.cost_price;
+      if (sPrice !== undefined && sPrice !== null) {
+        safeUpdate.selling_price = sPrice;
+        safeUpdate.price = sPrice;
+      }
+      if (bPrice !== undefined && bPrice !== null) {
+        safeUpdate.buying_price = bPrice;
+        safeUpdate.cost_price = bPrice;
+      }
 
       // Map minimum_stock <-> low_stock_threshold (bidirectionnel)
+      // Supabase veut EXCLUSIVEMENT minimum_stock
       if (payload.minimum_stock !== undefined) {
-        safeUpdate.low_stock_threshold = payload.minimum_stock;
-        delete safeUpdate.minimum_stock;
-      }
-      if (payload.low_stock_threshold !== undefined && safeUpdate.minimum_stock === undefined) {
+        safeUpdate.minimum_stock = payload.minimum_stock;
+      } else if (payload.low_stock_threshold !== undefined) {
         safeUpdate.minimum_stock = payload.low_stock_threshold;
-        delete safeUpdate.low_stock_threshold;
       }
+      
+      // Sécurité: ne JAMAIS envoyer low_stock_threshold à Supabase
+      delete (safeUpdate as any).low_stock_threshold;
 
       // Map category_id
       if (safeUpdate.category_id) {
@@ -321,10 +341,21 @@ export class ProductSyncService {
         if (remoteCatId) {
           safeUpdate.category_id = remoteCatId;
         } else {
-          console.warn(`[Sync] Category ${safeUpdate.category_id} not yet synced for product ${recordId}, falling back to local ID`);
-          // On laisse l'ID local en espérant qu'il corresponde si les IDs sont sync ou on l'enlève pour éviter FK error
+          console.warn(`[Sync] Category ${safeUpdate.category_id} not yet synced for product ${recordId}, removing to avoid FK error`);
           delete safeUpdate.category_id;
         }
+      }
+
+      // Map created_by / updated_by
+      if (safeUpdate.created_by) {
+        const remoteUserId = this.getRemoteId('users', safeUpdate.created_by);
+        if (remoteUserId) safeUpdate.created_by = remoteUserId;
+        else delete safeUpdate.created_by;
+      }
+      if (safeUpdate.updated_by) {
+        const remoteUserId = this.getRemoteId('users', safeUpdate.updated_by);
+        if (remoteUserId) safeUpdate.updated_by = remoteUserId;
+        else delete safeUpdate.updated_by;
       }
 
       if (!safeUpdate.id || !safeUpdate.name) {
@@ -947,7 +978,8 @@ export class ProductSyncService {
       return [...common,
         'name', 'stock_quantity', 'selling_price', 'buying_price', 'is_available',
         'category_id', 'barcode', 'description', 'unit', 'image_url',
-        'minimum_stock', 'low_stock_threshold', 'sku', 'status', 'cost_method', 
+        'minimum_stock', 'sku', 'status', 'cost_method',
+ 
         'archived_at', 'price', 'deleted_at', 'is_featured', 'sort_order', 'metadata'
       ];
     }

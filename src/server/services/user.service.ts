@@ -77,7 +77,15 @@ export interface UserUpdateInput {
  * read source for the local app; the SyncOrchestrator keeps it fresh).
  */
 export class UserService {
-  static async getAll(): Promise<User[]> {
+  /**
+   * Get all users for a specific tenant.
+   * @param tenantId - The tenant ID (required, must be provided by authenticated request)
+   */
+  static async getAll(tenantId: number): Promise<User[]> {
+    if (!tenantId) {
+      throw new Error('tenantId is required');
+    }
+
     if (!db) {
       // Cloud mode: read from Supabase directly
       if (!env.SUPABASE_URL || !env.SUPABASE_SERVICE_ROLE_KEY) {
@@ -90,6 +98,7 @@ export class UserService {
         const { data, error } = await supabase
           .from('users')
           .select('id, full_name, username, phone, role, email, pin_code, is_active, created_at, password_hash, has_setup_pin')
+          .eq('tenant_id', tenantId)
           .order('full_name', { ascending: true });
         if (error) throw error;
         return (data || []) as User[];
@@ -106,8 +115,9 @@ export class UserService {
                password_hash, has_setup_pin, remote_id, tenant_id,
                created_at, updated_at
         FROM users
+        WHERE tenant_id = ?
         ORDER BY full_name ASC
-      `).all() as User[];
+      `).all(tenantId) as User[];
       return rows;
     } catch (error) {
       console.error('[UserService] getAll error:', error);
@@ -124,10 +134,23 @@ export class UserService {
    *    SyncOrchestrator pushes it to Supabase. The local write is durable,
    *    the Supabase write is retried automatically.
    */
-  static async create(input: UserCreateInput): Promise<User> {
-    const tenantId = Number(process.env.SYNC_TENANT_ID || '5');
+/**
+    * Create a new user for a specific tenant.
+    * @param tenantId - The tenant ID (required)
+    * @param input - User creation data
+    * @param requesterRole - The role of the user making the request (for owner-only restrictions)
+    */
+static async create(tenantId: number, input: UserCreateInput, requesterRole?: UserRole): Promise<User> {
+     if (!tenantId) {
+       throw new Error('tenantId is required');
+     }
 
-    if (!db || env.RENDER_CLOUD_MODE) {
+     // Security: Only owners can create other owners
+     if (input.role === 'owner' && requesterRole !== 'owner') {
+       throw new Error('Seuls les utilisateurs ayant le rôle "owner" peuvent créer des utilisateurs avec ce rôle');
+     }
+
+     if (!db || env.RENDER_CLOUD_MODE) {
       // ── Cloud mode: direct Supabase write ──
       if (!env.SUPABASE_URL || !env.SUPABASE_SERVICE_ROLE_KEY) {
         throw new Error('Supabase not configured');
@@ -141,6 +164,10 @@ export class UserService {
             ? input.email.trim().toLowerCase()
             : null;
 
+        const bcrypt = require('bcryptjs');
+        const passwordHash = input.password_hash || bcrypt.hashSync('admin123', 10);
+        const hashedPin = input.pin_code ? bcrypt.hashSync(String(input.pin_code), 10) : null;
+
         const { data, error } = await supabase
           .from('users')
           .upsert([{
@@ -148,10 +175,10 @@ export class UserService {
             username: input.username,
             phone: input.phone ?? null,
             email: normalizedEmail,
-            pin_code: input.pin_code ?? null,
+            pin_code: hashedPin,
             role: input.role,
             is_active: (input.is_active ?? 1) === 1,
-            password_hash: input.password_hash ?? null,
+            password_hash: passwordHash,
             has_setup_pin: (input.has_setup_pin ?? 0) === 1,
             tenant_id: tenantId,
             updated_at: new Date().toISOString(),
@@ -177,15 +204,28 @@ export class UserService {
     // ── Local mode: SQLite + outbox ──
     try {
       return withOutboxTransaction(db, String(tenantId), () => {
-        const existing = db.prepare('SELECT id FROM users WHERE username = ?').get(input.username);
+        const existing = db.prepare('SELECT id FROM users WHERE username = ? AND tenant_id = ?').get(input.username, tenantId);
         if (existing) {
           throw new Error(`Username "${input.username}" existe déjà.`);
+        }
+
+        // Check email uniqueness per tenant
+        if (input.email && input.email.trim().length > 0) {
+          const normalizedEmail = input.email.trim().toLowerCase();
+          const existingEmail = db.prepare('SELECT id FROM users WHERE email = ? AND tenant_id = ?').get(normalizedEmail, tenantId);
+          if (existingEmail) {
+            throw new Error(`L'email "${normalizedEmail}" existe déjà pour ce locataire.`);
+          }
         }
 
         const normalizedEmail =
           typeof input.email === 'string' && input.email.trim().length > 0
             ? input.email.trim().toLowerCase()
             : null;
+
+        const bcrypt = require('bcryptjs');
+        const passwordHash = input.password_hash || bcrypt.hashSync('admin123', 10);
+        const hashedPin = input.pin_code ? bcrypt.hashSync(String(input.pin_code), 10) : null;
 
         const now = new Date().toISOString();
         const result = db.prepare(`
@@ -199,11 +239,11 @@ export class UserService {
           input.full_name,
           input.username,
           input.phone ?? null,
-          input.pin_code ?? null,
+          hashedPin,
           input.role,
           normalizedEmail,
           input.is_active ?? 1,
-          input.password_hash ?? null,
+          passwordHash,
           input.has_setup_pin ?? 0,
           tenantId,
           now,
@@ -214,7 +254,7 @@ export class UserService {
           throw new Error('Échec de la création de l\'utilisateur en local');
         }
 
-        const newUser = db.prepare('SELECT * FROM users WHERE id = ?').get(Number(result.lastInsertRowid)) as User;
+        const newUser = db.prepare('SELECT * FROM users WHERE id = ? AND tenant_id = ?').get(Number(result.lastInsertRowid), tenantId) as User;
         if (!newUser) throw new Error('Échec de récupération de l\'utilisateur créé');
 
         // Queue the change for Supabase push via the SyncOrchestrator.
@@ -241,10 +281,24 @@ export class UserService {
    * Update an existing user.
    * Same dual-mode pattern as `create()`.
    */
-  static async update(id: number, updates: UserUpdateInput): Promise<User> {
-    const tenantId = Number(process.env.SYNC_TENANT_ID || '5');
+/**
+    * Update an existing user for a specific tenant.
+    * @param tenantId - The tenant ID (required)
+    * @param id - User ID to update
+    * @param updates - Fields to update
+    * @param requesterRole - The role of the user making the request (for owner-only restrictions)
+    */
+static async update(tenantId: number, id: number, updates: UserUpdateInput, requesterRole?: UserRole): Promise<User> {
+     if (!tenantId) {
+       throw new Error('tenantId is required');
+     }
 
-    if (!db || env.RENDER_CLOUD_MODE) {
+     // Security: Only owners can update a user to owner role
+     if (updates.role === 'owner' && requesterRole !== 'owner') {
+       throw new Error('Seuls les utilisateurs ayant le rôle "owner" peuvent attribuer le rôle "owner"');
+     }
+
+     if (!db || env.RENDER_CLOUD_MODE) {
       if (!env.SUPABASE_URL || !env.SUPABASE_SERVICE_ROLE_KEY) {
         throw new Error('Supabase not configured');
       }
@@ -262,7 +316,15 @@ export class UserService {
               ? updates.email.trim().toLowerCase()
               : null;
         }
-        if (updates.pin_code !== undefined) payload.pin_code = updates.pin_code;
+        if (updates.pin_code !== undefined) {
+          const bcrypt = require('bcryptjs');
+          let hashedPin = updates.pin_code;
+          // Only hash if it's not already a bcrypt hash
+          if (hashedPin && !hashedPin.startsWith('$2')) {
+            hashedPin = bcrypt.hashSync(String(hashedPin), 10);
+          }
+          payload.pin_code = hashedPin;
+        }
         if (updates.role !== undefined) payload.role = updates.role;
         if (updates.is_active !== undefined) payload.is_active = updates.is_active === 1;
         if (updates.password_hash !== undefined) payload.password_hash = updates.password_hash;
@@ -275,6 +337,7 @@ export class UserService {
           .from('users')
           .update(payload)
           .eq('id', id)
+          .eq('tenant_id', tenantId)
           .select()
           .single();
 
@@ -295,18 +358,18 @@ export class UserService {
     // ── Local mode: SQLite + outbox ──
     try {
       return withOutboxTransaction(db, String(tenantId), () => {
-        const existing = db.prepare('SELECT * FROM users WHERE id = ?').get(id) as User | undefined;
+        const existing = db.prepare('SELECT * FROM users WHERE id = ? AND tenant_id = ?').get(id, tenantId) as User | undefined;
         if (!existing) throw new Error('User not found');
 
         // Uniqueness checks
         if (updates.username && updates.username !== existing.username) {
-          const dupUsername = db.prepare('SELECT id FROM users WHERE username = ? AND id != ?').get(updates.username, id);
+          const dupUsername = db.prepare('SELECT id FROM users WHERE username = ? AND id != ? AND tenant_id = ?').get(updates.username, id, tenantId);
           if (dupUsername) throw new Error(`Username "${updates.username}" est déjà utilisé.`);
         }
         if (updates.email !== undefined && updates.email !== null) {
           const normalizedEmail = String(updates.email).trim().toLowerCase();
           if (normalizedEmail && normalizedEmail !== (existing.email || '').toLowerCase()) {
-            const dupEmail = db.prepare('SELECT id FROM users WHERE email = ? AND id != ?').get(normalizedEmail, id);
+            const dupEmail = db.prepare('SELECT id FROM users WHERE email = ? AND id != ? AND tenant_id = ?').get(normalizedEmail, id, tenantId);
             if (dupEmail) throw new Error('Cet email est déjà utilisé par un autre utilisateur.');
           }
         }
@@ -332,7 +395,15 @@ export class UserService {
               : null
           );
         }
-        setField('pin_code', updates.pin_code);
+        if (updates.pin_code !== undefined) {
+          const bcrypt = require('bcryptjs');
+          let hashedPin = updates.pin_code;
+          // Only hash if it's not already a bcrypt hash
+          if (hashedPin && !hashedPin.startsWith('$2')) {
+            hashedPin = bcrypt.hashSync(String(hashedPin), 10);
+          }
+          setField('pin_code', hashedPin);
+        }
         setField('role', updates.role);
         setField('is_active', updates.is_active);
         setField('password_hash', updates.password_hash);
@@ -344,11 +415,14 @@ export class UserService {
 
         updateFields.push('updated_at = ?');
         values.push(new Date().toISOString());
+        
+        // Add ID and tenant_id to WHERE
         values.push(id);
+        values.push(tenantId);
 
-        db.prepare(`UPDATE users SET ${updateFields.join(', ')} WHERE id = ?`).run(...values);
+        db.prepare(`UPDATE users SET ${updateFields.join(', ')} WHERE id = ? AND tenant_id = ?`).run(...values);
 
-        const updated = db.prepare('SELECT * FROM users WHERE id = ?').get(id) as User;
+        const updated = db.prepare('SELECT * FROM users WHERE id = ? AND tenant_id = ?').get(id, tenantId) as User;
         if (!updated) throw new Error('Failed to retrieve updated user');
 
         try {
@@ -376,8 +450,15 @@ export class UserService {
    * behavior in `routes/users.ts`); the outbox entry will cause a hard delete
    * in Supabase as well.
    */
-  static async delete(id: number): Promise<boolean> {
-    const tenantId = Number(process.env.SYNC_TENANT_ID || '5');
+  /**
+   * Delete a user for a specific tenant.
+   * @param tenantId - The tenant ID (required)
+   * @param id - User ID to delete
+   */
+  static async delete(tenantId: number, id: number): Promise<boolean> {
+    if (!tenantId) {
+      throw new Error('tenantId is required');
+    }
 
     if (!db || env.RENDER_CLOUD_MODE) {
       if (!env.SUPABASE_URL || !env.SUPABASE_SERVICE_ROLE_KEY) {
@@ -392,13 +473,14 @@ export class UserService {
           .from('orders')
           .select('*', { count: 'exact', head: true })
           .eq('waiter_id', id)
+          .eq('tenant_id', tenantId)
           .in('status', ['pending', 'confirmed', 'preparing', 'ready']);
         if (countErr) throw countErr;
         if (count && count > 0) {
           throw new Error('Cannot delete user with active orders');
         }
 
-        const { error } = await supabase.from('users').delete().eq('id', id);
+        const { error } = await supabase.from('users').delete().eq('id', id).eq('tenant_id', tenantId);
         if (error) throw error;
         return true;
       } catch (err: any) {
@@ -410,26 +492,26 @@ export class UserService {
     // ── Local mode: SQLite + outbox ──
     try {
       return withOutboxTransaction(db, String(tenantId), () => {
-        const user = db.prepare('SELECT id FROM users WHERE id = ?').get(id) as { id: number } | undefined;
+        const user = db.prepare('SELECT id, remote_id FROM users WHERE id = ? AND tenant_id = ?').get(id, tenantId) as { id: number, remote_id: number | null } | undefined;
         if (!user) return false;
 
         const activeOrders = db.prepare(`
           SELECT COUNT(*) as count
           FROM orders
-          WHERE waiter_id = ? AND status NOT IN ('paid', 'cancelled')
-        `).get(id) as { count: number };
+          WHERE waiter_id = ? AND tenant_id = ? AND status NOT IN ('paid', 'cancelled')
+        `).get(id, tenantId) as { count: number };
 
         if (activeOrders.count > 0) {
           throw new Error('Cannot delete user with active orders');
         }
 
-        const result = db.prepare('DELETE FROM users WHERE id = ?').run(id);
+        const result = db.prepare('DELETE FROM users WHERE id = ? AND tenant_id = ?').run(id, tenantId);
 
         if (result.changes > 0) {
           try {
             const userTenantService = getUserTenantSyncService();
             if (userTenantService) {
-              userTenantService.queueUserChange('delete', { id });
+              userTenantService.queueUserChange('delete', { id: user.id, remote_id: user.remote_id });
             } else {
               console.warn('[UserService] UserTenantSyncService not initialized — user deletion will not be pushed to Supabase.');
             }

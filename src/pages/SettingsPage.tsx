@@ -85,7 +85,7 @@ export const SettingsPage: React.FC = () => {
   const [users, setUsers] = useState<any[]>([]);
 
 
-  const canManageSettings = user?.role === 'admin' || user?.role === 'manager';
+  const canManageSettings = user?.role === 'owner' || user?.role === 'admin' || user?.role === 'manager';
 
   useEffect(() => {
     if (canManageSettings) {
@@ -147,7 +147,7 @@ export const SettingsPage: React.FC = () => {
     setLocalRates(prev => ({ ...prev, [curr]: rate }));
   };
 
-  const isAdmin = user?.role === 'admin';
+  const isAdmin = user?.role === 'owner' || user?.role === 'admin';
 
   const tabList = [
     { id: 'regional', label: t('settings.tabs.regional'), icon: Globe },

@@ -1,8 +1,7 @@
 // src/sync/user-tenant-sync.service.ts
 // Synchronisation professionnelle des utilisateurs et tenants
-// Faille #2 résolue : curseurs persistants
-// Faille #7 résolue : dead-letter queue
-// Faille #6 résolue : pas de tenant_id en dur
+// VERSION AMÉLIORÉE: Gestion atomique des dépendances et détection automatique
+// =============================================================================
 
 import type Database from 'better-sqlite3';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
@@ -52,11 +51,12 @@ export class UserTenantSyncService {
     const id = newId();
     const payload = JSON.stringify(record);
     const version = (record as any).version || 1;
+    const tenantId = (record as any).tenant_id !== undefined ? String((record as any).tenant_id) : null;
 
     this.db.prepare(`
-      INSERT INTO sync_outbox (id, entity, operation, record_id, payload, version)
-      VALUES (?, ?, ?, ?, ?, ?)
-    `).run(id, entity, operation, record.id, payload, version);
+      INSERT INTO sync_outbox (id, entity, operation, record_id, payload, version, tenant_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(id, entity, operation, record.id, payload, version, tenantId);
 
     console.log(`[Sync] ${entity} ${operation} queued for ${record.id}`);
   }
@@ -94,27 +94,27 @@ export class UserTenantSyncService {
     this.queueChange('tenant_user', operation, tenantUser);
   }
 
-  async syncNow(tenantId: string): Promise<{ pushed: number; pulled: number; errors: number }> {
+  async syncNow(tenantId: string): Promise<{ pushed: number; pulled: number; errors: number; fixed: number }> {
     if (this.isRunning) {
       console.log('[Sync] Sync already in progress');
-      return { pushed: 0, pulled: 0, errors: 0 };
+      return { pushed: 0, pulled: 0, errors: 0, fixed: 0 };
     }
 
     this.isRunning = true;
-    let pushed = 0, pulled = 0, errors = 0;
+    let pushed = 0, pulled = 0, errors = 0, fixed = 0;
 
     try {
-      // Users : Push puis Pull
-      pushed += await this.pushPendingByEntity('user', tenantId);
-      pulled += await this.pullFromSupabase('user', tenantId);
+      // ⭐ ORDRE CRITIQUE: tenants -> users -> tenant_users -> autres
+      const syncOrder = ['tenant', 'user', 'tenant_user'];
+      
+      for (const entity of syncOrder) {
+        pushed += await this.pushPendingByEntity(entity, tenantId);
+        pulled += await this.pullFromSupabase(entity, tenantId);
+      }
 
-      // Tenants : Push puis Pull
-      pushed += await this.pushPendingByEntity('tenant', tenantId);
-      pulled += await this.pullFromSupabase('tenant', tenantId);
-
-      // Tenant_Users : Push puis Pull
-      pushed += await this.pushPendingByEntity('tenant_user', tenantId);
-      pulled += await this.pullFromSupabase('tenant_user', tenantId);
+      // Vérifier et réparer l'intégrité après synchronisation
+      const integrityResult = await this.ensureDataIntegrity(tenantId);
+      fixed += integrityResult.fixed;
 
     } catch (err: any) {
       console.error('[Sync] User/Tenant sync cycle failed:', err);
@@ -123,7 +123,7 @@ export class UserTenantSyncService {
       this.isRunning = false;
     }
 
-    return { pushed, pulled, errors };
+    return { pushed, pulled, errors, fixed };
   }
 
   async pushPendingByEntity(entity: string, tenantId: string): Promise<number> {
@@ -185,8 +185,12 @@ export class UserTenantSyncService {
   ) {
     const safeUpdate: Record<string, any> = { updated_at: new Date().toISOString() };
 
-    if (payload.remote_id) {
-      safeUpdate.id = Number(payload.remote_id);
+    // Récupérer le remote_id le plus frais depuis la DB locale (Faille de doublon résolue)
+    const currentRemoteId = this.getLocalId(table, recordId);
+    const effectiveRemoteId = payload.remote_id || currentRemoteId;
+
+    if (effectiveRemoteId) {
+      safeUpdate.id = effectiveRemoteId;
     } else if (item.operation === 'update') {
       safeUpdate.id = recordId;
     }
@@ -214,7 +218,15 @@ export class UserTenantSyncService {
 
     if (!payload.remote_id && item.operation === 'insert') {
       delete safeUpdate.id;
-      if (tenantId && entity !== 'tenant') safeUpdate.tenant_id = Number(tenantId);
+      if (tenantId && entity !== 'tenant') {
+        // Vérifier si le tenant existe en remote avant de push
+        const { data: remoteTenant } = await this.supabase.from('tenants').select('id').eq('id', tenantId).maybeSingle();
+        if (!remoteTenant && entity !== 'tenant') {
+          console.warn(`[Sync] Skipping ${entity} push: Tenant #${tenantId} does not exist in Supabase.`);
+          return;
+        }
+        safeUpdate.tenant_id = tenantId;
+      }
     }
 
     const { data, error } = await this.supabase
@@ -234,24 +246,48 @@ export class UserTenantSyncService {
     const table = this.ENTITY_TABLE[entity] || `${entity}s`;
     const since = this.cursor.getOrEpoch(entity);
 
-    const { data, error } = await this.supabase
+    let query = this.supabase
       .from(table)
       .select('*')
-      .gt('updated_at', since)
+      .or(`updated_at.gt.${since},created_at.gt.${since}`)
       .order('updated_at', { ascending: true });
+
+    // Filtrage par tenant
+    if (entity === 'tenant') {
+      query = query.eq('id', tenantId);
+    } else {
+      query = query.eq('tenant_id', tenantId);
+    }
+
+    const { data, error } = await query;
 
     if (error) {
       console.error(`[Sync] Failed to pull ${entity} from Supabase:`, error.message);
       return 0;
     }
 
-    if (!data || data.length === 0) return 0;
+    if (!data || data.length === 0) {
+      if (entity === 'tenant') {
+        console.warn(`[Sync] Tenant #${tenantId} NOT FOUND in Supabase. Bidirectional sync will be limited.`);
+      }
+      // ⭐ CORRECTION: Vérifier les dépendances manquantes pour tenant_users
+      if (entity === 'tenant_user') {
+        await this.ensureTenantUserDependencies(tenantId);
+      }
+      return 0;
+    }
 
     let applied = 0;
     const tx = this.db.transaction((rows: any[]) => {
       for (const remote of rows) {
-        const remoteTenantId = remote.tenant_id;
-        if (remoteTenantId && String(remoteTenantId) !== String(tenantId) && String(remoteTenantId) !== '5') continue;
+        // Scoping: Pour les users et tenant_users, on ne prend que ceux du tenant actuel (ou legacy 5)
+        if (entity !== 'tenant') {
+          const remoteTenantId = remote.tenant_id;
+          if (remoteTenantId && String(remoteTenantId) !== String(tenantId) && String(remoteTenantId) !== '5') continue;
+        } else {
+          // Pour l'entité tenant elle-même, on ne prend que si c'est notre tenant
+          if (String(remote.id) !== String(tenantId)) continue;
+        }
 
         const remoteId = Number(remote?.id);
         if (isNaN(remoteId)) continue;
@@ -266,20 +302,27 @@ export class UserTenantSyncService {
 
         const fields: Record<string, any> = {
           remote_id: remoteId,
-          tenant_id: remote.tenant_id,
           updated_at: remote.updated_at,
           created_at: remote.created_at,
         };
 
+        // On n'ajoute tenant_id que si l'entité n'est pas 'tenant'
+        if (entity !== 'tenant' && remote.tenant_id !== undefined) {
+          fields.tenant_id = remote.tenant_id;
+        }
+
         cols.forEach(c => { if (remote[c] !== undefined) fields[c] = remote[c]; });
 
-        // Map remote FK to local IDs
+        // ⭐ GESTION SPÉCIALE POUR tenant_users
         if (entity === 'tenant_user') {
           const localTenantId = this.getLocalId('tenants', remote.tenant_id);
           const localUserId = this.getLocalId('users', remote.user_id);
 
           if (!localTenantId || !localUserId) {
             console.warn(`[Sync] Skipping tenant_user ${remoteId}: Missing local tenant (${remote.tenant_id} -> ${localTenantId}) or user (${remote.user_id} -> ${localUserId})`);
+            
+            // ⭐ CRÉER LES DÉPENDANCES SI ELLES MANQUENT
+            this.createMissingDependencies(remote, entity);
             continue;
           }
           fields.tenant_id = localTenantId;
@@ -287,15 +330,29 @@ export class UserTenantSyncService {
         }
 
         // Stratégie fiable : remote_id d'abord
-        const byRemote = this.db.prepare(
+        let local = this.db.prepare(
           `SELECT id, updated_at FROM ${table} WHERE remote_id = ?`
         ).get(remoteId) as { id: number; updated_at: string } | undefined;
 
-        const byLocalId = !byRemote ? this.db.prepare(
-          `SELECT id, updated_at FROM ${table} WHERE id = ?`
-        ).get(remoteId) as { id: number; updated_at: string } | undefined : null;
+        // Fallback 1: par ID direct (si migration manuelle)
+        if (!local) {
+          local = this.db.prepare(
+            `SELECT id, updated_at FROM ${table} WHERE id = ?`
+          ).get(remoteId) as { id: number; updated_at: string } | undefined;
+        }
 
-        const local = byRemote || byLocalId;
+        // Fallback 2: par Clé Naturelle (Natural Key Matching) - Évite les doublons
+        if (!local) {
+          if (entity === 'user' && remote.username) {
+            local = this.db.prepare(
+              `SELECT id, updated_at FROM users WHERE username = ?`
+            ).get(remote.username) as { id: number; updated_at: string } | undefined;
+          } else if (entity === 'tenant' && remote.slug) {
+            local = this.db.prepare(
+              `SELECT id, updated_at FROM tenants WHERE slug = ?`
+            ).get(remote.slug) as { id: number; updated_at: string } | undefined;
+          }
+        }
 
         const remoteUpdatedAt = new Date(remote.updated_at);
         const localUpdatedAt = local?.updated_at ? new Date(local.updated_at) : null;
@@ -380,13 +437,202 @@ export class UserTenantSyncService {
 
     tx(data);
 
-    // Curseur persistant (Faille #2 résolue)
+    // Curseur persistant
     if (data && data.length > 0) {
       const lastUpdatedAt = data[data.length - 1].updated_at;
       this.cursor.set(entity, lastUpdatedAt instanceof Date ? lastUpdatedAt.toISOString() : String(lastUpdatedAt || ''));
     }
 
     return applied;
+  }
+
+  /**
+   * Crée les dépendances manquantes pour une entité tenant_user
+   */
+  private createMissingDependencies(remote: any, entity: string) {
+    if (entity === 'tenant_user') {
+      // Vérifier et créer le tenant s'il manque
+      if (!this.getLocalId('tenants', remote.tenant_id)) {
+        console.log(`[Sync] Creating missing tenant dependency for tenant_id: ${remote.tenant_id}`);
+        this.queueChange('tenant', 'insert', {
+          id: remote.tenant_id,
+          name: `Tenant ${remote.tenant_id}`,
+          owner_email: `admin+${remote.tenant_id}@example.com`,
+          status: 'active'
+        });
+      }
+
+      // Vérifier et créer l'utilisateur s'il manque
+      if (!this.getLocalId('users', remote.user_id)) {
+        console.log(`[Sync] Creating missing user dependency for user_id: ${remote.user_id}`);
+        this.queueChange('user', 'insert', {
+          id: remote.user_id,
+          email: `user+${remote.user_id}@example.com`,
+          username: `user_${remote.user_id}`,
+          full_name: `User ${remote.user_id}`,
+          role: remote.role || 'staff',
+          is_active: true,
+          tenant_id: remote.tenant_id
+        });
+      }
+    }
+  }
+
+  /**
+   * Vérifie et répare l'intégrité des données pour un tenant
+   */
+  private async ensureDataIntegrity(tenantId: string): Promise<{ fixed: number }> {
+    let fixed = 0;
+    
+    // Vérifier que tous les users du tenant ont une entrée tenant_users
+    const localUsers = this.db.prepare(
+      `SELECT id FROM users WHERE tenant_id = ?`
+    ).all(tenantId) as { id: number }[];
+    
+    for (const user of localUsers) {
+      const existingTu = this.db.prepare(
+        `SELECT id FROM tenant_users WHERE tenant_id = ? AND user_id = ?`
+      ).get(tenantId, user.id) as { id: number } | undefined;
+      
+      if (!existingTu) {
+        // Créer la relation manquante
+        this.db.prepare(`
+          INSERT INTO tenant_users (tenant_id, user_id, role, is_default, is_active, joined_at)
+          VALUES (?, ?, 'staff', false, true, ?)
+        `).run(tenantId, user.id, new Date().toISOString());
+        
+        // Marquer pour sync vers Supabase
+        this.queueTenantUserChange('insert', {
+          tenant_id: tenantId,
+          user_id: user.id,
+          role: 'staff',
+          is_default: false,
+          is_active: true,
+          joined_at: new Date().toISOString()
+        });
+        
+        fixed++;
+      }
+    }
+    
+    // Vérifier qu'il y a au moins un owner
+    const owners = this.db.prepare(
+      `SELECT id FROM tenant_users WHERE tenant_id = ? AND role = 'owner'`
+    ).all(tenantId) as { id: number }[];
+    
+    if (owners.length === 0) {
+      // Trouver le premier user et le promouvoir owner
+      const firstUser = this.db.prepare(
+        `SELECT id FROM users WHERE tenant_id = ? ORDER BY created_at ASC LIMIT 1`
+      ).get(tenantId) as { id: number } | undefined;
+      
+      if (firstUser) {
+        const existingTu = this.db.prepare(
+          `SELECT id FROM tenant_users WHERE tenant_id = ? AND user_id = ?`
+        ).get(tenantId, firstUser.id) as { id: number } | undefined;
+        
+        if (existingTu) {
+          // Mettre à jour en owner
+          this.db.prepare(
+            `UPDATE tenant_users SET role = 'owner', is_default = true WHERE id = ?`
+          ).run(existingTu.id);
+          
+          this.queueTenantUserChange('update', {
+            id: existingTu.id,
+            tenant_id: tenantId,
+            user_id: firstUser.id,
+            role: 'owner',
+            is_default: true,
+            is_active: true
+          });
+          fixed++;
+        } else {
+          // Créer la relation en tant qu'owner
+          this.db.prepare(`
+            INSERT INTO tenant_users (tenant_id, user_id, role, is_default, is_active, joined_at)
+            VALUES (?, ?, 'owner', true, true, ?)
+          `).run(tenantId, firstUser.id, new Date().toISOString());
+          
+          this.queueTenantUserChange('insert', {
+            tenant_id: tenantId,
+            user_id: firstUser.id,
+            role: 'owner',
+            is_default: true,
+            is_active: true,
+            joined_at: new Date().toISOString()
+          });
+          fixed++;
+        }
+      }
+    }
+    
+    // Vérifier qu'il y a un utilisateur par défaut
+    const defaultUsers = this.db.prepare(
+      `SELECT id FROM tenant_users WHERE tenant_id = ? AND is_default = true`
+    ).all(tenantId) as { id: number }[];
+    
+    if (defaultUsers.length === 0) {
+      // Trouver le premier owner/admin et le marquer comme default
+      const firstOwner = this.db.prepare(
+        `SELECT id FROM tenant_users WHERE tenant_id = ? AND role IN ('owner', 'admin') ORDER BY created_at ASC LIMIT 1`
+      ).get(tenantId) as { id: number } | undefined;
+      
+      if (firstOwner) {
+        this.db.prepare(
+          `UPDATE tenant_users SET is_default = true WHERE id = ?`
+        ).run(firstOwner.id);
+        
+        const tu = this.db.prepare(
+          `SELECT * FROM tenant_users WHERE id = ?`
+        ).get(firstOwner.id) as any;
+        
+        this.queueTenantUserChange('update', tu);
+        fixed++;
+      }
+    }
+    
+    return { fixed };
+  }
+
+  /**
+   * Assure que toutes les dépendances pour tenant_users existent
+   */
+  private async ensureTenantUserDependencies(tenantId: string) {
+    // Vérifier d'abord que le tenant existe localement pour éviter FK error
+    const tenantExists = this.db.prepare('SELECT id FROM tenants WHERE id = ?').get(tenantId);
+    if (!tenantExists) {
+      console.log(`[Sync] Skipping tenant_user dependency check: Tenant #${tenantId} not found locally.`);
+      return;
+    }
+
+    // Pour chaque user du tenant, vérifier qu'il y a une entrée tenant_users
+    const localUsers = this.db.prepare(
+      `SELECT id, tenant_id FROM users WHERE tenant_id = ?`
+    ).all(tenantId) as { id: number; tenant_id: number }[];
+    
+    for (const user of localUsers) {
+      const existingTu = this.db.prepare(
+        `SELECT id FROM tenant_users WHERE tenant_id = ? AND user_id = ?`
+      ).get(user.tenant_id, user.id) as { id: number } | undefined;
+      
+      if (!existingTu) {
+        // Créer la relation manquante
+        this.db.prepare(`
+          INSERT INTO tenant_users (tenant_id, user_id, role, is_default, is_active, joined_at)
+          VALUES (?, ?, 'staff', false, true, ?)
+        `).run(user.tenant_id, user.id, new Date().toISOString());
+        
+        // Marquer pour sync
+        this.queueTenantUserChange('insert', {
+          tenant_id: user.tenant_id,
+          user_id: user.id,
+          role: 'staff',
+          is_default: false,
+          is_active: true,
+          joined_at: new Date().toISOString()
+        });
+      }
+    }
   }
 
   resetPullCursor(entity?: string) {
@@ -399,3 +645,4 @@ export class UserTenantSyncService {
 }
 
 export default UserTenantSyncService;
+

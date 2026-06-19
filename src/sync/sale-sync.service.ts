@@ -62,29 +62,48 @@ export class SaleSyncService {
   async pullSaleUpdates(tenantId: string, since: string): Promise<number> {
     console.log(`[Sync] Pulling sales since ${since}...`);
 
-    // Note: Supabase sales table has `created_at` but NO `updated_at` nor `tenant_id`
     const { data, error } = await this.supabase
       .from('sales')
       .select('*, sale_items(*)')
-      .gt('created_at', since)
+      .or(`updated_at.gt.${since},created_at.gt.${since}`)
       .order('created_at', { ascending: true });
 
     if (error) {
+      if (error.message?.includes('updated_at')) {
+         // Fallback legacy
+         const { data: d2, error: e2 } = await this.supabase
+          .from('sales')
+          .select('*, sale_items(*)')
+          .gt('created_at', since)
+          .order('created_at', { ascending: true });
+         if (e2) {
+           console.error('[Sync] Failed to pull sales from Supabase:', e2.message);
+           return 0;
+         }
+         return this.processPulledSales(d2 || [], tenantId);
+      }
       console.error('[Sync] Failed to pull sales from Supabase:', error.message);
       return 0;
     }
 
-    if (!data || data.length === 0) return 0;
+    return this.processPulledSales(data || [], tenantId);
+  }
 
+  private processPulledSales(sales: any[], tenantId: string): number {
     let applied = 0;
-    const transaction = this.db.transaction((sales: any[]) => {
-      for (const remote of sales) {
+    const transaction = this.db.transaction((rows: any[]) => {
+      for (const remote of rows) {
         try {
-          const local = this.db.prepare(
-            'SELECT id, created_at FROM sales WHERE remote_id = ?'
-          ).get(remote.id) as { id: number; created_at: string } | undefined;
+          if (remote.tenant_id && String(remote.tenant_id) !== String(tenantId)) continue;
 
-          const shouldApply = !local || new Date(remote.created_at) > new Date(local.created_at ?? 0);
+          const local = this.db.prepare(
+            'SELECT id, created_at, updated_at FROM sales WHERE remote_id = ?'
+          ).get(remote.id) as { id: number; created_at: string, updated_at: string } | undefined;
+
+          const remoteTs = remote.updated_at || remote.created_at;
+          const localTs = local?.updated_at || local?.created_at || 0;
+
+          const shouldApply = !local || new Date(remoteTs) > new Date(localTs);
 
           if (shouldApply) {
             this.applyRemoteSale(remote, local?.id);
@@ -96,7 +115,7 @@ export class SaleSyncService {
       }
     });
 
-    transaction(data);
+    transaction(sales);
     return applied;
   }
 

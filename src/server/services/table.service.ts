@@ -2,13 +2,13 @@ import db from '../db/database';
 import crypto from 'crypto';
 import { getProductSyncService, withOutboxTransaction } from '../../sync';
 import { env } from '../config/env';
+import { getCurrentTenantId } from '../db/tenant-context';
 
 export type TableStatus = 'available' | 'active' | 'reserved' | 'cleaning' | 'out_of_service';
 
 export interface Table {
   id: number;
   remote_id?: number | null;
-  business_id?: string | null;
   table_number: string;
   capacity: number;
   status: TableStatus;
@@ -16,15 +16,11 @@ export interface Table {
   qr_token?: string | null;
   created_at: string;
   updated_at: string;
+  tenant_id: number;
 }
 
 /**
  * Status mapping between local SQLite and Supabase (CHECK constraint).
- *  - local 'active'        <-> remote 'occupied'
- *  - local 'out_of_service' <-> remote 'available'
- *  - local 'available'     <-> remote 'available'
- *  - local 'reserved'      <-> remote 'reserved'
- *  - local 'cleaning'      <-> remote 'cleaning'
  */
 function localToRemoteStatus(status: string): string {
   if (status === 'active') return 'occupied';
@@ -37,17 +33,39 @@ function remoteToLocalStatus(status: string): string {
   return status;
 }
 
+/**
+ * Helper to get tenantId - explicit parameter takes priority over context
+ */
+function resolveTenantId(explicitTenantId?: number): number {
+  if (explicitTenantId !== undefined && explicitTenantId !== null) {
+    return explicitTenantId;
+  }
+  const ctxTenantId = getCurrentTenantId();
+  if (ctxTenantId !== undefined && ctxTenantId !== null) {
+    return ctxTenantId;
+  }
+  throw new Error('TENANT_ID_REQUIRED: tenant_id est requis. \nConnectez-vous ou utilisez un token JWT valide.');
+}
+
 export class TableService {
-  static async getAll(params?: { waiter_id?: number; role?: string }): Promise<Table[]> {
+  /**
+   * Get all tables for a tenant.
+   * @param params - optional filter params (waiter_id, role)
+   * @param tenantId - explicit tenant ID (required for proper isolation)
+   */
+  static async getAll(params?: { waiter_id?: number; role?: string }, tenantId?: number): Promise<Table[]> {
+    const resolvedTenantId = resolveTenantId(tenantId);
+
     if (!db) {
-      console.log('[TableService] SQLite disabled (db is null). Falling back to Supabase for getAll');
+      console.log(`[TableService] SQLite disabled - using Supabase (tenant=${resolvedTenantId})`);
       try {
         const { getSupabaseClient } = require('../database/supabase.client');
         const supabase = getSupabaseClient();
 
         let query = supabase
           .from('restaurant_tables')
-          .select('*, waiter:users(full_name)');
+          .select('*, waiter:users(full_name)')
+          .eq('tenant_id', resolvedTenantId);
 
         if (params?.role === 'waiter' && params.waiter_id) {
           query = query.eq('assigned_waiter_id', params.waiter_id);
@@ -58,6 +76,7 @@ export class TableService {
 
         return (data || []).map((t: any) => ({
           ...t,
+          remote_id: t.id, // Dans Supabase, id est le remote_id pour SQLite
           waiter_name: t.waiter?.full_name,
           status: remoteToLocalStatus(t.status),
         }));
@@ -69,23 +88,36 @@ export class TableService {
 
     try {
       let query = `
+        WITH ActiveOrders AS (
+          SELECT 
+            o.table_id,
+            o.waiter_id,
+            o.total,
+            o.created_at,
+            o.status as order_status
+          FROM orders o
+          WHERE o.tenant_id = ? 
+            AND o.status NOT IN ('paid', 'cancelled', 'rejected')
+          GROUP BY o.table_id
+          HAVING o.created_at = MAX(o.created_at)
+        )
         SELECT
           t.*,
-          u.full_name as waiter_name
+          COALESCE(uo.full_name, uo.username, ut.full_name, ut.username) as waiter_name,
+          ao.total as active_order_total,
+          ao.created_at as active_order_created_at
         FROM restaurant_tables t
-        LEFT JOIN users u ON t.assigned_waiter_id = u.id
+        LEFT JOIN users ut ON (t.assigned_waiter_id = ut.id OR t.assigned_waiter_id = ut.remote_id)
+        LEFT JOIN ActiveOrders ao ON t.id = ao.table_id
+        LEFT JOIN users uo ON (ao.waiter_id = uo.id OR ao.waiter_id = uo.remote_id)
+        WHERE t.tenant_id = ?
       `;
 
-      const conditions: string[] = [];
-      const values: any[] = [];
+      const values: any[] = [resolvedTenantId, resolvedTenantId];
 
       if (params?.role === 'waiter' && params.waiter_id) {
-        conditions.push('t.assigned_waiter_id = ?');
-        values.push(params.waiter_id);
-      }
-
-      if (conditions.length > 0) {
-        query += ' WHERE ' + conditions.join(' AND ');
+        query += ' AND (t.assigned_waiter_id = ? OR t.assigned_waiter_id = (SELECT remote_id FROM users WHERE id = ?) OR ao.waiter_id = ? OR ao.waiter_id = (SELECT remote_id FROM users WHERE id = ?))';
+        values.push(params.waiter_id, params.waiter_id, params.waiter_id, params.waiter_id);
       }
 
       query += ' ORDER BY CAST(t.table_number AS UNSIGNED), t.table_number';
@@ -98,9 +130,14 @@ export class TableService {
     }
   }
 
-  static async getById(id: number): Promise<Table | null> {
+  /**
+   * Get a single table by ID.
+   */
+  static async getById(id: number, tenantId?: number): Promise<Table | null> {
+    const resolvedTenantId = resolveTenantId(tenantId);
+
     if (!db) {
-      console.log(`[TableService] SQLite disabled (db is null). Falling back to Supabase for getById (id=${id})`);
+      console.log(`[TableService] SQLite disabled - using Supabase (id=${id}, tenant=${resolvedTenantId})`);
       try {
         const { getSupabaseClient } = require('../database/supabase.client');
         const supabase = getSupabaseClient();
@@ -109,15 +146,15 @@ export class TableService {
           .from('restaurant_tables')
           .select('*, waiter:users(full_name)')
           .eq('id', id)
-          .single();
+          .eq('tenant_id', resolvedTenantId)
+          .maybeSingle();
 
-        if (error) {
-          if (error.code === 'PGRST116') return null;
-          throw error;
-        }
+        if (error) throw error;
+        if (!data) return null;
 
         return {
           ...data,
+          remote_id: data.id, // Dans Supabase, id est le remote_id pour SQLite
           waiter_name: data.waiter?.full_name,
           status: remoteToLocalStatus(data.status) as any,
         };
@@ -131,11 +168,11 @@ export class TableService {
       const table = db.prepare(`
         SELECT
           t.*,
-          u.full_name as waiter_name
+          COALESCE(u.full_name, u.username) as waiter_name
         FROM restaurant_tables t
         LEFT JOIN users u ON t.assigned_waiter_id = u.id
-        WHERE t.id = ?
-      `).get(id) as Table | undefined;
+        WHERE t.id = ? AND t.tenant_id = ?
+      `).get(id, resolvedTenantId) as Table | undefined;
 
       return table || null;
     } catch (error) {
@@ -146,19 +183,9 @@ export class TableService {
 
   /**
    * Create a new table.
-   *
-   * Behavior is now CONSISTENT regardless of whether we are in pure cloud mode
-   * (RENDER_CLOUD_MODE) or local mode:
-   *  - In pure cloud mode (no local DB): insert directly in Supabase.
-   *  - In local mode: insert in SQLite + queue an outbox entry so the
-   *    SyncOrchestrator pushes it to Supabase. The local write is durable, and
-   *    the Supabase write is retried automatically by the orchestrator.
-   *
-   * This eliminates the previous double-write inconsistency (root cause of
-   * "T9 created locally never appears in Vercel").
    */
-  static async create(tableData: Omit<Table, 'id' | 'created_at' | 'updated_at'>): Promise<Table> {
-    const businessId = process.env.SYNC_BUSINESS_ID || 'default-business';
+  static async create(tableData: Omit<Table, 'id' | 'created_at' | 'updated_at' | 'tenant_id'>, tenantId: number): Promise<Table> {
+    const resolvedTenantId = resolveTenantId(tenantId);
 
     if (!db || env.RENDER_CLOUD_MODE) {
       if (!env.SUPABASE_URL || !env.SUPABASE_SERVICE_ROLE_KEY) {
@@ -172,6 +199,7 @@ export class TableService {
           .from('restaurant_tables')
           .select('id')
           .eq('table_number', String(tableData.table_number))
+          .eq('tenant_id', resolvedTenantId)
           .maybeSingle();
         if (checkErr) console.error('[TableService] Supabase check error:', checkErr);
         if (existing) {
@@ -181,20 +209,20 @@ export class TableService {
         const qrToken = crypto.randomUUID().replace(/-/g, '');
         const supabaseStatus = localToRemoteStatus(tableData.status);
 
-        const { data, error } = await supabase
-          .from('restaurant_tables')
-          .upsert([{
-            table_number: String(tableData.table_number),
-            capacity: tableData.capacity,
-            status: supabaseStatus,
-            assigned_waiter_id: tableData.assigned_waiter_id,
-            qr_token: qrToken,
-            business_id: businessId,
-            created_at: new Date().toISOString(),
-            updated_at: new Date().toISOString()
-          }], { onConflict: 'table_number' })
-          .select()
-          .single();
+const { data, error } = await supabase
+           .from('restaurant_tables')
+           .insert([{
+             table_number: String(tableData.table_number),
+             capacity: tableData.capacity,
+             status: supabaseStatus,
+             assigned_waiter_id: tableData.assigned_waiter_id,
+             qr_token: qrToken,
+             tenant_id: resolvedTenantId,
+             created_at: new Date().toISOString(),
+             updated_at: new Date().toISOString()
+           }])
+           .select()
+           .single();
 
         if (error) {
           if (error.code === '23505') {
@@ -205,75 +233,73 @@ export class TableService {
 
         return {
           ...data,
-          status: remoteToLocalStatus(data.status) as any,
-          waiter_name: undefined,
+          status: remoteToLocalStatus(data.status) as any
         } as Table;
       } catch (err: any) {
         console.error('[TableService] Supabase create failed:', err?.message || err);
-        throw new Error(err.message || 'Échec de la création de la table');
+        throw err;
       }
     }
 
     // ===== Local mode: SQLite + outbox =====
     try {
-      return withOutboxTransaction(db, String(businessId), () => {
-        const existing = db.prepare('SELECT id FROM restaurant_tables WHERE table_number = ?').get(tableData.table_number);
-        if (existing) {
-          throw new Error(`Le numéro de table "${tableData.table_number}" existe déjà.`);
-        }
+      const qrToken = crypto.randomUUID().replace(/-/g, '');
+      const now = new Date().toISOString();
 
-        const now = new Date().toISOString();
-        const qrToken = crypto.randomUUID().replace(/-/g, '');
-        const result = db.prepare(`
-          INSERT INTO restaurant_tables (table_number, capacity, status, assigned_waiter_id, qr_token, business_id, created_at, updated_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        `).run(
-          String(tableData.table_number),
-          tableData.capacity,
-          tableData.status,
-          tableData.assigned_waiter_id,
-          qrToken,
-          businessId,
-          now,
-          now
-        );
+      const existing = db.prepare('SELECT id FROM restaurant_tables WHERE table_number = ? AND tenant_id = ?').get(String(tableData.table_number), resolvedTenantId) as { id: number } | undefined;
+      if (existing) {
+        throw new Error(`Le numéro de table "${tableData.table_number}" existe déjà pour ce locataire.`);
+      }
 
-        if (!result.lastInsertRowid) {
-          throw new Error('Échec de la création de la table en local');
-        }
+      const result = db.prepare(`
+        INSERT INTO restaurant_tables (
+          table_number, capacity, status, assigned_waiter_id, qr_token,
+          tenant_id, remote_id, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        String(tableData.table_number),
+        tableData.capacity,
+        tableData.status,
+        tableData.assigned_waiter_id,
+        qrToken,
+        resolvedTenantId,
+        null, // remote_id sera rempli après sync avec Supabase
+        now,
+        now
+      );
 
-        const newTable = db.prepare(`
-          SELECT t.*, u.full_name as waiter_name
-          FROM restaurant_tables t
-          LEFT JOIN users u ON t.assigned_waiter_id = u.id
-          WHERE t.id = ?
-        `).get(Number(result.lastInsertRowid)) as Table;
+      const inserted = db.prepare(`
+        SELECT t.*, COALESCE(u.full_name, u.username) as waiter_name
+        FROM restaurant_tables t
+        LEFT JOIN users u ON t.assigned_waiter_id = u.id
+        WHERE t.id = ?
+      `).get(result.lastInsertRowid) as Table;
 
-        if (!newTable) {
-          throw new Error('Échec de récupération de la table créée');
-        }
+      if (!inserted) {
+        throw new Error('Failed to retrieve newly created table');
+      }
 
-        // CRITICAL: queue the change for Supabase push via the SyncOrchestrator.
-        // This is the only path to Supabase in local mode.
-        try {
-          getProductSyncService().queueChangeInsideTransaction('restaurant_table', 'insert', {
-            ...newTable,
-            business_id: businessId,
-          });
-        } catch (syncErr) {
-          console.warn('[TableService] Failed to queue table for sync:', syncErr);
-        }
+      try {
+        getProductSyncService().queueChangeInsideTransaction('restaurant_table', 'insert', {
+          ...inserted,
+          tenant_id: resolvedTenantId
+        });
+      } catch (syncErr) {
+        console.warn('[TableService] Failed to queue table creation for sync:', syncErr);
+      }
 
-        return newTable;
-      });
+      return inserted;
     } catch (error: any) {
       console.error('[TableService] Error creating table:', error);
       throw error;
     }
   }
 
-  static async update(id: number, updates: Partial<Omit<Table, 'id' | 'created_at' | 'updated_at'>>): Promise<Table> {
-    const businessId = process.env.SYNC_BUSINESS_ID || 'default-business';
+  /**
+   * Update a table.
+   */
+  static async update(id: number, updates: Partial<Table>, tenantId: number): Promise<Table> {
+    const resolvedTenantId = resolveTenantId(tenantId);
 
     if (!db || env.RENDER_CLOUD_MODE) {
       if (!env.SUPABASE_URL || !env.SUPABASE_SERVICE_ROLE_KEY) {
@@ -283,39 +309,28 @@ export class TableService {
         const { getSupabaseClient } = require('../database/supabase.client');
         const supabase = getSupabaseClient();
 
-        if (updates.table_number) {
-          const { data: existing, error: checkErr } = await supabase
-            .from('restaurant_tables')
-            .select('id')
-            .eq('table_number', String(updates.table_number))
-            .neq('id', id)
-            .maybeSingle();
-          if (checkErr) console.error('[TableService] Supabase check error:', checkErr);
-          if (existing) {
-            throw new Error(`Le numéro de table "${updates.table_number}" existe déjà.`);
-          }
-        }
-
         const supabaseUpdates: any = { ...updates };
-        if (supabaseUpdates.status) supabaseUpdates.status = localToRemoteStatus(supabaseUpdates.status);
+        if (supabaseUpdates.status) {
+          supabaseUpdates.status = localToRemoteStatus(supabaseUpdates.status);
+        }
         supabaseUpdates.updated_at = new Date().toISOString();
 
         const { data, error } = await supabase
           .from('restaurant_tables')
           .update(supabaseUpdates)
           .eq('id', id)
+          .eq('tenant_id', resolvedTenantId)
           .select()
           .single();
 
-        if (error) {
-          throw new Error(`Erreur Supabase: ${error.message}`);
-        }
+        if (error) throw new Error(`Erreur Supabase: ${error.message}`);
         if (!data) throw new Error('Table non trouvée');
 
         return {
           ...data,
+          remote_id: data.id, // Dans Supabase, id est le remote_id pour SQLite
           status: remoteToLocalStatus(data.status) as any,
-          waiter_name: undefined,
+          waiter_name: undefined
         } as Table;
       } catch (err: any) {
         console.error('[TableService] Supabase update failed:', err?.message || err);
@@ -325,65 +340,68 @@ export class TableService {
 
     // ===== Local mode: SQLite + outbox =====
     try {
-      return withOutboxTransaction(db, String(businessId), () => {
-        const table = db.prepare('SELECT * FROM restaurant_tables WHERE id = ?').get(id) as Table | undefined;
-        if (!table) {
+      return withOutboxTransaction(db, String(resolvedTenantId), () => {
+        const existing = db.prepare('SELECT * FROM restaurant_tables WHERE id = ? AND tenant_id = ?').get(id, resolvedTenantId) as Table | undefined;
+        if (!existing) {
           throw new Error('Table not found');
         }
 
-        if (updates.table_number && updates.table_number !== table.table_number) {
-          const existing = db.prepare('SELECT id FROM restaurant_tables WHERE table_number = ? AND id != ?')
-            .get(updates.table_number, id);
-          if (existing) {
-            throw new Error(`Table number ${updates.table_number} already exists`);
-          }
-        }
-
-        const updateFields: string[] = [];
+        const fields: string[] = [];
         const values: any[] = [];
 
-        Object.entries(updates).forEach(([key, value]) => {
-          if (value !== undefined) {
-            updateFields.push(`${key} = ?`);
-            values.push(value);
-          }
-        });
-
-        if (updateFields.length === 0) {
-          return table;
+        if (updates.table_number !== undefined) {
+          fields.push('table_number = ?');
+          values.push(String(updates.table_number));
+        }
+        if (updates.capacity !== undefined) {
+          fields.push('capacity = ?');
+          values.push(updates.capacity);
+        }
+        if (updates.status !== undefined) {
+          fields.push('status = ?');
+          values.push(updates.status);
+        }
+        if (updates.assigned_waiter_id !== undefined) {
+          fields.push('assigned_waiter_id = ?');
+          values.push(updates.assigned_waiter_id);
+        }
+        if (updates.remote_id !== undefined) {
+          fields.push('remote_id = ?');
+          values.push(updates.remote_id);
         }
 
-        updateFields.push('updated_at = ?');
+        fields.push('updated_at = ?');
         values.push(new Date().toISOString());
-        values.push(id);
+
+        values.push(id, resolvedTenantId);
 
         db.prepare(`
           UPDATE restaurant_tables
-          SET ${updateFields.join(', ')}
-          WHERE id = ?
+          SET ${fields.join(', ')}
+          WHERE id = ? AND tenant_id = ?
         `).run(...values);
 
-        const updatedTable = db.prepare(`
-          SELECT t.*, u.full_name as waiter_name
+        const updated = db.prepare(`
+          SELECT t.*, COALESCE(u.full_name, u.username) as waiter_name
           FROM restaurant_tables t
           LEFT JOIN users u ON t.assigned_waiter_id = u.id
-          WHERE t.id = ?
-        `).get(id) as Table;
+          WHERE t.id = ? AND t.tenant_id = ?
+        `).get(id, resolvedTenantId) as Table;
 
-        if (!updatedTable) {
+        if (!updated) {
           throw new Error('Failed to retrieve updated table');
         }
 
-        try {
-          getProductSyncService().queueChangeInsideTransaction('restaurant_table', 'update', {
-            ...updatedTable,
-            business_id: businessId,
-          });
-        } catch (syncErr) {
-          console.warn('[TableService] Failed to queue table update for sync:', syncErr);
-        }
+try {
+           getProductSyncService().queueChangeInsideTransaction('restaurant_table', 'update', {
+             ...updated,
+             tenant_id: resolvedTenantId
+           });
+         } catch (syncErr) {
+           console.warn('[TableService] Failed to queue table update for sync:', syncErr);
+         }
 
-        return updatedTable;
+        return updated;
       });
     } catch (error: any) {
       console.error('[TableService] Error updating table:', error);
@@ -391,76 +409,65 @@ export class TableService {
     }
   }
 
-  static async updateStatus(id: number, status: TableStatus): Promise<Table> {
-    return this.update(id, { status });
+  /**
+   * Open table (assign waiter and set active).
+   */
+  static async openTable(id: number, waiterId: number, tenantId: number): Promise<Table> {
+    const existing = await this.getById(id, tenantId);
+    return this.update(id, {
+      assigned_waiter_id: existing?.assigned_waiter_id ?? waiterId,
+      status: 'active',
+    } as any, tenantId);
   }
 
-  static async openTable(tableId: number, waiterId: number): Promise<Table> {
-    try {
-      const table = await this.getById(tableId);
-      if (!table) {
-        throw new Error('Table not found');
-      }
-
-      if (table.status !== 'available' && table.status !== 'reserved') {
-        throw new Error('Table is not available for opening');
-      }
-
-      return this.update(tableId, {
-        status: 'active',
-        assigned_waiter_id: waiterId
-      });
-    } catch (error: any) {
-      console.error('[TableService] Error opening table:', error);
-      throw error;
-    }
+  /**
+   * Reserve table.
+   */
+  static async reserveTable(id: number, tenantId: number): Promise<Table> {
+    return this.update(id, { status: 'reserved' } as any, tenantId);
   }
 
-  static async reserveTable(tableId: number): Promise<Table> {
-    try {
-      const table = await this.getById(tableId);
-      if (!table) {
-        throw new Error('Table not found');
-      }
-
-      if (table.status !== 'available') {
-        throw new Error('Table is not available for reservation');
-      }
-
-      return this.update(tableId, { status: 'reserved' });
-    } catch (error: any) {
-      console.error('[TableService] Error reserving table:', error);
-      throw error;
-    }
+  /**
+   * Mark table for cleaning.
+   */
+  static async markCleaning(id: number, tenantId: number): Promise<Table> {
+    return this.update(id, { status: 'cleaning' } as any, tenantId);
   }
 
-  static async markCleaning(tableId: number): Promise<Table> {
-    return this.update(tableId, { status: 'cleaning' });
+  /**
+   * Set table available.
+   */
+  static async setAvailable(id: number, tenantId: number): Promise<Table> {
+    return this.update(id, { status: 'available', assigned_waiter_id: null } as any, tenantId);
   }
 
-  static async setAvailable(tableId: number): Promise<Table> {
-    return this.update(tableId, {
-      status: 'available',
-      assigned_waiter_id: null
-    });
+  /**
+   * Update table status.
+   */
+  static async updateStatus(id: number, status: TableStatus, tenantId: number): Promise<Table> {
+    return this.update(id, { status } as any, tenantId);
   }
 
-  static async assignWaiter(tableId: number, waiterId: number | null): Promise<Table> {
-    return this.update(tableId, { assigned_waiter_id: waiterId });
-  }
-
-  static async delete(id: number): Promise<boolean> {
-    const businessId = process.env.SYNC_BUSINESS_ID || 'default-business';
+  /**
+   * Delete a table.
+   */
+  static async delete(id: number, tenantId: number): Promise<boolean> {
+    const resolvedTenantId = resolveTenantId(tenantId);
 
     if (!db || env.RENDER_CLOUD_MODE) {
+      if (!env.SUPABASE_URL || !env.SUPABASE_SERVICE_ROLE_KEY) {
+        throw new Error('Supabase not configured');
+      }
       try {
         const { getSupabaseClient } = require('../database/supabase.client');
         const supabase = getSupabaseClient();
 
+        // Check for active orders
         const { count, error: countErr } = await supabase
           .from('orders')
           .select('*', { count: 'exact', head: true })
           .eq('table_id', id)
+          .eq('tenant_id', resolvedTenantId)
           .in('status', ['pending', 'confirmed', 'preparing', 'ready']);
         if (countErr) throw countErr;
         if (count && count > 0) {
@@ -470,7 +477,8 @@ export class TableService {
         const { error } = await supabase
           .from('restaurant_tables')
           .delete()
-          .eq('id', id);
+          .eq('id', id)
+          .eq('tenant_id', resolvedTenantId);
         if (error) throw error;
         return true;
       } catch (err: any) {
@@ -479,10 +487,10 @@ export class TableService {
       }
     }
 
-    // ===== Local mode: SQLite + outbox =====
+// ===== Local mode: SQLite + outbox =====
     try {
-      return withOutboxTransaction(db, String(businessId), () => {
-        const table = db.prepare('SELECT id FROM restaurant_tables WHERE id = ?').get(id) as { id: number } | undefined;
+      return withOutboxTransaction(db, String(resolvedTenantId), () => {
+        const table = db.prepare('SELECT id, remote_id FROM restaurant_tables WHERE id = ? AND tenant_id = ?').get(id, resolvedTenantId) as { id: number, remote_id: number | null } | undefined;
         if (!table) {
           return false;
         }
@@ -490,20 +498,21 @@ export class TableService {
         const activeOrders = db.prepare(`
           SELECT COUNT(*) as count
           FROM orders
-          WHERE table_id = ? AND status IN ('pending', 'confirmed', 'preparing', 'ready')
-        `).get(id) as { count: number };
+          WHERE table_id = ? AND tenant_id = ? AND status IN ('pending', 'confirmed', 'preparing', 'ready')
+        `).get(id, resolvedTenantId) as { count: number };
 
         if (activeOrders.count > 0) {
           throw new Error('Cannot delete table with active orders');
         }
 
-        const result = db.prepare('DELETE FROM restaurant_tables WHERE id = ?').run(id);
+        const result = db.prepare('DELETE FROM restaurant_tables WHERE id = ? AND tenant_id = ?').run(id, resolvedTenantId);
 
         if (result.changes > 0) {
           try {
             getProductSyncService().queueChangeInsideTransaction('restaurant_table', 'delete', {
               id,
-              business_id: businessId,
+              remote_id: table.remote_id,
+              tenant_id: resolvedTenantId
             });
           } catch (syncErr) {
             console.warn('[TableService] Failed to queue table deletion for sync:', syncErr);
@@ -518,8 +527,11 @@ export class TableService {
     }
   }
 
-  static async regenerateQrToken(id: number): Promise<Table> {
-    const businessId = process.env.SYNC_BUSINESS_ID || 'default-business';
+  /**
+   * Regenerate QR token.
+   */
+  static async regenerateQrToken(id: number, tenantId: number): Promise<Table> {
+    const resolvedTenantId = resolveTenantId(tenantId);
 
     if (!db || env.RENDER_CLOUD_MODE) {
       if (!env.SUPABASE_URL || !env.SUPABASE_SERVICE_ROLE_KEY) {
@@ -534,6 +546,7 @@ export class TableService {
           .from('restaurant_tables')
           .update({ qr_token: newToken, updated_at: new Date().toISOString() })
           .eq('id', id)
+          .eq('tenant_id', resolvedTenantId)
           .select()
           .single();
 
@@ -542,6 +555,7 @@ export class TableService {
 
         return {
           ...data,
+          remote_id: data.id, // Dans Supabase, id est le remote_id pour SQLite
           status: remoteToLocalStatus(data.status) as any,
           waiter_name: undefined,
         } as Table;
@@ -551,10 +565,10 @@ export class TableService {
       }
     }
 
-    // ===== Local mode: SQLite + outbox =====
+// ===== Local mode: SQLite + outbox =====
     try {
-      return withOutboxTransaction(db, String(businessId), () => {
-        const table = db.prepare('SELECT * FROM restaurant_tables WHERE id = ?').get(id) as Table | undefined;
+      return withOutboxTransaction(db, String(resolvedTenantId), () => {
+        const table = db.prepare('SELECT * FROM restaurant_tables WHERE id = ? AND tenant_id = ?').get(id, resolvedTenantId) as Table | undefined;
         if (!table) {
           throw new Error('Table not found');
         }
@@ -565,15 +579,15 @@ export class TableService {
         db.prepare(`
           UPDATE restaurant_tables
           SET qr_token = ?, updated_at = ?
-          WHERE id = ?
-        `).run(newToken, now, id);
+          WHERE id = ? AND tenant_id = ?
+        `).run(newToken, now, id, resolvedTenantId);
 
         const updated = db.prepare(`
-          SELECT t.*, u.full_name as waiter_name
+          SELECT t.*, COALESCE(u.full_name, u.username) as waiter_name
           FROM restaurant_tables t
           LEFT JOIN users u ON t.assigned_waiter_id = u.id
-          WHERE t.id = ?
-        `).get(id) as Table;
+          WHERE t.id = ? AND t.tenant_id = ?
+        `).get(id, resolvedTenantId) as Table;
 
         if (!updated) {
           throw new Error('Failed to retrieve updated table after regenerating QR token');
@@ -582,7 +596,7 @@ export class TableService {
         try {
           getProductSyncService().queueChangeInsideTransaction('restaurant_table', 'update', {
             ...updated,
-            business_id: businessId,
+            tenant_id: resolvedTenantId
           });
         } catch (syncErr) {
           console.warn('[TableService] Failed to queue QR regeneration for sync:', syncErr);
@@ -596,4 +610,3 @@ export class TableService {
     }
   }
 }
- 

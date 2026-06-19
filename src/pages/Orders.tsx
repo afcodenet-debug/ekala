@@ -96,7 +96,7 @@ const Orders = () => {
                     <div className="font-semibold text-white">{formatPrice(order.total, currency, lang)}</div>
                   </td>
                   <td className="px-8 py-5 text-sm text-olive-400">
-                    {order.waiter_name ?? (order.waiter_id ? `Waiter #${order.waiter_id}` : '-')}
+                    {order.waiter_name || '-'}
                   </td>
                   <td className="px-8 py-5 text-sm text-olive-400">
                     {new Date(order.created_at).toLocaleTimeString(timeLocale, {

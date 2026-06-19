@@ -288,12 +288,14 @@ const STYLES = `
 
 /* ─── Role theme ─────────────────────────────────────────────────────────── */
 const ROLE_THEME: Record<string, { color: string; dim: string; border: string; label: string; glyph: string }> = {
+  owner:   { color: 'var(--gold)',    dim: 'var(--gold-dim)',    border: 'rgba(212,175,55,0.2)', label: 'Owner',    glyph: '👑' },
   admin:   { color: 'var(--red)',    dim: 'var(--red-dim)',    border: 'rgba(239,68,68,0.2)',  label: 'Admin',    glyph: '🛡️' },
   manager: { color: 'var(--amber)',  dim: 'var(--amber-dim)',  border: 'rgba(245,158,11,0.2)', label: 'Manager',  glyph: '⚙️' },
   cashier: { color: 'var(--green)',  dim: 'var(--green-dim)',  border: 'rgba(16,185,129,0.2)', label: 'Caissier', glyph: '💳' },
   waiter:  { color: 'var(--blue)',   dim: 'var(--blue-dim)',   border: 'rgba(59,130,246,0.2)', label: 'Serveur',  glyph: '🍽️' },
 };
 const roleDesc: Record<string, string> = {
+  owner:   'Propriétaire principal avec tous les droits',
   admin:   'Accès complet au système',
   manager: 'Gestion opérationnelle',
   cashier: 'Opérations de caisse et paiements',
@@ -350,6 +352,9 @@ const UsersPage = () => {
     full_name: '', username: '', phone: '', email: '' as string,
     pin_code: '', role: 'waiter' as UserRole,
   });
+
+  const [deleteTargetId, setDeleteTargetId] = useState<number | null>(null);
+  const [deleteSubmitting, setDeleteSubmitting] = useState(false);
 
   React.useEffect(() => {
     const id = 'up-styles-v2';
@@ -415,13 +420,23 @@ const UsersPage = () => {
     } catch { showToast('error', 'Impossible de changer le statut'); }
   };
 
-  const deleteUser = async (id: number) => {
-    if (!window.confirm(t('users.deleteConfirm'))) return;
+  const requestDeleteUser = (id: number) => {
+    setDeleteTargetId(id);
+  };
+
+  const confirmDeleteUser = async () => {
+    if (!deleteTargetId) return;
+    setDeleteSubmitting(true);
     try {
-      await api.users.delete(id, user?.role);
+      await api.users.delete(deleteTargetId, user?.role);
       showToast('success', 'Utilisateur supprimé');
+      setDeleteTargetId(null);
       fetchUsers();
-    } catch { showToast('error', t('users.failedDeleteUser')); }
+    } catch {
+      showToast('error', t('users.failedDeleteUser'));
+    } finally {
+      setDeleteSubmitting(false);
+    }
   };
 
   const openCreate = () => {
@@ -436,7 +451,8 @@ const UsersPage = () => {
   };
 
   const activeCount = users.filter(u => u.is_active).length;
-  const adminCount  = users.filter(u => u.role === 'admin').length;
+  const adminCount = users.filter(u => u.role === 'admin').length;
+  const ownerCount = users.filter(u => u.role === 'owner').length;
 
   /* ════════════════════════════════════════════════════════════════════ */
   return (
@@ -497,11 +513,11 @@ const UsersPage = () => {
 
         {/* ── KPI strip ── */}
         <div className="up-kpi-grid">
-          {[
-            { label:'Membres total',   value:users.length,  color:'var(--blue)',  dim:'var(--blue-dim)',  border:'rgba(59,130,246,0.2)',  icon:IC.users,  cls:'' },
-            { label:'Comptes actifs',  value:activeCount,   color:'var(--green)', dim:'var(--green-dim)', border:'rgba(16,185,129,0.2)',  icon:IC.active, cls:'' },
-            { label:'Administrateurs', value:adminCount,    color:'var(--red)',   dim:'var(--red-dim)',   border:'rgba(239,68,68,0.2)',   icon:IC.shield, cls:'kpi-last' },
-          ].map((s, i) => (
+{[
+             { label:'Membres total',   value:users.length,  color:'var(--blue)',  dim:'var(--blue-dim)',  border:'rgba(59,130,246,0.2)',  icon:IC.users,  cls:'' },
+             { label:'Comptes actifs',  value:activeCount,   color:'var(--green)', dim:'var(--green-dim)', border:'rgba(16,185,129,0.2)',  icon:IC.active, cls:'' },
+             { label:'Propriétaires/Admins', value:ownerCount + adminCount, color:'var(--gold)', dim:'var(--gold-dim)', border:'rgba(212,175,55,0.2)', icon:IC.shield, cls:'kpi-last' },
+           ].map((s, i) => (
             <div key={i} className={`up-kpi fade-up ${s.cls}`} style={{ animationDelay:`${i*60}ms` }}>
               <div style={{ position:'absolute', top:0, left:0, right:0, height:2, background:`linear-gradient(90deg, ${s.color}50, transparent)`, borderRadius:'16px 16px 0 0' }}/>
               <div style={{ display:'flex', alignItems:'flex-start', justifyContent:'space-between', marginBottom:14 }}>
@@ -610,7 +626,7 @@ const UsersPage = () => {
                       style={{ background:'var(--blue-dim)', color:'var(--blue)', borderColor:'rgba(59,130,246,0.18)' }}>
                       {IC.edit}
                     </button>
-                    <button className="icon-btn" title="Supprimer" onClick={() => deleteUser(u.id)}
+                    <button className="icon-btn" title="Supprimer" onClick={() => requestDeleteUser(u.id)}
                       style={{ background:'var(--red-dim)', color:'var(--red)', borderColor:'rgba(239,68,68,0.18)' }}>
                       {IC.trash}
                     </button>
@@ -660,7 +676,7 @@ const UsersPage = () => {
                         style={{ background:'var(--blue-dim)', color:'var(--blue)', borderColor:'rgba(59,130,246,0.18)' }}>
                         {IC.edit}
                       </button>
-                      <button className="icon-btn" title="Supprimer" onClick={() => deleteUser(u.id)}
+                      <button className="icon-btn" title="Supprimer" onClick={() => requestDeleteUser(u.id)}
                         style={{ background:'var(--red-dim)', color:'var(--red)', borderColor:'rgba(239,68,68,0.18)' }}>
                         {IC.trash}
                       </button>
@@ -698,7 +714,135 @@ const UsersPage = () => {
         )}
       </div>
 
-      {/* ════════ MODAL ════════ */}
+      {/* ════════ MODAL (Créer/Modifier) ════════ */}
+      {deleteTargetId !== null && (
+        <div
+          className="up-modal"
+          style={{ zIndex: 70 }}
+          onClick={e => e.target === e.currentTarget && !deleteSubmitting && setDeleteTargetId(null)}
+        >
+          <div
+            className="modal-card"
+            style={{
+              background:'var(--surface)', borderRadius:20, width:'100%', maxWidth:480,
+              border:'1px solid var(--border)', boxShadow:'0 40px 80px rgba(0,0,0,0.6)',
+              overflow:'hidden', position:'relative',
+            }}
+          >
+            <div style={{ height:2, background:'linear-gradient(90deg, transparent, rgba(239,68,68,0.9) 40%, transparent)' }}/>
+            <div style={{
+              display:'flex', alignItems:'center', justifyContent:'space-between',
+              padding:'18px 24px', borderBottom:'1px solid var(--border)',
+              background:'linear-gradient(to right, rgba(239,68,68,0.05), transparent)'
+            }}>
+              <div>
+                <h2 style={{ fontSize:15, fontWeight:800, color:'var(--text-1)', margin:0 }}>
+                  Confirmer la suppression
+                </h2>
+                <p style={{ fontSize:11.5, color:'var(--text-3)', margin:'3px 0 0' }}>
+                  {t('users.deleteConfirm') || 'Êtes-vous sûr de vouloir supprimer cet utilisateur ?'}
+                </p>
+              </div>
+
+              <button
+                onClick={() => !deleteSubmitting && setDeleteTargetId(null)}
+                style={{
+                  width:32, height:32, borderRadius:9, background:'var(--card)',
+                  border:'1px solid var(--border)', color:'var(--text-2)',
+                  cursor:'pointer', display:'flex', alignItems:'center',
+                  justifyContent:'center', transition:'all 130ms ease', flexShrink:0
+                }}
+                aria-label="Close"
+              >
+                {IC.close}
+              </button>
+            </div>
+
+            <div style={{ padding:'18px 24px 22px', display:'flex', flexDirection:'column', gap:14 }}>
+              <div style={{
+                padding:'12px 14px',
+                border:'1px solid rgba(239,68,68,0.25)',
+                background:'rgba(239,68,68,0.06)',
+                borderRadius:14,
+                display:'flex', alignItems:'flex-start', gap:12,
+              }}>
+                <div style={{
+                  width:32, height:32, borderRadius:12,
+                  background:'rgba(239,68,68,0.15)',
+                  border:'1px solid rgba(239,68,68,0.25)',
+                  color:'var(--red)',
+                  display:'flex', alignItems:'center', justifyContent:'center',
+                  flexShrink:0
+                }}>
+                  {IC.trash}
+                </div>
+                <div>
+                  <p style={{ margin:0, fontSize:13.5, fontWeight:800, color:'var(--text-1)' }}>
+                    Action irréversible
+                  </p>
+                  <p style={{ margin:'4px 0 0', fontSize:12, color:'var(--text-3)', lineHeight:1.5 }}>
+                    L’utilisateur sera supprimé de la liste. Cette action nécessite une confirmation.
+                  </p>
+                </div>
+              </div>
+
+              <div style={{ display:'flex', gap:8 }}>
+                <button
+                  type="button"
+                  onClick={() => !deleteSubmitting && setDeleteTargetId(null)}
+                  style={{
+                    flex:1,
+                    padding:'10px 16px',
+                    background:'var(--card)',
+                    border:'1px solid var(--border)',
+                    color:'var(--text-2)',
+                    borderRadius:10,
+                    fontSize:13,
+                    cursor:'pointer',
+                    fontFamily:"'DM Sans',sans-serif",
+                    fontWeight:700,
+                  }}
+                  disabled={deleteSubmitting}
+                >
+                  Annuler
+                </button>
+
+                <button
+                  type="button"
+                  onClick={confirmDeleteUser}
+                  disabled={deleteSubmitting}
+                  style={{
+                    flex:1,
+                    display:'flex', alignItems:'center', justifyContent:'center', gap:10,
+                    padding:'10px 0',
+                    background: deleteSubmitting ? 'var(--border)' : 'rgba(239,68,68,0.95)',
+                    color: deleteSubmitting ? 'var(--text-3)' : '#fff',
+                    border:'none', borderRadius:10, fontSize:13.5,
+                    fontWeight:800,
+                    cursor: deleteSubmitting ? 'not-allowed' : 'pointer',
+                    fontFamily:"'DM Sans',sans-serif",
+                    boxShadow: deleteSubmitting ? 'none' : '0 10px 28px rgba(239,68,68,0.22)',
+                    transition:'all 150ms ease',
+                  }}
+                >
+                  {deleteSubmitting ? (
+                    <>
+                      <span className="spinner" style={{ borderTopColor:'#fff' }} />
+                      Suppression…
+                    </>
+                  ) : (
+                    <>
+                      {IC.trash}
+                      Supprimer
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {isModalOpen && (
         <div className="up-modal" onClick={e => e.target===e.currentTarget && !submitting && setIsModalOpen(false)}>
           <div className="modal-card" style={{
@@ -743,13 +887,14 @@ const UsersPage = () => {
                     onChange={e => setFormData(p => ({ ...p, username: e.target.value }))}/>
                 </FL>
                 <FL label="Rôle">
-                  <select className="up-field" value={formData.role}
-                    onChange={e => setFormData(p => ({ ...p, role: e.target.value as UserRole }))}>
-                    <option value="waiter">Serveur</option>
-                    <option value="cashier">Caissier</option>
-                    <option value="manager">Manager</option>
-                    <option value="admin">Admin</option>
-                  </select>
+<select className="up-field" value={formData.role}
+                     onChange={e => setFormData(p => ({ ...p, role: e.target.value as UserRole }))}>
+                     <option value="waiter">Serveur</option>
+                     <option value="cashier">Caissier</option>
+                     <option value="manager">Manager</option>
+                     <option value="admin">Admin</option>
+                     <option value="owner">Owner</option>
+                   </select>
                 </FL>
               </div>
 

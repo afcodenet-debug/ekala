@@ -1,9 +1,10 @@
-import React, { useEffect, useRef, useCallback } from 'react';
+import React, { useEffect, useRef } from 'react';
 import {
   Plus, Minus, Trash2, CreditCard, Banknote,
   Smartphone, Receipt, X, Package, ChevronUp, ShoppingBag
 } from 'lucide-react';
 import { usePOSStore } from '../../../stores/usePOSStore';
+import { useTableStore } from '../../../stores/useTableStore';
 import { useProductStore } from '../../products/hooks/useProductStore';
 import { useI18n } from '../../../lib/i18n';
 import { useSettingsStore } from '../../../stores/useSettingsStore';
@@ -276,6 +277,7 @@ export const OrderSummary: React.FC<OrderSummaryProps> = ({ onCheckout, onSaveOr
   const lang = useSettingsStore(s => s.language);
   const { currency } = useSettingsStore();
   const { products } = useProductStore();
+  const { tables } = useTableStore();
   const {
     selectedTableId, cart, currentOrder,
     isProcessing, updateQuantity, removeFromCart, clearCart,
@@ -330,9 +332,12 @@ export const OrderSummary: React.FC<OrderSummaryProps> = ({ onCheckout, onSaveOr
   const fmtLine      = (p: number, q: number) => formatPrice(p * q, currency, lang);
   const totalItems   = cart.reduce((s, i) => s + i.quantity, 0);
 
-  const tableTitle = selectedTableId
-    ? `${t('pos.tableLabel')} ${selectedTableId}`
-    : cart.length > 0 ? (t('pos.draftOrder') || 'Brouillon') : t('pos.awaitingTable');
+  const selectedTable = tables.find(t => t.id === selectedTableId);
+  const tableTitle = selectedTable
+    ? `${t('pos.tableLabel')} ${selectedTable.table_number}`
+    : selectedTableId
+      ? `${t('pos.tableLabel')} ${selectedTableId}`
+      : cart.length > 0 ? (t('pos.draftOrder') || 'Brouillon') : t('pos.awaitingTable');
 
   const orderSubtitle = currentOrder
     ? `${t('pos.orderLabel')} ${currentOrder.id}`
@@ -421,7 +426,7 @@ export const OrderSummary: React.FC<OrderSummaryProps> = ({ onCheckout, onSaveOr
                 <ItemImage item={item} size={40} />
                 <div className="os-item-info">
                   <div className="os-item-name">{item.name}</div>
-                  <div className="mono os-item-unit">{fmtUnit(item.price)} {t('pos.perUnit')}</div>
+                  <div className="mono os-item-unit">{item.price}</div>
                 </div>
                 <div className="os-qty-ctrl">
                   <button className="os-qty-btn" aria-label="Decrease" onClick={() => handleQuantityChange(item.productId, -1)}><Minus size={12} strokeWidth={3} /></button>
