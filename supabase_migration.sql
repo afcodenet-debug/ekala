@@ -330,7 +330,7 @@ CREATE TABLE IF NOT EXISTS inventory_movements (
     unit_cost NUMERIC(12,4) DEFAULT 0,
     total_value NUMERIC(12,4) DEFAULT 0,
     reference_type TEXT,
-    reference_id BIGINT,
+    reference_id TEXT,
     reason TEXT,
     created_by BIGINT REFERENCES users(id) ON DELETE SET NULL,
     approved_by BIGINT REFERENCES users(id) ON DELETE SET NULL,
