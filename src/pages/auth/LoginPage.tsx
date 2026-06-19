@@ -14,6 +14,7 @@ import { Link, useSearchParams, useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../../stores/useAuthStore';
 import { useI18n } from '../../lib/i18n';
 import { APP_NAME } from '../../lib/app-config';
+import { api } from '../../lib/api-client';
 import { Mail, Lock, Eye, EyeOff, Building2, ArrowRight, ArrowLeft, User, Loader2 } from 'lucide-react';
 
 type LoginStep = 'tenant' | 'credentials';
@@ -73,35 +74,10 @@ const LoginPage = () => {
     setLoadingTenant(true);
     setTenantError('');
     try {
-      const resp = await fetch(`/api/auth/tenants/${slug.trim().toLowerCase()}`);
+      // Use the API client which points to the Render backend, not the Vercel frontend
+      const data = await api.auth.getTenant(slug.trim().toLowerCase()) as any;
       
-      // Handle non-OK responses
-      if (!resp.ok) {
-        let errorData: any = {};
-        try {
-          const text = await resp.text();
-          if (text) {
-            errorData = JSON.parse(text);
-          }
-        } catch {}
-        throw new Error(errorData?.message || errorData?.error || `Établissement introuvable (HTTP ${resp.status})`);
-      }
-      
-      // Parse JSON response with better error handling
-      const text = await resp.text();
-      if (!text || text.trim() === '') {
-        throw new Error('Réponse serveur vide. Veuillez réessayer.');
-      }
-      
-      let data: any;
-      try {
-        data = JSON.parse(text);
-      } catch (parseError) {
-        console.error('[Login] JSON parse error:', parseError, 'Response text:', text.slice(0, 200));
-        throw new Error('Réponse serveur invalide. Veuillez contacter le support.');
-      }
-      
-      setTenant(data);
+      setTenant(data as TenantInfo);
       setStep('credentials');
       // Focus PIN input when staff mode
       setTimeout(() => {
