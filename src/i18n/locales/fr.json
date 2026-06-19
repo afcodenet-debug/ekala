@@ -79,6 +79,28 @@
     "payment": "PAIEMENT",
     "auditLog": "JOURNAL D'AUDIT"
   },
+  "login": {
+    "serverOffline": "Serveur hors ligne",
+    "checkConnection": "Vérifiez votre connexion",
+    "connectToVenue": "Connectez-vous à votre établissement",
+    "enterVenueName": "Entrez le nom de votre établissement pour commencer",
+    "venueNamePlaceholder": "Nom de l'établissement (ex: mon-commerce)",
+    "continue": "Continuer",
+    "noAccount": "Pas encore de compte pour votre établissement ?",
+    "startFreeTrial": "Démarrer mon essai gratuit de 7 jours",
+    "online": "En ligne",
+    "offline": "Hors ligne",
+    "admin": "Administrateur",
+    "staff": "Personnel",
+    "usernameOrPhonePlaceholder": "Nom d'utilisateur ou téléphone (optionnel)",
+    "useNumericKeypad": "Utilisez le clavier numérique · Entrée pour valider",
+    "login": "Connexion",
+    "connecting": "Connexion...",
+    "invalidCredentials": "Email ou mot de passe incorrect.",
+    "accessDenied": "Accès refusé — vérifiez vos identifiants",
+    "setupSuccess": "Votre compte a été créé avec succès. Vous pouvez vous connecter.",
+    "backToRestaurant": "Retour à la sélection de l'établissement"
+  },
   "settings": {
     "title": "Paramètres de l'application",
     "subtitle": "Configurez les préférences régionales, financières et de reçu",

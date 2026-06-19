@@ -15,7 +15,7 @@ import { useAuthStore } from '../../stores/useAuthStore';
 import { useI18n } from '../../lib/i18n';
 import { APP_NAME } from '../../lib/app-config';
 import { api } from '../../lib/api-client';
-import { Mail, Lock, Eye, EyeOff, Building2, ArrowRight, ArrowLeft, User, Loader2 } from 'lucide-react';
+import { Mail, Lock, Eye, EyeOff, Building2, ArrowRight, ArrowLeft, User, Loader2, Globe } from 'lucide-react';
 
 type LoginStep = 'tenant' | 'credentials';
 type AuthMode = 'admin' | 'staff';
@@ -27,6 +27,41 @@ interface TenantInfo {
   logo_url?: string;
   primary_color?: string;
   status?: string;
+}
+
+const LANGS = [
+  { key: 'en' as const, label: 'EN' },
+  { key: 'fr' as const, label: 'FR' },
+  { key: 'pt' as const, label: 'PT' },
+];
+
+/** Language switcher pill — rendered inside LoginPage but defined outside to avoid re-creation */
+function LanguageSwitcher({ lang, setLang }: { lang: string; setLang: (l: 'en' | 'fr' | 'pt') => void }) {
+  return (
+    <div style={{
+      position: 'fixed', top: 12, right: 14, zIndex: 100,
+      display: 'flex', gap: 3,
+      background: 'rgba(0,0,0,0.35)', borderRadius: 999,
+      padding: '3px 4px', backdropFilter: 'blur(8px)',
+    }}>
+      <Globe size={12} style={{ color: 'rgba(255,255,255,0.25)', margin: 'auto 4px' }} />
+      {LANGS.map(l => (
+        <button
+          key={l.key}
+          onClick={() => setLang(l.key)}
+          style={{
+            padding: '3px 7px', fontSize: 10, borderRadius: 999, border: 'none',
+            background: lang === l.key ? '#d4af37' : 'transparent',
+            color: lang === l.key ? '#0a0a14' : 'rgba(255,255,255,0.45)',
+            fontWeight: 700, cursor: 'pointer', letterSpacing: '0.04em',
+            transition: 'all 0.15s',
+          }}
+        >
+          {l.label}
+        </button>
+      ))}
+    </div>
+  );
 }
 
 const LoginPage = () => {
@@ -53,13 +88,45 @@ const LoginPage = () => {
 
   const { loginEmail, loginPin, isServerHealthy, checkServer, isAuthenticated } = useAuthStore();
   const navigate = useNavigate();
-  const { t } = useI18n();
+
+  const [lang, setLang] = useState<string>(() => {
+    try {
+      const raw = localStorage.getItem('ekala-lang');
+      if (raw === 'fr' || raw === 'pt' || raw === 'en') return raw;
+    } catch {}
+    return 'en';
+  });
+
+  const t = useCallback((key: string) => {
+    try {
+      const ns = key.split('.')[0];
+      const rest = key.slice(ns.length + 1);
+      const mod = require(`../../i18n/locales/${lang}.json`);
+      const node = mod[ns];
+      if (!node) return key;
+      const val = rest.split('.').reduce((o: any, k: string) => (o && o[k] !== undefined ? o[k] : null), node);
+      if (typeof val === 'string') return val;
+    } catch {}
+    return key;
+  }, [lang]);
+
+  useEffect(() => {
+    try { localStorage.setItem('ekala-lang', lang); } catch {}
+  }, [lang]);
   const pinInputRef = useRef<HTMLInputElement>(null);
 
   // ── Redirect if already authenticated ────────────────────────────────────────
   useEffect(() => {
     if (isAuthenticated) navigate('/dashboard', { replace: true });
   }, [isAuthenticated, navigate]);
+
+  // ── Guard: if credentials step but tenant is missing, go back ────────────────
+  useEffect(() => {
+    if (step === 'credentials' && !tenant && !loadingTenant) {
+      setStep('tenant');
+      setTenantError(t('login.tenantNotFound'));
+    }
+  }, [step, tenant, loadingTenant, t]);
 
   // ── Server health check ──────────────────────────────────────────────────────
   useEffect(() => {
@@ -74,23 +141,21 @@ const LoginPage = () => {
     setLoadingTenant(true);
     setTenantError('');
     try {
-      // Use the API client which points to the Render backend, not the Vercel frontend
       const data = await api.auth.getTenant(slug.trim().toLowerCase()) as any;
       
       setTenant(data as TenantInfo);
       setStep('credentials');
-      // Focus PIN input when staff mode
       setTimeout(() => {
         if (mode === 'staff') pinInputRef.current?.focus();
       }, 200);
     } catch (e: any) {
       console.error('[Login] Tenant fetch error:', e);
-      setTenantError(e.message || 'Établissement introuvable');
+      setTenantError(t('login.tenantNotFound'));
       setTenant(null);
     } finally {
       setLoadingTenant(false);
     }
-  }, [mode]);
+  }, [mode, t]);
 
   // ── Auto-fetch tenant from URL param ─────────────────────────────────────────
   useEffect(() => {
@@ -111,17 +176,17 @@ const LoginPage = () => {
         navigate('/dashboard');
       } else {
         setShaking(true);
-        setError('Email ou mot de passe incorrect.');
+        setError(t('login.invalidCredentials'));
         setTimeout(() => setShaking(false), 450);
       }
     } catch (e: any) {
       setShaking(true);
-      setError(e.message || 'Connexion échouée.');
+      setError(e.message || t('login.invalidCredentials'));
       setTimeout(() => setShaking(false), 450);
     } finally {
       setSubmitting(false);
     }
-  }, [email, password, isServerHealthy, submitting, loginEmail, navigate]);
+  }, [email, password, isServerHealthy, submitting, loginEmail, navigate, t]);
 
   // ── Staff login (PIN) ───────────────────────────────────────────────────────
   const handlePinLogin = useCallback(async () => {
@@ -135,25 +200,25 @@ const LoginPage = () => {
         navigate('/dashboard');
       } else {
         setShaking(true);
-        setError('Accès refusé — vérifiez vos identifiants');
+        setError(t('login.accessDenied'));
         setPin('');
         setTimeout(() => setShaking(false), 450);
       }
     } catch (e: any) {
       setShaking(true);
-      setError(e.message || 'Accès refusé');
+      setError(e.message || t('login.accessDenied'));
       setPin('');
       setTimeout(() => setShaking(false), 450);
     } finally {
       setSubmitting(false);
     }
-  }, [pin, identity, tenantSlug, isServerHealthy, submitting, loginPin, navigate]);
+  }, [pin, identity, tenantSlug, isServerHealthy, submitting, loginPin, navigate, t]);
 
   // ── Auto-submit PIN when 4 digits entered ────────────────────────────────────
   useEffect(() => {
     if (mode === 'staff' && pin.length === 4) {
-      const t = setTimeout(handlePinLogin, 80);
-      return () => clearTimeout(t);
+      const timer = setTimeout(handlePinLogin, 80);
+      return () => clearTimeout(timer);
     }
   }, [pin, mode, handlePinLogin]);
 
@@ -181,7 +246,7 @@ const LoginPage = () => {
 
   // ── Theme color ──────────────────────────────────────────────────────────────
   const accentColor = tenant?.primary_color || '#D4AF37';
-  const tenantDisplayName = tenant?.name || 'QBITE';
+  const tenantDisplayName = tenant?.name || APP_NAME;
 
   // ─────────────────────────────────────────────────────────────────────────────
   // STEP 1: Tenant Selection (Establishment Slug)
@@ -190,6 +255,7 @@ const LoginPage = () => {
   if (step === 'tenant') {
     return (
       <div className="lp-root">
+        <LanguageSwitcher lang={lang} setLang={setLang} />
         <div className="lp-grid" />
         <div className="lp-glow-a" />
         <div className="lp-glow-b" />
@@ -206,12 +272,12 @@ const LoginPage = () => {
                 <path d="M12 2l8 4v6c0 5-4 9.3-8 10C8 21.3 4 17 4 12V6l8-4z"/>
               </svg>
               <span style={{ fontSize: 9.5, fontWeight: 800, color: 'rgba(212,175,55,0.7)', letterSpacing: '0.22em', textTransform: 'uppercase' }}>
-                Portail d'Accès Sécurisé
+                {APP_NAME}
               </span>
             </div>
 
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 14, marginBottom: 8 }}>
-            <div className="lp-logo-mark" title="QBITE">
+            <div className="lp-logo-mark" title={APP_NAME}>
               <svg width="26" height="26" viewBox="0 0 24 24" fill="white" stroke="none">
                   <path d="M13 2L4.5 13.5H11L10 22L19.5 10.5H13L13 2Z"/>
                 </svg>
@@ -241,10 +307,10 @@ const LoginPage = () => {
 
           <div style={{ marginBottom: 24 }}>
             <h2 style={{ fontSize: 22, fontWeight: 800, color: '#eeeef5', margin: '0 0 6px', textAlign: 'center' }}>
-              Connexion à votre établissement
+              {t('login.connectToVenue')}
             </h2>
             <p style={{ fontSize: 13, color: 'rgba(255,255,255,0.4)', textAlign: 'center', margin: 0 }}>
-              Entrez le nom de votre restaurant pour commencer
+              {t('login.enterVenueName')}
             </p>
           </div>
 
@@ -254,7 +320,7 @@ const LoginPage = () => {
               <input
                 className="lp-input"
                 type="text"
-                placeholder="Nom du restaurant (ex: mama-africa)"
+                placeholder={t('login.venueNamePlaceholder')}
                 value={tenantSlug}
                 onChange={e => { setTenantSlug(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, '')); setTenantError(''); }}
                 onKeyDown={e => { if (e.key === 'Enter' && tenantSlug.trim()) fetchTenant(tenantSlug); }}
@@ -288,19 +354,19 @@ const LoginPage = () => {
               }}
             >
               {loadingTenant ? (
-                <><Loader2 size={16} className="animate-spin" /> Recherche...</>
+                <><Loader2 size={16} className="animate-spin" /> {t('login.connecting')}</>
               ) : (
-                <>Continuer <ArrowRight size={16} /></>
+                <>{t('login.continue')} <ArrowRight size={16} /></>
               )}
             </button>
           </div>
 
           <div style={{ textAlign: 'center', marginTop: 24, padding: '14px 0', borderTop: '1px solid rgba(255,255,255,0.05)' }}>
             <p style={{ fontSize: 12, color: 'rgba(255,255,255,0.35)', margin: '0 0 8px' }}>
-              Pas encore de compte pour votre établissement ?
+              {t('login.noAccount')}
             </p>
             <Link to="/signup" style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: `linear-gradient(135deg, rgba(212,175,55,0.12), rgba(212,175,55,0.04))`, border: `1px solid rgba(212,175,55,0.3)`, color: '#D4AF37', padding: '10px 20px', borderRadius: 10, textDecoration: 'none', fontSize: 13, fontWeight: 700 }}>
-              Démarrer mon essai gratuit de 7 jours
+              {t('login.startFreeTrial')}
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
             </Link>
           </div>
@@ -309,7 +375,7 @@ const LoginPage = () => {
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 20, marginTop: 28 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
               <span style={{ width: 6, height: 6, borderRadius: '50%', background: isServerHealthy ? '#10b981' : '#ef4444', boxShadow: isServerHealthy ? '0 0 6px rgba(16,185,129,0.5)' : 'none', display: 'block', animation: isServerHealthy ? 'live-pulse 2s ease-in-out infinite' : 'none' }} />
-              <span style={{ fontSize: 10.5, color: 'rgba(255,255,255,0.25)', fontWeight: 600 }}>{isServerHealthy ? 'Serveur en ligne' : 'Hors ligne'}</span>
+              <span style={{ fontSize: 10.5, color: 'rgba(255,255,255,0.25)', fontWeight: 600 }}>{isServerHealthy ? t('login.online') : t('login.offline')}</span>
             </div>
             <span style={{ width: 1, height: 12, background: 'rgba(255,255,255,0.07)' }} />
             <span style={{ fontSize: 10.5, color: 'rgba(255,255,255,0.18)', fontWeight: 700, letterSpacing: '0.1em' }}>v3.0.0</span>
@@ -329,6 +395,7 @@ const LoginPage = () => {
 
   return (
     <div className="lp-root">
+        <LanguageSwitcher lang={lang} setLang={setLang} />
       <div className="lp-grid" />
       <div className="lp-glow-a" />
       <div className="lp-glow-b" />
@@ -343,7 +410,7 @@ const LoginPage = () => {
                   color: '#9ca3af', borderRadius: 10, width: 36, height: 36,
                   display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', flexShrink: 0,
                 }}
-                title="Retour à la sélection de l'établissement"
+                title={t('login.backToVenue')}
           >
             <ArrowLeft size={16} />
           </button>
@@ -352,7 +419,7 @@ const LoginPage = () => {
               {tenantDisplayName}
             </h2>
             <p style={{ fontSize: 11, color: 'rgba(255,255,255,0.3)', margin: '2px 0 0' }}>
-              Connectez-vous à votre espace de travail
+              {t('login.connectToVenue')}
             </p>
           </div>
           {tenant?.logo_url && (
@@ -363,7 +430,7 @@ const LoginPage = () => {
         {/* Setup success banner */}
         {showSetupSuccess && (
           <div style={{ background: 'rgba(16,185,129,0.1)', border: '1px solid rgba(16,185,129,0.3)', borderRadius: 12, padding: '12px 16px', marginBottom: 20, color: '#6ee7b7', fontSize: 13, textAlign: 'center' }}>
-            Votre compte a été créé avec succès. Vous pouvez vous connecter.
+            {t('login.setupSuccess')}
           </div>
         )}
 
@@ -380,7 +447,7 @@ const LoginPage = () => {
               }}
             >
               <Lock size={14} style={{ display: 'inline', marginRight: 6 }} />
-              Administrateur
+              {t('login.admin')}
             </button>
             <button
               onClick={() => { setMode('staff'); setError(''); setPin(''); }}
@@ -392,7 +459,7 @@ const LoginPage = () => {
               }}
             >
               <User size={14} style={{ display: 'inline', marginRight: 6 }} />
-              Personnel
+              {t('login.staff')}
             </button>
           </div>
 
@@ -414,7 +481,7 @@ const LoginPage = () => {
                 <input
                   className="lp-input"
                   type="email"
-                  placeholder="Email administrateur"
+                  placeholder={t('login.admin') + ' email'}
                   value={email}
                   onChange={e => setEmail(e.target.value)}
                   autoComplete="email"
@@ -427,7 +494,7 @@ const LoginPage = () => {
                 <input
                   className="lp-input"
                   type={showPassword ? 'text' : 'password'}
-                  placeholder="Mot de passe"
+                  placeholder="Password"
                   value={password}
                   onChange={e => setPassword(e.target.value)}
                   onKeyDown={e => { if (e.key === 'Enter') handleAdminLogin(); }}
@@ -437,7 +504,7 @@ const LoginPage = () => {
                 <button
                   onClick={() => setShowPassword(!showPassword)}
                   style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', color: '#6b7280', cursor: 'pointer', padding: 4 }}
-                  title={showPassword ? 'Masquer le mot de passe' : 'Afficher le mot de passe'}
+                  title={showPassword ? 'Hide password' : 'Show password'}
                 >
                   {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
                 </button>
@@ -454,7 +521,7 @@ const LoginPage = () => {
                   display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
                 }}
               >
-                {submitting ? <><Loader2 size={16} className="animate-spin" /> Connexion...</> : 'Se connecter'}
+                {submitting ? <><Loader2 size={16} className="animate-spin" /> {t('login.connecting')}</> : t('login.login')}
               </button>
             </div>
           ) : (
@@ -476,7 +543,7 @@ const LoginPage = () => {
                 <input
                   className="lp-input"
                   type="text"
-                  placeholder="Nom d'utilisateur ou téléphone (optionnel)"
+                  placeholder={t('login.usernameOrPhonePlaceholder')}
                   value={identity}
                   onChange={e => setIdentity(e.target.value)}
                   autoComplete="username"
@@ -494,9 +561,9 @@ const LoginPage = () => {
                 {[1,2,3,4,5,6,7,8,9].map(num => (
                   <button key={num} className="kp" onClick={() => handleNumberClick(num.toString())}>{num}</button>
                 ))}
-                <button className="kp kp-clear" onClick={handleClear}>Eff.</button>
+                <button className="kp kp-clear" onClick={handleClear}>CLR</button>
                 <button className="kp" onClick={() => handleNumberClick('0')}>0</button>
-                <button className="kp kp-enter" onClick={handlePinLogin} disabled={pin.length < 4 || submitting} title="Valider le code PIN">
+                <button className="kp kp-enter" onClick={handlePinLogin} disabled={pin.length < 4 || submitting} title="Validate PIN">
                   <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" style={{ marginLeft: 4 }}>
                     <path d="M5 12h14M12 5l7 7-7 7"/>
                   </svg>
@@ -504,7 +571,7 @@ const LoginPage = () => {
               </div>
 
               <p style={{ fontSize: 10.5, color: 'rgba(255,255,255,0.15)', textAlign: 'center', marginTop: 18 }}>
-                Utilisez le clavier numérique · Entrée pour valider
+                {t('login.useNumericKeypad')}
               </p>
             </div>
           )}
@@ -514,7 +581,7 @@ const LoginPage = () => {
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 20, marginTop: 24 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
             <span style={{ width: 6, height: 6, borderRadius: '50%', background: isServerHealthy ? '#10b981' : '#ef4444', boxShadow: isServerHealthy ? '0 0 6px rgba(16,185,129,0.5)' : 'none', display: 'block', animation: isServerHealthy ? 'live-pulse 2s ease-in-out infinite' : 'none' }} />
-            <span style={{ fontSize: 10.5, color: 'rgba(255,255,255,0.25)', fontWeight: 600 }}>{isServerHealthy ? 'Serveur en ligne' : 'Hors ligne'}</span>
+            <span style={{ fontSize: 10.5, color: 'rgba(255,255,255,0.25)', fontWeight: 600 }}>{isServerHealthy ? t('login.online') : t('login.offline')}</span>
           </div>
           <span style={{ width: 1, height: 12, background: 'rgba(255,255,255,0.07)' }} />
           <span style={{ fontSize: 10.5, color: 'rgba(255,255,255,0.18)', fontWeight: 700, letterSpacing: '0.1em' }}>v3.0.0</span>

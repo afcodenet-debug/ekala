@@ -746,6 +746,26 @@ const T = {
     enterPin:          d('Please enter your PIN code', 'Veuillez saisir votre PIN', 'Por favor, introduza o seu PIN'),
     serverOffline:     d('Server unavailable', 'Serveur inaccessible', 'Servidor indisponível'),
     checkConnection:   d('Check your network connection', 'Vérifiez votre connexion réseau', 'Verifique sua conexão de rede'),
+    
+    // LoginPage.tsx additional keys
+    connectToVenue: d('Connect to your establishment', 'Connectez-vous à votre établissement', 'Conecte-se ao seu estabelecimento'),
+    enterVenueName: d('Enter your establishment name to start', 'Entrez le nom de votre établissement pour commencer', 'Digite o nome do seu estabelecimento para começar'),
+    venueNamePlaceholder: d('Establishment name (e.g. my-venue)', 'Nom de l\'établissement (ex: mon-commerce)', 'Nome do estabelecimento (ex: meu-estabelecimento)'),
+    continue: d('Continue', 'Continuer', 'Continuar'),
+    connecting: d('Connecting...', 'Connexion...', 'Conectando...'),
+    noAccount: d("Don't have an account for your restaurant yet?", 'Pas encore de compte pour votre établissement ?', 'Ainda não tem uma conta para o seu restaurante?'),
+    startFreeTrial: d('Start your 7-day free trial', 'Démarrer mon essai gratuit de 7 jours', 'Comece o seu teste gratuito de 7 dias'),
+    online: d('Online', 'En ligne', 'Online'),
+    offline: d('Offline', 'Hors ligne', 'Offline'),
+    admin: d('Administrator', 'Administrateur', 'Administrador'),
+    staff: d('Staff', 'Personnel', 'Equipe'),
+    usernameOrPhonePlaceholder: d('Username or phone (optional)', "Nom d'utilisateur ou téléphone (optionnel)", 'Nome de usuário ou telefone (opcional)'),
+    useNumericKeypad: d('Use numeric keypad · Enter to validate', 'Utilisez le clavier numérique · Entrée pour valider', 'Use o teclado numérico · Enter para validar'),
+    login: d('Login', 'Connexion', 'Entrar'),
+    invalidCredentials: d('Invalid email or password.', 'Email ou mot de passe incorrect.', 'Email ou senha inválidos.'),
+    accessDenied: d('Access denied — check your credentials', 'Accès refusé — vérifiez vos identifiants', 'Acesso negado — verifique suas credenciais'),
+    setupSuccess: d('Your account has been created successfully. You can now log in.', 'Votre compte a été créé avec succès. Vous pouvez vous connecter.', 'Sua conta foi criada com sucesso. Você já pode fazer login.'),
+    backToRestaurant: d('Back to restaurant selection', 'Retour à la sélection de l\'établissement', 'Voltar à seleção de restaurante'),
   },
 
   // ── receipt / printer ────────────────────────────────────────────────

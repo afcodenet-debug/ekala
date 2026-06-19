@@ -79,6 +79,28 @@
     "payment": "PAYMENT",
     "auditLog": "AUDIT LOG"
   },
+  "login": {
+    "serverOffline": "Server offline",
+    "checkConnection": "Check your connection",
+    "connectToVenue": "Connect to your establishment",
+    "enterVenueName": "Enter your establishment name to start",
+    "venueNamePlaceholder": "Establishment name (e.g. my-venue)",
+    "continue": "Continue",
+    "noAccount": "Don't have an account for your restaurant yet?",
+    "startFreeTrial": "Start your 7-day free trial",
+    "online": "Online",
+    "offline": "Offline",
+    "admin": "Administrator",
+    "staff": "Staff",
+    "usernameOrPhonePlaceholder": "Username or phone (optional)",
+    "useNumericKeypad": "Use numeric keypad · Enter to validate",
+    "login": "Login",
+    "connecting": "Connecting...",
+    "invalidCredentials": "Invalid email or password.",
+    "accessDenied": "Access denied — check your credentials",
+    "setupSuccess": "Your account has been created successfully. You can now log in.",
+    "backToRestaurant": "Back to restaurant selection"
+  },
   "settings": {
     "title": "Application Settings",
     "subtitle": "Configure regional, financial and receipt preferences",
