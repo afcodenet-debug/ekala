@@ -177,9 +177,29 @@ export async function request<T>(
       throw apiError;
     }
 
-    return response.json();
+    // Safe JSON parsing: some platforms (misroutes, 404 HTML, etc.) may return non-JSON bodies
+    const contentType = response.headers.get('content-type') || '';
+    if (contentType.includes('application/json') || contentType.includes('+json')) {
+      return response.json();
+    }
+
+    // Fallback: try to parse anyway, but if it fails return a clearer error
+    const text = await response.text().catch(() => '');
+    try {
+      return JSON.parse(text);
+    } catch {
+      const snippet = text ? text.slice(0, 400) : '';
+      const apiError = new Error(
+        `Réponse non-JSON (content-type="${contentType}"). ` +
+        `HTTP ${response.status}. Body: ${snippet || '<empty>'}`
+      );
+      (apiError as any).status = response.status;
+      (apiError as any).body = text;
+      (apiError as any).contentType = contentType;
+      throw apiError;
+    }
   } catch (error: any) {
-    if (error.name === 'AbortError') {
+    if (error?.name === 'AbortError') {
       throw error;
     }
     throw error;
