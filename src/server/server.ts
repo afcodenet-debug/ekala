@@ -57,13 +57,19 @@ console.log('[RENDER BOOT] Database schema initialized/verified.');
 // ⭐ FIX: Run startup migrations to ensure all critical columns exist
 // This prevents "no such column: tenant_id" errors during sync
 try {
-  const { runStartupMigrations } = require('../sync/startup-migration');
-  runStartupMigrations(db);
-  console.log('[RENDER BOOT] Startup migrations completed successfully');
+  const renderCloud = env.RENDER_CLOUD_MODE === true || String(env.RENDER_CLOUD_MODE) === 'true';
+  if (renderCloud) {
+    console.log('[RENDER BOOT] Cloud mode detected — skipping SQLite startup migrations (Supabase-only).');
+  } else if (!db) {
+    console.log('[RENDER BOOT] SQLite db not available — skipping startup migrations.');
+  } else {
+    const { runStartupMigrations } = require('../sync/startup-migration');
+    runStartupMigrations(db);
+    console.log('[RENDER BOOT] Startup migrations completed successfully');
+  }
 } catch (err: any) {
-  console.error('[RENDER BOOT] FATAL: Startup migrations failed:', err);
-  // Don't throw - allow server to start even if migrations fail
-  // The fail-fast logic in SyncOrchestratorV2 will catch schema issues later
+  console.error('[RENDER BOOT] Startup migrations failed:', err);
+  // Don't throw — allow server to start
 }
 
 const PORT = process.env.PORT || 3001;

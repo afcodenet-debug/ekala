@@ -53,7 +53,16 @@ const BOOTSTRAP_LOOKBACK_MINUTES = 60;
 function getPullConfig(): PullConfig {
   const explicit = process.env.ENABLE_SUPABASE_PULL;
   const hasSupabaseCreds = !!process.env.SUPABASE_URL && !!process.env.SUPABASE_SERVICE_ROLE_KEY;
-  let enabled = explicit === 'true' || explicit === '1' || (explicit === undefined && hasSupabaseCreds && !env.RENDER_CLOUD_MODE);
+
+  // Hard safety: if DB is disabled/null (Render cloud), never enable SQLite pull worker.
+  const dbAvailable = !!db;
+
+  let enabled =
+    explicit === 'true' ||
+    explicit === '1' ||
+    (explicit === undefined && hasSupabaseCreds && !env.RENDER_CLOUD_MODE);
+
+  if (!dbAvailable) enabled = false;
 
   return {
     enabled,
@@ -83,6 +92,13 @@ function ensureRemoteSyncSchema() {
 export async function runSupabasePullOnce(): Promise<void> {
   const config = getPullConfig();
   if (!config.enabled || isPulling) return;
+
+  if (!db) {
+    // Defensive guard: should never happen if config is correct.
+    lastPullStatus.lastError = '[PullSync] db is not available (SQLite disabled). Worker skipped.';
+    isPulling = false;
+    return;
+  }
 
   isPulling = true;
   lastPullStatus.lastPullAt = new Date().toISOString();
@@ -228,7 +244,8 @@ async function pullOrderItems(supabase: SupabaseClient, since: string, tenantId:
 
 export function startSupabasePullWorker(): void {
   const config = getPullConfig();
-  if (!config.enabled) return;
+  if (!config.enabled || !db) return;
+
   setTimeout(() => runSupabasePullOnce().catch(console.error), 5000);
   if (pullInterval) clearInterval(pullInterval);
   pullInterval = setInterval(() => runSupabasePullOnce().catch(console.error), config.intervalMs);
