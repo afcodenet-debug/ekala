@@ -56,6 +56,11 @@ export class SyncOrchestratorV2 {
     saleSync: SaleSyncService,
     userTenantSync: UserTenantSyncService
   ) {
+    // ⭐ CRITICAL FIX: Guard against null database (Render cloud mode)
+    if (!db) {
+      throw new Error('[SyncOrchestratorV2] Cannot initialize with null database. Use cloud mode (Supabase-only) instead.');
+    }
+
     this.db = db;
     this.supabase = createClient(supabaseUrl, supabaseAnonKey);
 

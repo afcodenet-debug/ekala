@@ -8,6 +8,12 @@ import type Database from 'better-sqlite3';
 import { ensureSyncTables } from './core/ensure-sync-tables';
 
 export function runStartupMigrations(db: Database.Database): void {
+  // ⭐ CRITICAL FIX: Guard against null database (Render cloud mode)
+  if (!db) {
+    console.warn('[Migration] Skipping startup migrations - database is null (cloud mode)');
+    return;
+  }
+
   console.log('[Migration] Running startup migrations...');
 
   // Étape 1: S'assurer que toutes les tables de sync existent

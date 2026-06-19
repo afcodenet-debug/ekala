@@ -54,6 +54,12 @@ function rebuildSyncOutboxTable(db: Database.Database): void {
 }
 
 export function ensureSyncTables(db: Database.Database) {
+  // ⭐ CRITICAL FIX: Guard against null database (Render cloud mode)
+  if (!db) {
+    console.warn('[SyncTables] Skipping ensureSyncTables - database is null (cloud mode)');
+    return;
+  }
+
   try {
     // --- sync_outbox (avec tenant_id) ---
     try {
