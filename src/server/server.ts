@@ -231,11 +231,19 @@ app.use('/api', (req, res, next) => {
     return next();
   }
 
-  // SaaS public endpoints (MVP)
+  // SaaS public endpoints (MVP) - no JWT required
   // GET /api/plans
   // POST /api/tenants
   // GET /api/tenants/:id
-  if (p === '/plans' || p.startsWith('/plans') || p === '/tenants' || p.startsWith('/tenants/')) {
+  // GET /api/tenants/check-email
+  // Payment endpoints (public webhooks)
+  // GET /api/payments/status
+  // GET /api/payments/:providerRef/status
+  // POST /api/payments/:providerRef/confirm
+  // POST /api/webhooks/*
+  if (p === '/plans' || p.startsWith('/plans') || 
+      p === '/tenants' || p.startsWith('/tenants/') ||
+      p.startsWith('/payments') || p.startsWith('/webhooks')) {
     return next();
   }
 
@@ -249,7 +257,8 @@ app.use('/api', (req, res, next) => {
   if (p === '/health') return next();
 
   // SaaS endpoints are public and do not rely on tenant scope from JWT
-  if (p === '/plans' || p === '/tenants' || p.startsWith('/tenants/')) {
+  if (p === '/plans' || p === '/tenants' || p.startsWith('/tenants/') ||
+      p.startsWith('/payments') || p.startsWith('/webhooks')) {
     return next();
   }
 
