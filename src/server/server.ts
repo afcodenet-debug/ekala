@@ -227,7 +227,8 @@ app.use('/api', (req, res, next) => {
   }
 
   // Also skip for auth endpoints (they handle their own auth)
-  if (p.startsWith('/auth')) {
+  // Note: p is req.path which is relative to the /api mount point
+  if (p === '/auth' || p.startsWith('/auth/')) {
     return next();
   }
 

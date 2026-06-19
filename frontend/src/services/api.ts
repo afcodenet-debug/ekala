@@ -34,10 +34,10 @@ export async function apiRequest<T>(
 
 // Auth
 export const authApi = {
-  login: (pin_code: string, identity?: string) => 
-    apiRequest('/auth/login', {
+  login: (pin_code: string, identity?: string, tenant_slug?: string) => 
+    apiRequest('/auth/login/pin', {
       method: 'POST',
-      body: JSON.stringify({ pin_code, identity })
+      body: JSON.stringify({ pin_code, identity, tenant_slug })
     }),
   status: () => apiRequest('/auth/status')
 };
@@ -124,6 +124,6 @@ export const reportsApi = {
   monthlySales: (month: string, year: string) =>
     apiRequest('/reports/monthly-sales', { params: { month, year } }),
   topProducts: (limit?: number) =>
-    apiRequest('/reports/top-products', { params: { limit } }),
+    apiRequest('/reports/top-products', { params: limit !== undefined ? { limit } : undefined }),
   lowStock: () => apiRequest('/reports/low-stock')
 };
