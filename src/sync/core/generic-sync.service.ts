@@ -251,6 +251,15 @@ export class GenericSyncService {
   private async handleUpsert(def: SyncEntityDefinition, item: any, payload: any, recordId: number, tenantId: string) {
     const { localTable, remoteTable, fieldMappings, statusMapping, foreignKeys } = def;
 
+    // NORMALIZATION: For inventory_movement, ensure reference_id is an integer for Supabase BIGINT
+    // This handles cases where reference_id might be stored as "3.0" in SQLite (TEXT column)
+    if (def.entity === 'inventory_movement' && payload.reference_id !== undefined && payload.reference_id !== null) {
+      const parsed = Number(payload.reference_id);
+      if (!Number.isNaN(parsed)) {
+        payload.reference_id = Math.trunc(parsed);
+      }
+    }
+
     const safeUpdate: Record<string, any> = {
       updated_at: new Date().toISOString(),
     };

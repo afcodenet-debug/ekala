@@ -47,9 +47,25 @@ router.get('/', async (req: any, res) => {
 router.post('/checkout', requirePermission('PROCESS_PAYMENTS'), async (req: any, res) => {
   const { order_id, payment_method: rawPaymentMethod, user_id: bodyUserId, discount = 0, tax = 0, items: requestItems } = req.body;
 
+  // Normalize numeric IDs from request body to prevent float strings like "3.0"
+  const normalizeId = (value: any): number | null => {
+    if (value === undefined || value === null) return null;
+    const num = Number(value);
+    if (!Number.isFinite(num)) return null;
+    return Math.trunc(num);
+  };
+  
+  const normalizedOrderId = normalizeId(order_id);
+  const normalizedUserId = bodyUserId ? normalizeId(bodyUserId) : null;
+  
+  // VALIDATION: Ensure we have a valid order_id
+  if (normalizedOrderId === null) {
+    return res.status(400).json({ error: 'Invalid order_id - must be a valid number' });
+  }
+
   // Resolve tenantId and user_id to local IDs to prevent FK failures
   let tenantId = req.tenant_id;
-  let user_id = bodyUserId || req.user?.sub || 1;
+  let user_id = normalizedUserId || req.user?.sub || 1;
 
   // 1. Resolve tenantId: if current tenantId doesn't exist in 'tenants' table, try finding a valid one
   const validTenant = db ? db.prepare('SELECT id FROM tenants WHERE id = ?').get(tenantId) : null;
@@ -82,7 +98,7 @@ router.post('/checkout', requirePermission('PROCESS_PAYMENTS'), async (req: any,
     payment_method = 'cash';
   }
 
-  console.log('[Sales] Checkout request:', { order_id, payment_method, user_id, discount, tax, itemsCount: Array.isArray(requestItems) ? requestItems.length : 'none' });
+  console.log('[Sales] Checkout request:', { order_id: normalizedOrderId, payment_method, user_id, discount, tax, itemsCount: Array.isArray(requestItems) ? requestItems.length : 'none' });
 
   // Cloud mode guard: db might be null (SQLite disabled)
   if (!db) {
@@ -101,18 +117,18 @@ router.post('/checkout', requirePermission('PROCESS_PAYMENTS'), async (req: any,
       const { data: supaOrder, error: supaErr } = await supabase
         .from('orders')
         .select('id, status, table_id, waiter_id, items, total')
-        .eq('id', order_id)
+        .eq('id', normalizedOrderId)
         .eq('tenant_id', tenantId)
         .single();
 
       if (supaErr || !supaOrder) {
-        console.error(`[Sales] Order ${order_id} not found in Supabase for tenant ${tenantId}`, supaErr);
+        console.error(`[Sales] Order ${normalizedOrderId} not found in Supabase for tenant ${tenantId}`, supaErr);
         return res.status(404).json({ error: 'Order not found in Supabase' });
       }
 
       // 2. Generate a unique invoice number (NOT NULL constraint)
       const invoiceNumber = `INV-${String(Date.now()).slice(-6)}${Math.floor(Math.random() * 100)}`;
-      console.log(`[Sales] Generated invoice number: ${invoiceNumber} for order ${order_id}`);
+      console.log(`[Sales] Generated invoice number: ${invoiceNumber} for order ${normalizedOrderId}`);
 
       const subtotal = Number((supaOrder as any).total || 0);
       const total_amount = subtotal - Number(discount) + Number(tax);
@@ -122,8 +138,8 @@ router.post('/checkout', requirePermission('PROCESS_PAYMENTS'), async (req: any,
         .from('sales')
         .insert({
           invoice_number: invoiceNumber,
-          order_id,
-          user_id,
+          order_id: normalizedOrderId,
+          user_id: user_id,
           payment_method,
           subtotal,
           discount: Number(discount),
@@ -159,7 +175,7 @@ router.post('/checkout', requirePermission('PROCESS_PAYMENTS'), async (req: any,
       }
 
       // 5. Update order status to paid
-      await supabase.from('orders').update({ status: 'paid', updated_at: new Date().toISOString() }).eq('id', order_id).eq('tenant_id', tenantId);
+      await supabase.from('orders').update({ status: 'paid', updated_at: new Date().toISOString() }).eq('id', normalizedOrderId).eq('tenant_id', tenantId);
 
       return res.json({
         saleId: saleData.id,
@@ -184,7 +200,7 @@ router.post('/checkout', requirePermission('PROCESS_PAYMENTS'), async (req: any,
 
   const transaction = db.transaction(() => {
     try {
-      order = db.prepare('SELECT * FROM orders WHERE id = ? AND tenant_id = ?').get(order_id, tenantId) as any;
+      order = db.prepare('SELECT * FROM orders WHERE id = ? AND tenant_id = ?').get(normalizedOrderId, tenantId) as any;
       console.log('[Sales] Found order:', order);
       if (!order) throw new Error('Order not found');
       if (order.status === 'paid') throw new Error('Order already finalized');
@@ -230,7 +246,7 @@ router.post('/checkout', requirePermission('PROCESS_PAYMENTS'), async (req: any,
             FROM order_items oi
             LEFT JOIN products p ON oi.product_id = p.id
             WHERE oi.order_id = ? AND oi.tenant_id = ?
-          `).all(order_id, tenantId) as any[];
+          `).all(normalizedOrderId, tenantId) as any[];
         }
       }
 
@@ -295,7 +311,7 @@ router.post('/checkout', requirePermission('PROCESS_PAYMENTS'), async (req: any,
 
       const saleParams = [
         invoiceNumber,
-        order_id,
+        normalizedOrderId,
         user_id,
         fulfilledSubtotal,
         saleDiscount,
@@ -321,7 +337,7 @@ router.post('/checkout', requirePermission('PROCESS_PAYMENTS'), async (req: any,
         const saleForSync = {
           id: saleId,
           invoice_number: invoiceNumber,
-          order_id,
+          order_id: normalizedOrderId,
           user_id,
           subtotal: fulfilledSubtotal,
           discount: saleDiscount,
@@ -382,6 +398,8 @@ router.post('/checkout', requirePermission('PROCESS_PAYMENTS'), async (req: any,
 
         itemStmt.run(saleId, item.productId, item.quantity, item.price, item.price * item.quantity, tenantId);
         
+        const saleReferenceId = Math.trunc(Number(saleId));
+
         const movementResult = movementStmt.run(
           item.productId,
           'sale',
@@ -393,7 +411,7 @@ router.post('/checkout', requirePermission('PROCESS_PAYMENTS'), async (req: any,
           `Sale #${saleId}`,
           user_id,
           'sale',
-          saleId,
+          saleReferenceId,
           tenantId
         );
 
@@ -410,7 +428,7 @@ router.post('/checkout', requirePermission('PROCESS_PAYMENTS'), async (req: any,
             reason: `Sale #${saleId}`,
             created_by: user_id,
             reference_type: 'sale',
-            reference_id: saleId,
+            reference_id: Math.trunc(Number(saleReferenceId)),
             tenant_id: tenantId,
             version: 1,
           });
@@ -436,11 +454,11 @@ router.post('/checkout', requirePermission('PROCESS_PAYMENTS'), async (req: any,
           UPDATE orders
           SET items = ?, total = ?, updated_at = CURRENT_TIMESTAMP
           WHERE id = ? AND tenant_id = ?
-        `).run(JSON.stringify(blockedItems), remainingTotal, order_id, tenantId);
+        `).run(JSON.stringify(blockedItems), remainingTotal, normalizedOrderId, tenantId);
 
         // Queue old items for deletion in sync
         try {
-          const oldItems = db.prepare('SELECT id FROM order_items WHERE order_id = ? AND tenant_id = ?').all(order_id, tenantId) as { id: number }[];
+          const oldItems = db.prepare('SELECT id FROM order_items WHERE order_id = ? AND tenant_id = ?').all(normalizedOrderId, tenantId) as { id: number }[];
           const sync = getProductSyncService();
           for (const item of oldItems) {
             sync.queueChangeInsideTransaction('order_item', 'delete', { id: item.id, tenant_id: tenantId });
@@ -449,18 +467,18 @@ router.post('/checkout', requirePermission('PROCESS_PAYMENTS'), async (req: any,
           console.warn('[Sales] Failed to queue item deletions for sync:', e);
         }
 
-        db.prepare('DELETE FROM order_items WHERE order_id = ? AND tenant_id = ?').run(order_id, tenantId);
+        db.prepare('DELETE FROM order_items WHERE order_id = ? AND tenant_id = ?').run(normalizedOrderId, tenantId);
         const orderItemStmt = db.prepare(`
           INSERT INTO order_items (order_id, product_id, quantity, unit_price, total_price, notes, tenant_id)
           VALUES (?, ?, ?, ?, ?, ?, ?)
         `);
 
         for (const item of blockedItems) {
-          orderItemStmt.run(order_id, item.productId, item.quantity, item.price, item.price * item.quantity, item.notes ?? null, tenantId);
+          orderItemStmt.run(normalizedOrderId, item.productId, item.quantity, item.price, item.price * item.quantity, item.notes ?? null, tenantId);
         }
 
         remainingOrder = {
-          id: order_id,
+          id: normalizedOrderId,
           table_id: order.table_id,
           waiter_id: order.waiter_id,
           status: order.status,
@@ -476,17 +494,17 @@ router.post('/checkout', requirePermission('PROCESS_PAYMENTS'), async (req: any,
           const itemsWithIds = db.prepare(`
             SELECT id, product_id as productId, quantity, unit_price as price, notes 
             FROM order_items WHERE order_id = ? AND tenant_id = ?
-          `).all(order_id, tenantId);
+          `).all(normalizedOrderId, tenantId);
           getOrderSyncService().queueOrderChange('update', { ...remainingOrder, items: itemsWithIds }, String(tenantId));
         } catch (e) {
           console.warn('[Sales] Failed to queue partial order update for sync:', e);
         }
       } else {
-        db.prepare("UPDATE orders SET status = 'paid', updated_at = CURRENT_TIMESTAMP WHERE id = ? AND tenant_id = ?").run(order_id, tenantId);
+        db.prepare("UPDATE orders SET status = 'paid', updated_at = CURRENT_TIMESTAMP WHERE id = ? AND tenant_id = ?").run(normalizedOrderId, tenantId);
         
         // Queue sync
         try {
-          const updatedOrder = db.prepare('SELECT * FROM orders WHERE id = ? AND tenant_id = ?').get(order_id, tenantId);
+          const updatedOrder = db.prepare('SELECT * FROM orders WHERE id = ? AND tenant_id = ?').get(normalizedOrderId, tenantId);
           getOrderSyncService().queueOrderChange('update', updatedOrder, String(tenantId));
         } catch (e) {
           console.warn('[Sales] Failed to queue order paid status for sync:', e);
@@ -517,7 +535,7 @@ router.post('/checkout', requirePermission('PROCESS_PAYMENTS'), async (req: any,
           const { loadRawSettings, notifyOrderCheckout } = require('../services/notification.service');
           const rawSettings = loadRawSettings();
           await notifyOrderCheckout(
-            order_id,
+            normalizedOrderId,
             itemsForNotify,
             result.saleTotal,
             payment_method,
