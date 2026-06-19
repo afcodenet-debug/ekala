@@ -101,6 +101,18 @@ export function createSaaSRouter(): Router {
     }
   });
 
+  // GET /api/tenants — list all tenants (for admin/debug purposes)
+  router.get('/tenants', async (_req, res) => {
+    try {
+      if (!r().tenants) return res.status(503).json({ error: 'SaaS not initialized' });
+      const tenants = await r().tenants!.listAll();
+      res.json({ tenants });
+    } catch (e: any) {
+      console.error('[SaaS] listTenants error:', e);
+      res.status(500).json({ error: 'LIST_TENANTS_FAILED', message: e.message });
+    }
+  });
+
   // GET /api/tenants/:id — get a tenant by ID enriched with subscription + plan + payments
   router.get('/tenants/:id', async (req, res) => {
     try {
