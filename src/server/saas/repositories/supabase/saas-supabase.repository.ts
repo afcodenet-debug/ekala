@@ -227,6 +227,7 @@ export class SupabaseTenantRepository implements ITenantRepository {
               email: ownerEmail,
               full_name: dto.name || `Owner ${slug}`,
               username: ownerUsername,
+              pin_code: '0000', // Default PIN for owner (required field)
               role: 'owner',
               is_active: true,
               tenant_id: tenant.id,
