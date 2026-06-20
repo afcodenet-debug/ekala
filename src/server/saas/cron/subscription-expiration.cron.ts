@@ -104,13 +104,13 @@ async function runExpirationCheck(): Promise<ExpirationResult> {
       // Trouve les tenants qui n'ont AUCUN abonnement actif
       const tenantIds = Array.from(new Set(expiredTenants.map((r: any) => r.tenant_id)));
       for (const tid of tenantIds) {
-        const { data: activeSubs } = await supabase
+        const { data: nonExpiredSubs } = await supabase
           .from('subscriptions')
           .select('id')
           .eq('tenant_id', tid)
-          .in('status', ['active', 'trial'])
+          .in('status', ['active', 'trial', 'pending'])
           .limit(1);
-        if (!activeSubs || activeSubs.length === 0) {
+        if (!nonExpiredSubs || nonExpiredSubs.length === 0) {
           // Pas d'abonnement actif → suspend le tenant
           const { error: e2 } = await supabase
             .from('tenants')

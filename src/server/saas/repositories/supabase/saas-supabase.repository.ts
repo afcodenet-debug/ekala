@@ -179,8 +179,7 @@ export class SupabaseTenantRepository implements ITenantRepository {
           default_currency: 'ZMW',
           default_locale: 'fr',
           timezone: 'Africa/Lusaka',
-          status: isTrial ? 'trial' : 'active',
-          is_provisioned: false,
+          status: isTrial ? 'trial' : 'pending',
         })
         .select()
         .single();
@@ -261,7 +260,8 @@ export class SupabaseTenantRepository implements ITenantRepository {
         .insert({
           tenant_id: tenant.id,
           plan_id: plan.id,
-          status: isTrial ? 'trial' : 'active',
+          plan_code: plan.code,
+          status: isTrial ? 'trial' : 'pending',
           started_at: now.toISOString(),
           current_period_start: now.toISOString(),
           current_period_end: periodEnd.toISOString(),

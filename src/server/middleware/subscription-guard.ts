@@ -24,7 +24,8 @@ export type SubscriptionState =
   | 'suspended'
   | 'cancelled'
   | 'expired'
-  | 'no_plan';
+  | 'no_plan'
+  | 'pending';
 
 export interface SubscriptionGuardResult {
   state: SubscriptionState;
@@ -184,6 +185,26 @@ async function checkSubscriptionStatus(tenantId: number): Promise<SubscriptionGu
 export const requireActiveSubscription = async (
   req: AuthenticatedRequest, res: Response, next: NextFunction
 ) => {
+  // Skip garanti pour les flows de paiement / voucher / billing
+  const PAYMENT_FLOW =
+    req.path.startsWith('/checkout') ||
+    req.path.startsWith('/payments') ||
+    req.path.startsWith('/webhooks') ||
+    req.path.startsWith('/vouchers') ||
+    req.path.startsWith('/voucher-purchase') ||
+    req.path.startsWith('/billing') ||
+    req.path.startsWith('/plans');
+
+  if (PAYMENT_FLOW) {
+    console.log('[SubGuard:SKIP]', { method: req.method, path: req.path, flow: true });
+    return next();
+  }
+
+  // Lectures publiques tenants
+  if (req.path.startsWith('/tenants') && ['GET','HEAD','OPTIONS'].includes(req.method)) {
+    return next();
+  }
+
   const tenantId = req.user?.tenant_id;
   if (!tenantId) return res.status(401).json({ error: 'UNAUTHORIZED', message: 'Authentification requise.' });
 
@@ -191,40 +212,43 @@ export const requireActiveSubscription = async (
   if (!result) { result = await checkSubscriptionStatus(tenantId); setCache(tenantId, result); }
   req.subscription = result;
 
-  switch (result.state) {
-    case 'active':
-    case 'trial':
+  const BLOCKED_STATES = ['pending', 'expired', 'suspended', 'cancelled', 'no_plan', 'past_due'];
+
+  if (BLOCKED_STATES.includes(result.state)) {
+    console.log('[403:SUBSCRIPTION_BLOCKED]', {
+      tenantId, userId: req.user?.sub, state: result.state, method: req.method, path: req.path
+    });
+
+    const readOnlyPaths = ['/billing', '/subscription', '/profile', '/vouchers', '/voucher-purchase'];
+    const isReadOnly = readOnlyPaths.some(p => req.path.startsWith(p));
+
+    if (isReadOnly) {
       return next();
+    }
 
-    case 'grace':
-      if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) {
-        res.setHeader('X-Subscription-Warning', 'grace_period');
-        res.setHeader('X-Subscription-Grace-Days', String(result.graceDaysRemaining || 0));
-        return next();
-      }
-      return res.status(403).json({
-        error: 'SUBSCRIPTION_GRACE_PERIOD',
-        message: 'Abonnement expiré — accès en lecture seule pendant la période de grâce.',
-        graceDaysRemaining: result.graceDaysRemaining,
-        planName: result.planName,
-        renewalUrl: '/billing',
-      });
-
-    default: // suspended | cancelled | expired | no_plan
-      return res.status(403).json({
-        error: 'SUBSCRIPTION_REQUIRED',
-        message: result.state === 'no_plan'
+    return res.status(403).json({
+      error: result.state === 'pending' ? 'SUBSCRIPTION_PENDING' : 'SUBSCRIPTION_REQUIRED',
+      message: result.state === 'pending'
+        ? 'Compte en attente d\'activation. Veuillez saisir un code voucher.'
+        : result.state === 'no_plan'
           ? 'Aucun abonnement actif. Choisissez un plan pour continuer.'
           : result.state === 'cancelled'
             ? 'Abonnement annulé. Souscrivez à un nouveau plan.'
-            : 'Abonnement expiré. Renouvelez pour continuer.',
-        state: result.state,
-        planName: result.planName,
-        daysUntilRenewal: result.daysUntilRenewal,
-        renewalUrl: '/billing',
-        pricingUrl: '/pricing',
-      });
+            : 'Abonnement expiré. Activez un voucher pour continuer.',
+      state: result.state,
+      planName: result.planName,
+      daysUntilRenewal: result.daysUntilRenewal,
+      renewalUrl: '/billing',
+      pricingUrl: '/pricing',
+    });
   }
+
+  // active / trial / grace
+  if (result.state === 'grace') {
+    res.setHeader('X-Subscription-Warning', 'grace_period');
+    res.setHeader('X-Subscription-Grace-Days', String(result.graceDaysRemaining || 0));
+  }
+  return next();
 };
 
 // ── Middleware: lenient (reads OK, writes blocked) ─────────────────────────────

@@ -135,5 +135,125 @@
       "saving": "Saving...",
       "saveChanges": "Save Changes"
     }
+  },
+  "subscription": {
+    "grace": {
+      "statusLabel": "Grace period",
+      "title": "Limited read-only access",
+      "desc": "Your subscription has expired. You can view your data but editing is disabled.",
+      "cta": "Renew now",
+      "secondary": "Continue in read-only mode",
+      "readOnlyAccess": "Read-only access",
+      "dayRemaining": "1 day remaining",
+      "daysRemaining": "{days} days remaining"
+    },
+    "suspended": {
+      "statusLabel": "Subscription suspended",
+      "title": "Your access has been interrupted",
+      "desc": "A payment could not be processed. Update your payment method to restore access immediately.",
+      "cta": "Update payment method",
+      "secondary": "Back to dashboard",
+      "meta": "Your data is preserved and remains accessible upon reactivation."
+    },
+    "cancelled": {
+      "statusLabel": "Subscription cancelled",
+      "title": "Your subscription has ended",
+      "desc": "Your subscription has been cancelled at your request. Choose a plan to regain full access.",
+      "cta": "Choose a plan",
+      "secondary": "Back to dashboard"
+    },
+    "expired": {
+      "statusLabel": "Subscription expired",
+      "title": "Your subscription has expired",
+      "desc": "The grace period is over. Renew now to regain full access to your projects.",
+      "cta": "Renew subscription",
+      "secondary": "Back to dashboard",
+      "meta": "Your data is kept for 90 days after expiration."
+    },
+    "no_plan": {
+      "statusLabel": "No subscription",
+      "title": "Choose your plan",
+      "desc": "Unlock all features by subscribing. Start free for 14 days.",
+      "cta": "View available plans",
+      "secondary": "Continue without subscription",
+      "meta": "No credit card required for the trial."
+    },
+    "close": "Close"
+  },
+  "pricing": {
+    "planCode": "{code}",
+    "price": {
+      "free": "Free"
+    },
+    "periods": {
+      "weekly": "/ wk",
+      "monthly": "/ mo",
+      "annual": "/ yr"
+    },
+    "trial": {
+      "daysAccess": "{days}-day full access"
+    },
+    "quota": {
+      "users": "Users",
+      "tables": "Tables",
+      "products": "Products",
+      "ordersPerMonth": "Orders/mo"
+    },
+    "features": {
+      "qr_menu": "Public QR menu",
+      "pos": "Full POS",
+      "reports": {
+        "advanced": "Advanced reports & analytics",
+        "standard": "Standard reports & analytics",
+        "basic": "Basic reports & analytics"
+      },
+      "inventory": "Stock management",
+      "multi_branch": "Multi-branch",
+      "api_access": "API access",
+      "priority_support": "Priority support"
+    },
+    "badges": {
+      "trial": "FREE TRIAL",
+      "popular": "POPULAR",
+      "pro": "PRO"
+    },
+    "cta": {
+      "trial": "Start for free",
+      "choosePlan": "Choose this plan"
+    },
+    "hero": {
+      "eyebrow": "7-day free trial · no credit card required",
+      "headline": "The POS that powers<br />your restaurant",
+      "subtitle": "QR menu, table management, POS, stock, reports — all the essentials, at a price that fits your budget."
+    },
+    "trust": {
+      "noCommitment": "No commitment",
+      "supportIncluded": "Support included",
+      "dataHostedInAfrica": "Data hosted in Africa"
+    },
+    "billingToggle": {
+      "weekly": "Weekly",
+      "monthly": "Monthly",
+      "annual": "Annual",
+      "annualBadge": "-20%"
+    },
+    "loading": {
+      "plans": "Loading plans…"
+    },
+    "error": {
+      "title": "Unable to load plans",
+      "hint": "Make sure the backend is reachable and the SaaS migration has been applied.",
+      "unexpectedFormat": "Unexpected response format"
+    },
+    "bottomNote": "All plans include SSL encryption, automatic backups and updates.<br>Cancel anytime from your billing space.",
+    "footer": {
+      "subtitle": "POS & QR MENU",
+      "brand": "EKALA POS & QR Menu",
+      "copyright": "© {year} Ekala. All rights reserved."
+    },
+    "nav": {
+      "login": "Log in",
+      "start": "Get started"
+    }
   }
 }

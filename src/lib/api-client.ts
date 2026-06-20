@@ -396,5 +396,21 @@ export const api = {
   get: <T>(url: string, options?: any) => request<T>(url, { method: 'GET', ...options }),
   post: <T>(url: string, data: any, options?: any) => request<T>(url, { method: 'POST', body: data, ...options }),
   patch: <T>(url: string, data: any, options?: any) => request<T>(url, { method: 'PATCH', body: data, ...options }),
-  delete: <T>(url: string, options?: any) => request<T>(url, { method: 'DELETE', ...options })
+  delete: <T>(url: string, options?: any) => request<T>(url, { method: 'DELETE', ...options }),
+
+  // SaaS — subscription & billing
+  saas: {
+    changePlan: (tenantId: number, planCode: string, paymentMethod?: string, paymentReference?: string) =>
+      api.patch(`/tenants/${tenantId}/subscription`, { plan_code: planCode, payment_method: paymentMethod, payment_reference: paymentReference }),
+    cancelSubscription: (tenantId: number) =>
+      api.post(`/tenants/${tenantId}/cancel-subscription`, {}),
+    getTenant: (tenantId: number) =>
+      api.get(`/tenants/${tenantId}`),
+    initiateCheckout: (tenantId: number, payload: Record<string, any>) =>
+      api.post(`/tenants/${tenantId}/checkout`, payload),
+    confirmPayment: (providerReference: string) =>
+      api.post(`/payments/${providerReference}/confirm`, {}),
+    getPlans: () =>
+      api.get('/plans'),
+  }
 };

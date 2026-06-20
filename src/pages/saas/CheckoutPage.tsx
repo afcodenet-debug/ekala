@@ -2,17 +2,18 @@
 // CheckoutPage — Phase 3 — Payment confirmation page
 // =============================================================================
 // Shows payment instructions (USSD, redirect URL) and a confirm button
-// for MOCK mode. After success, redirects to /login.
+// for MOCK mode. After success, redirects authenticated users to /billing
+// and new signups to /setup-account.
 // =============================================================================
 
 import { useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
-  Loader2, CheckCircle2, AlertCircle,  CreditCard,
+  Loader2, CheckCircle2, AlertCircle, CreditCard,
   Smartphone, ExternalLink, RefreshCw,
 } from 'lucide-react';
-
-const API_BASE = (window as any).VITE_API_BASE_URL || 'https://ekala-api.onrender.com/api';
+import { api } from '../../lib/api-client';
+import { useAuthStore } from '../../stores/useAuthStore';
 
 interface CheckoutResponse {
   checkout: {
@@ -31,9 +32,12 @@ interface CheckoutResponse {
 
 const CheckoutPage = () => {
   const navigate = useNavigate();
+  const { user } = useAuthStore();
   const [searchParams] = useSearchParams();
   const tenantId = searchParams.get('tenant_id');
   const planCode = searchParams.get('plan_code');
+  const from = searchParams.get('from') || undefined;
+  const upgrade = searchParams.get('upgrade') === '1' ? true : undefined;
   const paymentMethod = searchParams.get('method') || 'mobile_money';
   const providerCode = searchParams.get('provider') || 'mtn_zm';
 
@@ -48,23 +52,17 @@ const CheckoutPage = () => {
       setLoading(false);
       return;
     }
-    fetch(`${API_BASE}/tenants/${tenantId}/checkout`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        plan_code: planCode,
-        payment_method: paymentMethod,
-        payment_provider: providerCode,
-        success_url: `${window.location.origin}/billing?status=success`,
-        cancel_url: `${window.location.origin}/pricing?status=cancelled`,
-      }),
+    api.saas.initiateCheckout(Number(tenantId), {
+      plan_code: planCode,
+      payment_method: paymentMethod,
+      payment_provider: providerCode,
+      from,
+      upgrade,
+      success_url: `${window.location.origin}/billing?status=success`,
+      cancel_url: `${window.location.origin}/pricing?status=cancelled`,
     })
-      .then(r => r.json())
-      .then(resp => {
-        if (resp.error) throw new Error(resp.error + ': ' + (resp.message || ''));
-        setData(resp);
-      })
-      .catch(e => setError(e.message))
+      .then(setData as any)
+      .catch((e: any) => setError(e.message))
       .finally(() => setLoading(false));
   }, [tenantId, planCode, paymentMethod, providerCode]);
 
@@ -73,15 +71,16 @@ const CheckoutPage = () => {
     setConfirming(true);
     setError(null);
     try {
-      const resp = await fetch(`${API_BASE}/payments/${data.checkout.provider_reference}/confirm`, {
-        method: 'POST',
-      });
-      const json = await resp.json();
-      if (json.error) throw new Error(json.error);
-      const tid = data?.tenant?.id;
-      const tenantName = data?.tenant?.name || 'Mon établissement';
+      await api.saas.confirmPayment(data.checkout.provider_reference);
+      const isExistingTenant = Number(data.tenant.id) === Number((user as any)?.tenant_id);
       setTimeout(() => {
-        navigate(`/setup-account?tenant_id=${tid}&tenant_name=${encodeURIComponent(tenantName)}`);
+        if (isExistingTenant) {
+          navigate(`/billing?status=success`);
+        } else {
+          const tid = data?.tenant?.id;
+          const tenantName = data?.tenant?.name || 'Mon établissement';
+          navigate(`/setup-account?tenant_id=${tid}&tenant_name=${encodeURIComponent(tenantName)}`);
+        }
       }, 1500);
     } catch (e: any) {
       setError(e.message);
@@ -94,7 +93,13 @@ const CheckoutPage = () => {
     return (
       <div style={{ minHeight: '100vh', background: '#0a0a14', color: '#eeeef5', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
         <div style={{ textAlign: 'center' }}>
-          <Loader2 size={40} style={{ color: '#D4AF37', margin: '0 auto' }} className="animate-spin" />
+          <div style={{
+            width: 52, height: 52, borderRadius: 14,
+            background: 'rgba(212,175,55,0.1)', border: '0.5px solid rgba(212,175,55,0.22)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px',
+          }}>
+            <Loader2 size={22} style={{ color: '#c9a84c' }} className="animate-spin" />
+          </div>
           <p style={{ marginTop: 16, color: '#9ca3af' }}>Initialisation du paiement...</p>
         </div>
       </div>
@@ -206,7 +211,7 @@ const CheckoutPage = () => {
 
             <p style={{ fontSize: 12, color: '#555', textAlign: 'center' }}>
               Après confirmation, votre abonnement sera activé automatiquement.
-              <br />Vous pourrez ensuite <a href="/login" style={{ color: '#D4AF37', textDecoration: 'underline' }}>vous connecter</a>.
+              <br />Vous pourrez ensuite accéder à votre tableau de bord.
             </p>
           </>
         )}

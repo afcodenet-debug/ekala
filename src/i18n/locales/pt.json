@@ -113,5 +113,72 @@
       "saving": "Salvando...",
       "saveChanges": "Salvar Alterações"
     }
+  },
+  "subscription": {
+    "grace": {
+      "statusLabel": "Período de carência",
+      "title": "Acesso limitado somente leitura",
+      "desc": "Sua assinatura expirou. Você pode visualizar seus dados, mas a edição está desativada.",
+      "cta": "Renovar agora",
+      "secondary": "Continuar no modo somente leitura",
+      "readOnlyAccess": "Acesso somente leitura",
+      "dayRemaining": "1 dia restante",
+      "daysRemaining": "{days} dias restantes"
+    },
+    "suspended": {
+      "statusLabel": "Assinatura suspensa",
+      "title": "Seu acesso foi interrompido",
+      "desc": "Um pagamento não pôde ser processado. Atualize seu método de pagamento para restaurar o acesso imediatamente.",
+      "cta": "Atualizar método de pagamento",
+      "secondary": "Voltar ao painel",
+      "meta": "Seus dados são preservados e permanecem acessíveis na reativação."
+    },
+    "cancelled": {
+      "statusLabel": "Assinatura cancelada",
+      "title": "Sua assinatura foi encerrada",
+      "desc": "Sua assinatura foi cancelada a seu pedido. Escolha um plano para recuperar o acesso completo.",
+      "cta": "Escolher um plano",
+      "secondary": "Voltar ao painel"
+    },
+    "expired": {
+      "statusLabel": "Assinatura expirada",
+      "title": "Sua assinatura expirou",
+      "desc": "O período de carência acabou. Renove agora para recuperar o acesso completo aos seus projetos.",
+      "cta": "Renovar assinatura",
+      "secondary": "Voltar ao painel",
+      "meta": "Seus dados são mantidos por 90 dias após o vencimento."
+    },
+    "no_plan": {
+      "statusLabel": "Sem assinatura",
+      "title": "Escolha seu plano",
+      "desc": "Desbloqueie todos os recursos assinando. Comece gratuitamente por 14 dias.",
+      "cta": "Ver planos disponíveis",
+      "secondary": "Continuar sem assinatura",
+      "meta": "Nenhum cartão de crédito necessário para o teste."
+    },
+    "close": "Fechar"
+  },
+  "login": {
+    "serverOffline": "Servidor indisponível",
+    "checkConnection": "Verifique sua conexão",
+    "connectToVenue": "Conecte-se ao seu estabelecimento",
+    "enterVenueName": "Digite o nome do seu estabelecimento para começar",
+    "venueNamePlaceholder": "Nome do estabelecimento (ex: meu-estabelecimento)",
+    "continue": "Continuar",
+    "noAccount": "Ainda não tem uma conta para o seu estabelecimento?",
+    "startFreeTrial": "Comece o seu teste gratuito de 7 dias",
+    "online": "Online",
+    "offline": "Offline",
+    "admin": "Administrador",
+    "staff": "Equipe",
+    "usernameOrPhonePlaceholder": "Nome de usuário ou telefone (opcional)",
+    "useNumericKeypad": "Use o teclado numérico · Enter para validar",
+    "login": "Entrar",
+    "connecting": "Conectando...",
+    "invalidCredentials": "Email ou senha inválidos.",
+    "accessDenied": "Acesso negado — verifique suas credenciais",
+    "setupSuccess": "Sua conta foi criada com sucesso. Você já pode fazer login.",
+    "backToVenue": "Voltar à seleção de estabelecimento",
+    "enterpriseManagement": "Gestão Empresarial"
   }
 }

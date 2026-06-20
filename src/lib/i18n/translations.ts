@@ -332,7 +332,7 @@ const T = {
     labels: {
       displayLanguage: d('DISPLAY LANGUAGE', 'LANGUE D\'AFFICHAGE', 'IDIOMA DE EXIBIÇÃO'),
       baseCurrency:    d('BASE CURRENCY', 'DEVISE DE BASE', 'MOEDA BASE'),
-      restaurantName:  d('Restaurant Name', 'Nom du restaurant', 'Nome do Restaurante'),
+      restaurantName:  d('Establishment Name', 'Nom de l\'établissement', 'Nome do Estabelecimento'),
       address:         d('Physical Address', 'Adresse physique', 'Endereço Físico'),
       phone:           d('Phone Number', 'Numéro de téléphone', 'Número de Telefone'),
       email:           d('Email', 'Email', 'Email'),
@@ -340,7 +340,7 @@ const T = {
       serviceCharge:   d('Service Charge (%)', 'Frais de service (%)', 'Taxa de Serviço (%)'),
       receiptFooter:   d('Receipt Footer Message', 'Message de pied de page du reçu', 'Mensagem de Rodapé do Recibo'),
       autoPrint:       d('Automatically print receipt after successful checkout', 'Imprimer automatiquement le reçu après le paiement', 'Imprimir recibo automaticamente após o checkout'),
-      showLogo:        d('Show restaurant logo on printed receipts', 'Afficher le logo du restaurant sur les reçus imprimés', 'Mostrar logotipo do restaurante nos recibos impressos'),
+      showLogo:        d('Show establishment logo on printed receipts', 'Afficher le logo de l\'établissement sur les reçus imprimés', 'Mostrar logotipo do estabelecimento nos recibos impressos'),
     },
     messages: {
       adminOnly:   d('Only administrators can modify global settings.', 'Seuls les administrateurs peuvent modifier les paramètres globaux.', 'Apenas administradores podem modificar as configurações globais.'),
@@ -527,7 +527,7 @@ const T = {
     deleteTableTitle:d('Delete Table',         'Supprimer la Table',    'Excluir Mesa'),
     deleteTableConfirm:d('Confirm table deletion', 'Confirmer la suppression de la table', 'Confirmar exclusão da mesa'),
     deleteTableWarning:d('Warning: This action cannot be undone', 'Attention : cette action est irréversible', 'Aviso: esta ação não pode ser desfeita'),
-    deleteTableMessage:d('You are about to permanently delete Table {tableNumber} from the restaurant floor plan. This will remove all associated data and cannot be reversed.', 'Vous êtes sur le point de supprimer définitivement la Table {tableNumber} du plan de salle. Cela supprimera toutes les données associées et ne pourra pas être annulé.', 'Você está prestes a excluir permanentemente a Mesa {tableNumber} do plano de salão. Isso removerá todos os dados associados e não poderá ser revertido.'),
+    deleteTableMessage:d('You are about to permanently delete Table {tableNumber} from the establishment floor plan. This will remove all associated data and cannot be reversed.', 'Vous êtes sur le point de supprimer définitivement la Table {tableNumber} du plan de salle. Cela supprimera toutes les données associées et ne pourra pas être annulé.', 'Você está prestes a excluir permanentemente a Mesa {tableNumber} do plano de salão. Isso removerá todos os dados associados e não poderá ser revertido.'),
     assignedWaiter:  d('Assigned Waiter',      'Serveur Assigné',       'Garçom Atribuído'),
     seats:           d('seats',                'places',                'lugares'),
     statusLabel:     d('Status',               'Statut',                'Status'),
@@ -753,7 +753,7 @@ const T = {
     venueNamePlaceholder: d('Establishment name (e.g. my-venue)', 'Nom de l\'établissement (ex: mon-commerce)', 'Nome do estabelecimento (ex: meu-estabelecimento)'),
     continue: d('Continue', 'Continuer', 'Continuar'),
     connecting: d('Connecting...', 'Connexion...', 'Conectando...'),
-    noAccount: d("Don't have an account for your restaurant yet?", 'Pas encore de compte pour votre établissement ?', 'Ainda não tem uma conta para o seu restaurante?'),
+    noAccount: d("Don't have an account for your establishment yet?", 'Pas encore de compte pour votre établissement ?', 'Ainda não tem uma conta para o seu estabelecimento?'),
     startFreeTrial: d('Start your 7-day free trial', 'Démarrer mon essai gratuit de 7 jours', 'Comece o seu teste gratuito de 7 dias'),
     online: d('Online', 'En ligne', 'Online'),
     offline: d('Offline', 'Hors ligne', 'Offline'),
@@ -765,7 +765,7 @@ const T = {
     invalidCredentials: d('Invalid email or password.', 'Email ou mot de passe incorrect.', 'Email ou senha inválidos.'),
     accessDenied: d('Access denied — check your credentials', 'Accès refusé — vérifiez vos identifiants', 'Acesso negado — verifique suas credenciais'),
     setupSuccess: d('Your account has been created successfully. You can now log in.', 'Votre compte a été créé avec succès. Vous pouvez vous connecter.', 'Sua conta foi criada com sucesso. Você já pode fazer login.'),
-    backToRestaurant: d('Back to restaurant selection', 'Retour à la sélection de l\'établissement', 'Voltar à seleção de restaurante'),
+    backToRestaurant: d('Back to establishment selection', 'Retour à la sélection de l\'établissement', 'Voltar à seleção de estabelecimento'),
   },
 
   // ── receipt / printer ────────────────────────────────────────────────
@@ -868,6 +868,122 @@ const T = {
     lowStockSub:          d('Below minimum level','Sous le seuil','Abaixo do nível mínimo'),
   },
 
+  // ── pricing (public SaaS pricing page) ────────────────────────────────
+  pricing: {
+    planCodeEyebrowTemplate: d('Plan {code}', 'Plan {code}', 'Plano {code}'),
+    free:                     d('Free', 'Gratuit', 'Grátis'),
+    periodWeekly:             d('/ week', '/ semaine', '/ semana'),
+    periodMonthly:            d('/ month', '/ mois', '/ mês'),
+    periodAnnual:             d('/ year', '/ an', '/ ano'),
+    trialAccess:              d('{days} days free', '{days} jours gratuits', '{days} dias grátis'),
+    quotaUsers:               d('Users', 'Utilisateurs', 'Utilizadores'),
+    quotaTables:              d('Tables', 'Tables', 'Mesas'),
+    quotaProducts:            d('Products', 'Produits', 'Produtos'),
+    quotaOrdersPerMonth:      d('Orders / month', 'Commandes / mois', 'Pedidos / mês'),
+    annualBadgeText:          d('Save 20%', 'Économisez 20%', 'Poupe 20%'),
+    loading: {
+      plans: d('Loading plans…', 'Chargement des plans…', 'A carregar planos…'),
+    },
+    error: {
+      title:           d('Unable to load plans', 'Impossible de charger les plans', 'Não foi possível carregar os planos'),
+      hint:             d('Check that the backend is reachable and the SaaS migration has been applied.', 'Vérifiez que le backend est accessible et que la migration SaaS a été appliquée.', 'Verifique se o backend está acessível e que a migração SaaS foi aplicada.'),
+      unexpectedFormat: d('Unexpected response format', 'Format de réponse inattendu', 'Formato de resposta inesperado'),
+    },
+    nav: {
+      login: d('Log In', 'Se connecter', 'Entrar'),
+      start:  d('Get Started', 'Démarrer', 'Começar'),
+    },
+    hero: {
+      eyebrow:    d('7 days free · no credit card required', '7 jours gratuits · sans carte bancaire', '14 dias grátis · sem cartão de crédito'),
+      headline:   d('The POS that powers your establishment', 'Le POS qui propulse votre établissement', 'O POS que impulsiona o seu estabelecimento'),
+      subtitle: d('QR Menu, table management, POS, inventory, reports — everything essential, at a price that respects your budget.', 'Menu QR, gestion des tables, POS, stock, rapports — tout l\'essentiel, à un prix qui respecte votre budget.', 'Menu QR, gestão das mesas, POS, stock, relatórios — tudo o essencial, a um preço que respeita o seu orçamento.'),
+    },
+    trust: {
+      noCommitment:       d('No commitment', 'Sans engagement', 'Sem compromisso'),
+      supportIncluded:    d('Support included', 'Support inclus', 'Suporte incluído'),
+      dataHostedInAfrica: d('Data hosted in Africa', 'Données hébergées en Afrique', 'Dados alojados em África'),
+    },
+    billingToggle: {
+      weekly:  d('WEEKLY', 'Hebdo', 'SEMANAL'),
+      monthly: d('MONTHLY', 'Mensuel', 'MENSAL'),
+      annual:  d('ANNUAL', 'Annuel', 'ANUAL'),
+    },
+    cta: {
+      trial:      d('Start free trial', 'Commencer gratuitement', 'Começar grátis'),
+      choosePlan: d('Choose plan', 'Choisir ce plan', 'Escolher este plano'),
+    },
+    features: {
+      qr_menu:          d('QR Menu', 'Menu QR', 'Menu QR'),
+      pos:              d('POS / Cashier', 'POS / Caisse', 'POS / Caixa'),
+      reports: {
+        advanced: d('Advanced Reports', 'Rapports avancés', 'Relatórios avançados'),
+        standard: d('Standard Reports', 'Rapports standard', 'Relatórios standard'),
+        basic:    d('Basic Reports', 'Rapports de base', 'Relatórios base'),
+      },
+      inventory:        d('Inventory', 'Inventaire', 'Inventário'),
+      multi_branch:     d('Multi-Branch', 'Multi-Établissements', 'Multi-Estabelecimento'),
+      api_access:       d('API Access', 'Accès API', 'Acesso API'),
+      priority_support: d('Priority Support', 'Support Prioritaire', 'Suporte Prioritário'),
+    },
+    badges: {
+      trial:   d('Free Trial', 'Essai Gratuit', 'Teste grátis'),
+      popular: d('Popular', 'Populaire', 'Popular'),
+      pro:     d('Pro', 'Pro', 'Pro'),
+    },
+    footer: {
+      brand:             d('QBITE', 'QBITE', 'QBITE'),
+      subtitle:          d('Establishment management solutions', 'Solutions de gestion pour établissements', 'Soluções de gestão para estabelecimentos'),
+      copyrightTemplate: d('© {year} QBITE. All rights reserved.', '© {year} QBITE. Tous droits réservés.', '© {year} QBITE. Todos os direitos reservados.'),
+    },
+    bottomNote: d('All plans include SSL encryption, automatic backups and updates. Cancel anytime from your billing space.', 'Tous les plans incluent le chiffrement SSL, les sauvegardes automatiques et les mises à jour. Résiliez à tout moment depuis votre espace de facturation.', 'Todos os planos incluem criptografia SSL, backups automáticos e atualizações. Cancele quando quiser a partir do seu espaço de faturação.'),
+    plans: {
+      trial_7d: d('7 days to test all features — no commitment.', '7 jours pour tester toutes les fonctionnalités — sans engagement.', '7 dias para testar todas as funcionalidades — sem compromisso.'),
+      trial_essai_gratuit: d('7 days to test all features — no commitment.', '7 jours pour tester toutes les fonctionnalités — sans engagement.', '7 dias para testar todas as funcionalidades — sem compromisso.'),
+      starter_weekly: d('Core tools for newly launched establishments.', 'Outils essentiels pour les établissements qui démarrent.', 'Ferramentas essenciais para estabelecimentos que estão começando.'),
+      starter_monthly: d('Core tools for newly launched establishments.', 'Outils essentiels pour les établissements qui démarrent.', 'Ferramentas essenciais para estabelecimentos que estão começando.'),
+      starter_annual: d('Core tools for newly launched establishments.', 'Outils essentiels pour les établissements qui démarrent.', 'Ferramentas essenciais para estabelecimentos que estão começando.'),
+      pro_monthly: d('Full POS and advanced features for growing establishments.', 'POS complet et fonctionnalités avancées pour les établissements en croissance.', 'POS completo e funcionalidades avançadas para estabelecimentos em crescimento.'),
+      pro_annual: d('Annual Pro plan — best value for established establishments.', 'Plan Pro annuel — le meilleur rapport qualité/prix pour les établissements établis.', 'Plano Pro anual — o melhor custo-benefício para estabelecimentos estabelecidos.'),
+    },
+    planNames: {
+      trial_7d: d('Free Trial', 'Essai Gratuit', 'Teste Grátis'),
+      trial_essai_gratuit: d('Free Trial', 'Essai Gratuit', 'Teste Grátis'),
+      starter_weekly: d('Starter', 'Débutant', 'Inicial'),
+      starter_monthly: d('Starter', 'Débutant', 'Inicial'),
+      starter_annual: d('Starter', 'Débutant', 'Inicial'),
+      pro_monthly: d('Pro Monthly', 'Pro Mensuel', 'Pro Mensal'),
+      pro_annual: d('Pro Annual', 'Pro Annuel', 'Pro Anual'),
+    },
+  },
+
+  // ── billing ────────────────────────────────────────────────────────────
+  billing: {
+    title: d('Billing & Subscription', 'Facturation & Abonnement', 'Faturamento & Assinatura'),
+    noTenant: d('No tenant found in your session. Please contact support.', 'Aucun tenant trouvé dans votre session. Contactez le support.', 'Nenhum locatário encontrado na sua sessão. Entre em contato com o suporte.'),
+    trialExpired: d('Your free trial has ended', 'Votre essai gratuit a expiré', 'Seu teste grátis expirou'),
+    choosePaidPlan: d('Choose a paid plan to continue using all features', 'Choisissez un plan payant pour continuer à utiliser toutes les fonctionnalités', 'Escolha um plano pago para continuar usando todos os recursos'),
+    currentSubscription: d('Your Current Subscription', 'Votre Abonnement Actuel', 'Sua Assinatura Atual'),
+    current: d('Current', 'Actuel', 'Atual'),
+    active: d('Active', 'Actif', 'Ativo'),
+    expired: d('Expired', 'Expiré', 'Expirado'),
+    selectPaidPlanDescription: d('Select a plan that fits your business needs', 'Sélectionnez un plan adapté à vos besoins', 'Selecione um plano que se adéque às suas necessidades'),
+    chooseYourPlan: d('Choose Your Plan', 'Choisissez Votre Plan', 'Escolha Seu Plano'),
+    monthly: d('Monthly', 'Mensuel', 'Mensal'),
+    annual: d('Annual', 'Annuel', 'Anual'),
+    paymentInfo: d('Payment Information', 'Informations de Paiement', 'Informações de Pagamento'),
+    sslEncryption: d('SSL encryption', 'Chiffrement SSL', 'Criptografia SSL'),
+    autoBackups: d('Automatic backups', 'Sauvegardes automatiques', 'Backups automáticos'),
+    autoUpdates: d('Automatic updates', 'Mises à jour automatiques', 'Atualizações automáticas'),
+    cancelAnytime: d('Cancel anytime from your billing space', 'Résiliez à tout moment depuis votre espace de facturation', 'Cancele quando quiser a partir do seu espaço de faturamento'),
+    confirmSelection: d('Confirm Selection', 'Confirmer la Sélection', 'Confirmar Seleção'),
+    youSelected: d('You have selected', 'Vous avez sélectionné', 'Você selecionou'),
+    willBeChargedTo: d('will be charged to', 'sera facturé à', 'será cobrado em'),
+    proceedToPayment: d('Proceed to Payment', 'Poursuivre le Paiement', 'Prosseguir para o Pagamento'),
+    currentPlan: d('Current Plan', 'Plan Actuel', 'Plano Atual'),
+    selectPlan: d('Select Plan', 'Sélectionner le Plan', 'Selecionar Plano'),
+    noPlansAvailable: d('No plans available', 'Aucun plan disponible', 'Nenhum plano disponível'),
+  },
+
   // ── qrMenu (Public QR Menu - default English) ─────────────────────────
   qrMenu: {
     // Language
@@ -968,13 +1084,86 @@ const T = {
     specialInstructions: d('Special instructions (optional)', 'Instructions spéciales (optionnel)', 'Instruções especiais (opcional)'),
     notesPlaceholder: d('Allergies, no onions, etc.', 'Allergies, sans oignons, etc.', 'Alergias, sem cebola, etc.'),
     currency: d('ZMW', 'ZMW', 'ZMW'),
+
+    subscription: {
+      grace: {
+        statusLabel: d('Grace period', 'Période de grâce', 'Período de carência'),
+        title: d('Limited read-only access', 'Accès limité en lecture seule', 'Acesso limitado somente leitura'),
+        desc: d(
+          'Your subscription has expired. You can view your data but editing is disabled.',
+          'Votre abonnement a expiré. Vous pouvez consulter vos données mais les modifications sont désactivées.',
+          'Sua assinatura expirou. Você pode visualizar seus dados, mas a edição está desativada.'
+        ),
+        cta: d('Renew now', 'Renouveler maintenant', 'Renovar agora'),
+        secondary: d('Continue in read-only mode', 'Continuer en lecture seule', 'Continuar no modo somente leitura'),
+        readOnlyAccess: d('Read-only access', 'Accès en lecture seule', 'Acesso somente leitura'),
+        dayRemaining: d('1 day remaining', '1 jour restant', '1 dia restante'),
+        daysRemaining: d('{days} days remaining', '{days} jours restants', '{days} dias restantes'),
+      },
+      suspended: {
+        statusLabel: d('Subscription suspended', 'Abonnement suspendu', 'Assinatura suspensa'),
+        title: d('Your access has been interrupted', 'Votre accès a été interrompu', 'Seu acesso foi interrompido'),
+        desc: d(
+          'A payment could not be processed. Update your payment method to restore access immediately.',
+          'Un paiement n\'a pas pu être traité. Mettez à jour votre moyen de paiement pour rétablir l\'accès immédiatement.',
+          'Um pagamento não pôde ser processado. Atualize seu método de pagamento para restaurar o acesso imediatamente.'
+        ),
+        cta: d('Update payment method', 'Mettre à jour le paiement', 'Atualizar método de pagamento'),
+        secondary: d('Back to dashboard', 'Revenir au tableau de bord', 'Voltar ao painel'),
+        meta: d('Your data is preserved and remains accessible upon reactivation.', 'Vos données sont préservées et restent accessibles à la réactivation.', 'Seus dados são preservados e permanecem acessíveis na reativação.'),
+      },
+      cancelled: {
+        statusLabel: d('Subscription cancelled', 'Abonnement annulé', 'Assinatura cancelada'),
+        title: d('Your subscription has ended', 'Votre abonnement est terminé', 'Sua assinatura foi encerrada'),
+        desc: d(
+          'Your subscription has been cancelled at your request. Choose a plan to regain full access.',
+          'Votre abonnement a été annulé à votre demande. Choisissez un plan pour retrouver un accès complet.',
+          'Sua assinatura foi cancelada a seu pedido. Escolha um plano para recuperar o acesso completo.'
+        ),
+        cta: d('Choose a plan', 'Choisir un plan', 'Escolher um plano'),
+        secondary: d('Back to dashboard', 'Revenir au tableau de bord', 'Voltar ao painel'),
+      },
+      expired: {
+        statusLabel: d('Subscription expired', 'Abonnement expiré', 'Assinatura expirada'),
+        title: d('Your subscription has expired', 'Votre abonnement a expiré', 'Sua assinatura expirou'),
+        desc: d(
+          'The grace period is over. Renew now to regain full access to your projects.',
+          'La période de grâce est écoulée. Renouvelez dès maintenant pour retrouver un accès complet à vos projets.',
+          'O período de carência acabou. Renove agora para recuperar o acesso completo aos seus projetos.'
+        ),
+        cta: d('Renew subscription', 'Renouveler l\'abonnement', 'Renovar assinatura'),
+        secondary: d('Back to dashboard', 'Revenir au tableau de bord', 'Voltar ao painel'),
+        meta: d('Your data is kept for 90 days after expiration.', 'Vos données sont sauvegardées pendant 90 jours après expiration.', 'Seus dados são mantidos por 90 dias após o vencimento.'),
+      },
+      no_plan: {
+        statusLabel: d('No subscription', 'Aucun abonnement', 'Sem assinatura'),
+        title: d('Choose your plan', 'Choisissez votre plan', 'Escolha seu plano'),
+        desc: d(
+          'Unlock all features by subscribing. Start free for 14 days.',
+          'Débloquez toutes les fonctionnalités en souscrivant à un abonnement. Commencez gratuitement pendant 14 jours.',
+          'Desbloqueie todos os recursos assinando. Comece gratuitamente por 14 dias.'
+        ),
+        cta: d('View available plans', 'Voir les plans disponibles', 'Ver planos disponíveis'),
+        secondary: d('Continue without subscription', 'Continuer sans abonnement', 'Continuar sem assinatura'),
+        meta: d('No credit card required for the trial.', 'Aucune carte bancaire requise pour l\'essai.', 'Nenhum cartão de crédito necessário para o teste.'),
+      },
+      close: d('Close', 'Fermer', 'Fechar'),
+    },
   },
 };
 
 /* ─── Type-safe access ──────────────────────────────────────────────── */
 
-export type TranslationNamespace = keyof typeof T;
+/**
+ * Namespace keys are based on the exported `translations` object
+ * (includes aliases like `subscription`).
+ */
+export type TranslationNamespace = keyof typeof translations;
 export type TranslationEntry = _Dict;
 
 /** The full translations record. */
-export const translations = T;
+export const translations = {
+  ...T,
+  // Alias to support components using `subscription.*` keys (e.g. SubscriptionGate)
+  subscription: T.qrMenu.subscription,
+};

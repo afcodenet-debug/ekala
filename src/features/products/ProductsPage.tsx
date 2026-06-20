@@ -28,7 +28,6 @@ const { colors } = EnterpriseTokens;
 
 // ─── Design tokens premium ────────────────────────────────────────────────────
 const dt = {
-  // Spacing scale (4px base)
   space: {
     xs:  '4px',
     sm:  '8px',
@@ -37,7 +36,6 @@ const dt = {
     xl:  '32px',
     xxl: '48px',
   },
-  // Fluid typography
   text: {
     xs:   'clamp(10px, 1.5vw, 11px)',
     sm:   'clamp(11px, 1.8vw, 13px)',
@@ -47,14 +45,12 @@ const dt = {
     xl:   'clamp(22px, 3.5vw, 28px)',
     xxl:  'clamp(28px, 4.5vw, 38px)',
   },
-  // Transitions
   ease: {
     snap:    'all 0.12s cubic-bezier(0.4,0,0.2,1)',
     smooth:  'all 0.22s cubic-bezier(0.4,0,0.2,1)',
     spring:  'all 0.35s cubic-bezier(0.34,1.56,0.64,1)',
     reveal:  'all 0.45s cubic-bezier(0.22,1,0.36,1)',
   },
-  // Elevation
   shadow: {
     sm:  '0 1px 3px rgba(0,0,0,0.06), 0 1px 2px rgba(0,0,0,0.04)',
     md:  '0 4px 16px rgba(0,0,0,0.08), 0 1px 4px rgba(0,0,0,0.04)',
@@ -78,7 +74,7 @@ function useBreakpoint() {
 // ─── CSS global ───────────────────────────────────────────────────────────────
 const GlobalStyles = ({ colors }: { colors: any }) => (
   <style>{`
-    @import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=DM+Mono:wght@400;500&display=swap');
+    @import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;0,9..40,800;1,9..40,400&family=DM+Mono:wght@400;500&display=swap');
 
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -93,6 +89,14 @@ const GlobalStyles = ({ colors }: { colors: any }) => (
     .pp-scroll-hide { scrollbar-width: none; -ms-overflow-style: none; }
     .pp-scroll-hide::-webkit-scrollbar { display: none; }
     .pp-scroll-x { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+
+    /* ── Subtle page backdrop texture ── */
+    .pp-bg-texture {
+      position: fixed; inset: 0; pointer-events: none; z-index: 0;
+      background-image:
+        radial-gradient(ellipse 60% 40% at 15% 0%, ${colors.accent?.blue ?? '#3b82f6'}07 0%, transparent 60%),
+        radial-gradient(ellipse 50% 35% at 100% 15%, ${colors.accent?.gold ?? '#f59e0b'}06 0%, transparent 60%);
+    }
 
     /* ── Animations ── */
     @keyframes pp-fade-up {
@@ -123,6 +127,13 @@ const GlobalStyles = ({ colors }: { colors: any }) => (
       0%, 80%, 100% { transform: scale(0.8); opacity: 0.5; }
       40% { transform: scale(1.2); opacity: 1; }
     }
+    @keyframes pp-ring-spin {
+      to { transform: rotate(360deg); }
+    }
+    @keyframes pp-float {
+      0%, 100% { transform: translateY(0); }
+      50% { transform: translateY(-3px); }
+    }
 
     .pp-anim-fade-up   { animation: pp-fade-up  0.45s cubic-bezier(0.22,1,0.36,1) both; }
     .pp-anim-scale-in  { animation: pp-scale-in 0.35s cubic-bezier(0.22,1,0.36,1) both; }
@@ -135,6 +146,15 @@ const GlobalStyles = ({ colors }: { colors: any }) => (
     .pp-stagger > *:nth-child(3) { animation-delay: 100ms; }
     .pp-stagger > *:nth-child(4) { animation-delay: 150ms; }
     .pp-stagger > *:nth-child(5) { animation-delay: 200ms; }
+
+    .pp-grid-stagger > * { animation: pp-scale-in 0.35s cubic-bezier(0.22,1,0.36,1) both; }
+    .pp-grid-stagger > *:nth-child(1) { animation-delay: 0ms; }
+    .pp-grid-stagger > *:nth-child(2) { animation-delay: 30ms; }
+    .pp-grid-stagger > *:nth-child(3) { animation-delay: 60ms; }
+    .pp-grid-stagger > *:nth-child(4) { animation-delay: 90ms; }
+    .pp-grid-stagger > *:nth-child(5) { animation-delay: 120ms; }
+    .pp-grid-stagger > *:nth-child(6) { animation-delay: 150ms; }
+    .pp-grid-stagger > *:nth-child(n+7) { animation-delay: 170ms; }
 
     /* ── Interactive states ── */
     .pp-btn {
@@ -151,38 +171,43 @@ const GlobalStyles = ({ colors }: { colors: any }) => (
       white-space: nowrap;
       user-select: none;
       -webkit-tap-highlight-color: transparent;
+      position: relative;
     }
     .pp-btn:active { transform: scale(0.97); }
     .pp-btn:focus-visible {
       outline: 2px solid ${colors.accent?.blue ?? '#3b82f6'};
       outline-offset: 2px;
     }
+    .pp-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
     .pp-btn-primary {
-      background: ${colors.accent?.blue ?? '#3b82f6'};
+      background: linear-gradient(135deg, ${colors.accent?.blue ?? '#3b82f6'} 0%, color-mix(in srgb, ${colors.accent?.blue ?? '#3b82f6'} 80%, #fff) 100%);
       color: #fff;
+      box-shadow: 0 2px 8px ${colors.accent?.blue ?? '#3b82f6'}35;
     }
-    .pp-btn-primary:hover { filter: brightness(1.08); transform: translateY(-1px); box-shadow: 0 4px 16px ${(colors.accent?.blue ?? '#3b82f6')}40; }
+    .pp-btn-primary:hover { filter: brightness(1.06); transform: translateY(-1px); box-shadow: 0 6px 18px ${(colors.accent?.blue ?? '#3b82f6')}45; }
 
     .pp-btn-ghost {
       background: transparent;
       color: ${colors.text2 ?? '#6b7280'};
       border: 1px solid ${colors.border ?? '#e5e7eb'};
     }
-    .pp-btn-ghost:hover { background: ${colors.surface ?? '#f9fafb'}; color: ${colors.text1 ?? '#111'}; }
+    .pp-btn-ghost:hover { background: ${colors.surface ?? '#f9fafb'}; color: ${colors.text1 ?? '#111'}; border-color: ${colors.text3 ?? '#9ca3af'}40; }
 
     .pp-btn-danger {
-      background: ${colors.accent?.red ?? '#ef4444'};
+      background: linear-gradient(135deg, ${colors.accent?.red ?? '#ef4444'} 0%, color-mix(in srgb, ${colors.accent?.red ?? '#ef4444'} 80%, #fff) 100%);
       color: #fff;
+      box-shadow: 0 2px 8px ${colors.accent?.red ?? '#ef4444'}35;
     }
-    .pp-btn-danger:hover { filter: brightness(1.08); transform: translateY(-1px); }
+    .pp-btn-danger:hover { filter: brightness(1.06); transform: translateY(-1px); }
 
     /* ── Card ── */
     .pp-card {
       background: ${colors.card ?? '#fff'};
       border: 1px solid ${colors.border ?? '#e5e7eb'};
-      border-radius: 16px;
-      transition: box-shadow 0.2s ease, border-color 0.2s ease;
+      border-radius: 18px;
+      transition: box-shadow 0.25s ease, border-color 0.25s ease, transform 0.25s ease;
+      position: relative;
     }
     .pp-card:hover { box-shadow: ${dt.shadow.md}; }
 
@@ -198,44 +223,24 @@ const GlobalStyles = ({ colors }: { colors: any }) => (
       border-radius: 8px;
     }
 
-    /* ── Tab indicator ── */
-    .pp-tab { position: relative; overflow: visible; }
-    .pp-tab::after {
-      content: '';
-      position: absolute;
-      bottom: -2px; left: 50%;
-      width: 0; height: 3px;
-      border-radius: 3px 3px 0 0;
-      background: ${colors.accent?.gold ?? '#f59e0b'};
-      transition: width 0.25s cubic-bezier(0.4,0,0.2,1), left 0.25s cubic-bezier(0.4,0,0.2,1);
-      transform: translateX(-50%);
+    /* ── Pill nav (tablette + desktop) ── */
+    .pp-pillnav { display: inline-flex !important; }
+    @media (max-width: 639px) {
+      .pp-pillnav { display: none !important; }
     }
-    .pp-tab.active::after { width: calc(100% - 24px); }
 
-    /* ── Mobile nav ── */
+    /* ── Mobile bottom nav (mobile uniquement) ── */
     .pp-mobile-nav {
       display: none;
-      position: fixed;
-      bottom: 0; left: 0; right: 0;
-      z-index: 1000;
+      position: fixed !important;
+      bottom: 0 !important; left: 0 !important; right: 0 !important;
+      z-index: 2147483000 !important;
+      pointer-events: none;
     }
+    .pp-mobile-nav > div { pointer-events: auto; }
     @media (max-width: 639px) {
-      .pp-mobile-nav { display: flex; }
-      .pp-desktop-tabs { display: none !important; }
-      .pp-root main { padding-bottom: 80px !important; }
-    }
-
-    /* ── Desktop layout ── */
-    @media (min-width: 1024px) {
-      .pp-layout { display: grid; grid-template-columns: 220px 1fr; gap: 28px; align-items: start; }
-      .pp-sidebar { display: flex !important; }
-      .pp-desktop-tabs { display: none !important; }
-    }
-    @media (min-width: 640px) and (max-width: 1023px) {
-      .pp-sidebar { display: none !important; }
-    }
-    @media (max-width: 1023px) {
-      .pp-sidebar { display: none !important; }
+      .pp-mobile-nav { display: block !important; }
+      .pp-root main { padding-bottom: 96px !important; }
     }
 
     /* ── Grid card view ── */
@@ -243,6 +248,9 @@ const GlobalStyles = ({ colors }: { colors: any }) => (
       display: grid;
       gap: 16px;
       grid-template-columns: repeat(auto-fill, minmax(min(100%, 280px), 1fr));
+    }
+    @media (max-width: 639px) {
+      .pp-product-grid { grid-template-columns: 1fr; gap: 12px; }
     }
 
     /* ── Table responsive ── */
@@ -281,6 +289,19 @@ const GlobalStyles = ({ colors }: { colors: any }) => (
       opacity: 1;
       transform: translateX(-50%) scale(1);
     }
+
+    /* ── Scrollbar styling (desktop, when not hidden) ── */
+    @media (min-width: 1024px) {
+      .pp-scroll-visible::-webkit-scrollbar { height: 6px; width: 6px; }
+      .pp-scroll-visible::-webkit-scrollbar-track { background: transparent; }
+      .pp-scroll-visible::-webkit-scrollbar-thumb { background: ${colors.border ?? '#e5e7eb'}; border-radius: 999px; }
+      .pp-scroll-visible::-webkit-scrollbar-thumb:hover { background: ${colors.text3 ?? '#9ca3af'}; }
+    }
+
+    /* Touch comfort */
+    @media (pointer: coarse) {
+      .pp-btn { min-height: 40px; }
+    }
   `}</style>
 );
 
@@ -288,7 +309,6 @@ const GlobalStyles = ({ colors }: { colors: any }) => (
 const StockBadge = ({ qty, min, colors }: { qty: number; min: number; colors: any }) => {
   const isOut  = qty <= 0;
   const isLow  = !isOut && qty <= min;
-  const isOk   = !isOut && !isLow;
   const cfg = isOut
     ? { label: 'Rupture', bg: colors.accent?.redDim,   color: colors.accent?.red,   dot: colors.accent?.red }
     : isLow
@@ -300,8 +320,12 @@ const StockBadge = ({ qty, min, colors }: { qty: number; min: number; colors: an
       padding: '4px 10px', borderRadius: 999,
       background: cfg.bg, color: cfg.color,
       fontSize: dt.text.xs, fontWeight: 700, letterSpacing: '0.03em',
+      flexShrink: 0,
     }}>
-      <span style={{ width: 5, height: 5, borderRadius: '50%', background: cfg.dot, flexShrink: 0 }} />
+      <span style={{
+        width: 5, height: 5, borderRadius: '50%', background: cfg.dot, flexShrink: 0,
+        animation: isOut ? 'pp-pulse 1.6s ease-in-out infinite' : 'none',
+      }} />
       {cfg.label}
     </span>
   );
@@ -326,11 +350,13 @@ const ProductCard = ({
           : `1px solid ${colors.border}`,
         boxShadow: isHighlighted ? dt.shadow.glow(colors.accent?.blue) : undefined,
       }}
+      onMouseEnter={e => { e.currentTarget.style.transform = 'translateY(-2px)'; }}
+      onMouseLeave={e => { e.currentTarget.style.transform = 'translateY(0)'; }}
     >
       {/* Header */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '10px' }}>
         <div style={{ minWidth: 0 }}>
-          <p style={{ fontSize: dt.text.xs, color: colors.text3, fontWeight: 500, marginBottom: '3px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+          <p style={{ fontSize: dt.text.xs, color: colors.text3, fontWeight: 600, marginBottom: '3px', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
             {product.category_name}
           </p>
           <h3 style={{ fontSize: dt.text.md, fontWeight: 700, color: colors.text1, lineHeight: 1.3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -363,6 +389,7 @@ const ProductCard = ({
             borderRadius: '10px',
             padding: '10px 8px',
             textAlign: 'center',
+            border: `1px solid ${colors.border}40`,
           }}>
             <p style={{ fontSize: dt.text.xs, color: colors.text3, fontWeight: 500, marginBottom: '4px' }}>{m.label}</p>
             <p style={{ fontSize: dt.text.sm, fontWeight: 700, color: m.color ?? colors.text1, fontFamily: "'DM Mono', monospace" }}>{m.val}</p>
@@ -378,16 +405,16 @@ const ProductCard = ({
             {product.stock_quantity} {product.unit}
           </span>
         </div>
-        <div style={{ height: '4px', borderRadius: '2px', background: colors.border, overflow: 'hidden' }}>
+        <div style={{ height: '5px', borderRadius: '3px', background: colors.border, overflow: 'hidden' }}>
           <div style={{
             height: '100%',
-            borderRadius: '2px',
+            borderRadius: '3px',
             width: `${Math.min(100, product.stock_quantity <= 0 ? 0 : (product.stock_quantity / Math.max(product.stock_quantity, product.minimum_stock * 2)) * 100)}%`,
             background: product.stock_quantity <= 0
               ? colors.accent?.red
               : product.stock_quantity <= product.minimum_stock
-              ? colors.accent?.amber
-              : colors.accent?.green,
+              ? `linear-gradient(90deg, ${colors.accent?.amber}, ${colors.accent?.amber}cc)`
+              : `linear-gradient(90deg, ${colors.accent?.green}, ${colors.accent?.green}cc)`,
             transition: dt.ease.smooth,
           }} />
         </div>
@@ -470,122 +497,82 @@ const Toast = ({
   );
 };
 
-// ─── Sidebar desktop ──────────────────────────────────────────────────────────
-const Sidebar = ({
-  activeTab, tabs, onTabChange, t, colors,
-}: { activeTab: string; tabs: any[]; onTabChange: (id: string) => void; t: (k: string) => string; colors: any }) => (
-  <aside
-    className="pp-sidebar"
-    style={{
-      position: 'sticky', top: '24px',
-      alignSelf: 'flex-start',
-      display: 'none', // overridden by CSS
-      flexDirection: 'column',
-      gap: '4px',
-      background: colors.card,
-      border: `1px solid ${colors.border}`,
-      borderRadius: '20px',
-      padding: '20px 14px',
-      boxShadow: dt.shadow.sm,
-    }}
-  >
-    <p style={{
-      fontSize: dt.text.xs, fontWeight: 700, color: colors.text3,
-      textTransform: 'uppercase', letterSpacing: '0.1em',
-      padding: '0 8px', marginBottom: '10px',
-    }}>
-      Navigation
-    </p>
-    {tabs.map(tab => {
-      const active = activeTab === tab.id;
-      return (
-        <button
-          key={tab.id}
-          type="button"
-          className="pp-btn"
-          onClick={() => onTabChange(tab.id)}
-          style={{
-            width: '100%',
-            justifyContent: 'flex-start',
-            gap: '10px',
-            padding: '11px 12px',
-            borderRadius: '12px',
-            fontSize: dt.text.sm,
-            fontWeight: active ? 700 : 500,
-            color: active ? colors.accent?.blue : colors.text2,
-            background: active ? `${colors.accent?.blue}10` : 'transparent',
-            border: `1px solid ${active ? colors.accent?.blue + '25' : 'transparent'}`,
-            transition: dt.ease.smooth,
-          }}
-          onMouseEnter={e => { if (!active) { e.currentTarget.style.background = `${colors.accent?.blue}06`; e.currentTarget.style.color = colors.text1; } }}
-          onMouseLeave={e => { if (!active) { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = colors.text2; } }}
-        >
-          <span style={{ fontSize: '16px', lineHeight: 1 }}>{tab.icon}</span>
-          <span>{tab.label}</span>
-          {active && (
-            <span style={{
-              marginLeft: 'auto',
-              width: '6px', height: '6px', borderRadius: '50%',
-              background: colors.accent?.blue,
-            }} />
-          )}
-        </button>
-      );
-    })}
-  </aside>
-);
+// ─── Navigation principale — pill segmented control (toutes tailles) ─────────
+const PillNav = ({
+  activeTab, tabs, onTabChange, colors, isMobile,
+}: { activeTab: string; tabs: any[]; onTabChange: (id: string) => void; colors: any; isMobile?: boolean }) => {
+  const activeIndex = tabs.findIndex(tab => tab.id === activeTab);
+  return (
+    <div
+      className="pp-pillnav pp-scroll-x pp-scroll-hide"
+      role="tablist"
+      aria-label="Inventory sections"
+      style={{
+        position: 'relative',
+        display: 'inline-flex',
+        gap: '2px',
+        padding: '5px',
+        background: colors.surface,
+        border: `1px solid ${colors.border}`,
+        borderRadius: '16px',
+        boxShadow: 'inset 0 1px 2px rgba(0,0,0,0.04)',
+        marginBottom: isMobile ? '16px' : '24px',
+        maxWidth: '100%',
+        width: isMobile ? '100%' : 'auto',
+      }}
+    >
+      {/* Indicateur glissant */}
+      <div
+        aria-hidden="true"
+        style={{
+          position: 'absolute',
+          top: '5px', bottom: '5px',
+          left: `calc(5px + ${activeIndex} * (100% - 10px) / ${tabs.length})`,
+          width: `calc((100% - 10px) / ${tabs.length})`,
+          background: colors.card,
+          borderRadius: '12px',
+          boxShadow: `${dt.shadow.sm}, 0 0 0 1px ${colors.border}80`,
+          transition: 'left 0.32s cubic-bezier(0.34,1.56,0.64,1)',
+          pointerEvents: 'none',
+        }}
+      />
+      {tabs.map(tab => {
+        const active = activeTab === tab.id;
+        return (
+          <button
+            key={tab.id}
+            type="button"
+            role="tab"
+            aria-selected={active}
+            onClick={() => onTabChange(tab.id)}
+            className="pp-btn"
+            style={{
+              position: 'relative',
+              zIndex: 1,
+              flex: '1 1 0',
+              padding: isMobile ? '9px 8px' : '10px 18px',
+              borderRadius: '12px',
+              fontSize: isMobile ? dt.text.xs : dt.text.sm,
+              fontWeight: active ? 700 : 500,
+              color: active ? colors.text1 : colors.text3,
+              background: 'transparent',
+              gap: isMobile ? '4px' : '8px',
+              whiteSpace: 'nowrap',
+              transition: 'color 0.22s ease',
+            }}
+            onMouseEnter={e => { if (!active) e.currentTarget.style.color = colors.text2; }}
+            onMouseLeave={e => { if (!active) e.currentTarget.style.color = colors.text3; }}
+          >
+            <span style={{ fontSize: isMobile ? '14px' : '16px', lineHeight: 1, filter: active ? 'none' : 'grayscale(0.4) opacity(0.75)' }}>{tab.icon}</span>
+            <span style={isMobile ? { overflow: 'hidden', textOverflow: 'ellipsis' } : undefined}>{tab.label}</span>
+          </button>
+        );
+      })}
+    </div>
+  );
+};
 
-// ─── Navigation tabs horizontaux ─────────────────────────────────────────────
-const HorizontalTabs = ({
-  activeTab, tabs, onTabChange, colors,
-}: { activeTab: string; tabs: any[]; onTabChange: (id: string) => void; colors: any }) => (
-  <div
-    className="pp-desktop-tabs pp-scroll-x pp-scroll-hide"
-    role="tablist"
-    style={{
-      display: 'flex',
-      borderBottom: `2px solid ${colors.border}`,
-      marginBottom: '24px',
-      gap: 0,
-    }}
-  >
-    {tabs.map(tab => {
-      const active = activeTab === tab.id;
-      return (
-        <button
-          key={tab.id}
-          type="button"
-          role="tab"
-          aria-selected={active}
-          className={`pp-btn pp-tab${active ? ' active' : ''}`}
-          onClick={() => onTabChange(tab.id)}
-          style={{
-            padding: '14px 22px',
-            borderRadius: '12px 12px 0 0',
-            fontSize: dt.text.sm,
-            fontWeight: active ? 700 : 500,
-            color: active ? colors.text1 : colors.text3,
-            background: active ? colors.card : 'transparent',
-            border: 'none',
-            borderBottom: `3px solid ${active ? colors.accent?.gold : 'transparent'}`,
-            gap: '7px',
-            letterSpacing: '0.03em',
-            textTransform: 'uppercase',
-            whiteSpace: 'nowrap',
-            transition: dt.ease.smooth,
-          }}
-          onMouseEnter={e => { if (!active) e.currentTarget.style.color = colors.text2; }}
-          onMouseLeave={e => { if (!active) e.currentTarget.style.color = colors.text3; }}
-        >
-          <span style={{ fontSize: '15px' }}>{tab.icon}</span>
-          {tab.label}
-        </button>
-      );
-    })}
-  </div>
-);
-
-// ─── Navigation mobile (bottom bar) ──────────────────────────────────────────
+// ─── Navigation mobile (bottom bar flottante) ─────────────────────────────────
 const MobileNav = ({
   activeTab, tabs, onTabChange, hasFilters, onClearFilters, colors,
 }: { activeTab: string; tabs: any[]; onTabChange: (id: string) => void; hasFilters: boolean; onClearFilters: () => void; colors: any }) => (
@@ -593,43 +580,50 @@ const MobileNav = ({
     <nav
       className="pp-mobile-nav"
       style={{
-        background: `${colors.card}f8`,
-        borderTop: `1px solid ${colors.border}`,
-        backdropFilter: 'blur(20px)',
-        WebkitBackdropFilter: 'blur(20px)',
-        padding: '8px 4px calc(8px + env(safe-area-inset-bottom, 0px))',
-        gap: '2px',
-        boxShadow: '0 -4px 24px rgba(0,0,0,0.07)',
+        padding: '0 12px calc(10px + env(safe-area-inset-bottom, 0px))',
       }}
     >
-      {tabs.map(tab => {
-        const active = activeTab === tab.id;
-        return (
-          <button
-            key={tab.id}
-            type="button"
-            className="pp-btn"
-            onClick={() => onTabChange(tab.id)}
-            style={{
-              flex: 1,
-              flexDirection: 'column',
-              gap: '3px',
-              padding: '8px 4px',
-              borderRadius: '12px',
-              fontSize: '9.5px',
-              fontWeight: active ? 700 : 500,
-              color: active ? colors.accent?.blue : colors.text3,
-              background: active ? `${colors.accent?.blue}10` : 'transparent',
-              border: 'none',
-              letterSpacing: '0.03em',
-              textTransform: 'uppercase',
-            }}
-          >
-            <span style={{ fontSize: '20px', lineHeight: 1 }}>{tab.icon}</span>
-            <span>{tab.label}</span>
-          </button>
-        );
-      })}
+      <div
+        style={{
+          display: 'flex',
+          gap: '2px',
+          padding: '6px',
+          background: `${colors.card}f5`,
+          border: `1px solid ${colors.border}`,
+          borderRadius: '20px',
+          backdropFilter: 'blur(24px)',
+          WebkitBackdropFilter: 'blur(24px)',
+          boxShadow: '0 12px 32px rgba(0,0,0,0.14), 0 2px 8px rgba(0,0,0,0.06)',
+        }}
+      >
+        {tabs.map(tab => {
+          const active = activeTab === tab.id;
+          return (
+            <button
+              key={tab.id}
+              type="button"
+              className="pp-btn"
+              onClick={() => onTabChange(tab.id)}
+              style={{
+                flex: 1,
+                flexDirection: 'column',
+                gap: '2px',
+                padding: '8px 4px',
+                borderRadius: '14px',
+                fontSize: '9px',
+                fontWeight: active ? 700 : 500,
+                color: active ? colors.accent?.blue : colors.text3,
+                background: active ? `${colors.accent?.blue}12` : 'transparent',
+                border: 'none',
+                letterSpacing: '0.02em',
+              }}
+            >
+              <span style={{ fontSize: '19px', lineHeight: 1, animation: active ? 'pp-float 1.8s ease-in-out infinite' : 'none' }}>{tab.icon}</span>
+              <span>{tab.label}</span>
+            </button>
+          );
+        })}
+      </div>
     </nav>
     {hasFilters && (
       <button
@@ -637,8 +631,8 @@ const MobileNav = ({
         onClick={onClearFilters}
         style={{
           position: 'fixed',
-          bottom: 'calc(68px + env(safe-area-inset-bottom, 0px))',
-          right: '14px',
+          bottom: 'calc(78px + env(safe-area-inset-bottom, 0px))',
+          right: '16px',
           zIndex: 1001,
           width: '44px', height: '44px',
           borderRadius: '50%',
@@ -676,6 +670,7 @@ const BulkBar = ({
         background: colors.accent?.blue, color: '#fff',
         display: 'flex', alignItems: 'center', justifyContent: 'center',
         fontSize: dt.text.sm, fontWeight: 800, flexShrink: 0,
+        boxShadow: `0 0 0 4px ${colors.accent?.blue}18`,
       }}>{count}</span>
       <span style={{ fontSize: dt.text.sm, fontWeight: 600, color: colors.text1 }}>
         {t('products.selected')}
@@ -1001,7 +996,7 @@ const ProductsPage = () => {
             ) : (
               <Card isMobile={isMobile}>
                 {viewMode === 'grid' ? (
-                  <div className="pp-product-grid">
+                  <div className="pp-product-grid pp-grid-stagger">
                     {pagination.pageItems.map(p => (
                       <ProductCard
                         key={p.id}
@@ -1124,12 +1119,15 @@ const ProductsPage = () => {
   return (
     <div className="pp-root">
       <GlobalStyles colors={colors} />
+      <div className="pp-bg-texture" />
 
       <main
         style={{
           background: colors.bg,
           minHeight: '100vh',
           padding: mainPad,
+          position: 'relative',
+          zIndex: 1,
         }}
       >
         <div
@@ -1141,38 +1139,31 @@ const ProductsPage = () => {
             gap: isMobile ? '12px' : '20px',
           }}
         >
-          {/* Layout : sidebar (desktop) + contenu principal */}
-          <div className="pp-layout" style={{ display: 'block', width: '100%', minWidth: 0 }}>
+          {/* Zone contenu principal */}
+          <div style={{ minWidth: 0, width: '100%', display: 'flex', flexDirection: 'column', gap: isMobile ? '12px' : '20px' }}>
 
-            {/* Sidebar desktop */}
-            <Sidebar activeTab={activeTab} tabs={tabs} onTabChange={setActiveTab} t={t} colors={colors} />
+            {/* En-tête page */}
+            <InventoryHeader
+              viewMode={viewMode}
+              onViewModeChange={setViewMode}
+              onExport={handleExport}
+              onCreate={() => { setEditingProduct(null); setShowModal(true); }}
+              activeFiltersCount={filteredProductsResult.activeFiltersCount}
+              onClearFilters={filteredProductsResult.clearFilters}
+              canCreate={can('product.create')}
+            />
 
-            {/* Zone contenu */}
-            <div style={{ minWidth: 0, width: '100%', display: 'flex', flexDirection: 'column', gap: isMobile ? '12px' : '20px' }}>
+            {/* Navigation pill (tablette + desktop) */}
+            <PillNav activeTab={activeTab} tabs={tabs} onTabChange={setActiveTab} colors={colors} />
 
-              {/* En-tête page */}
-              <InventoryHeader
-                viewMode={viewMode}
-                onViewModeChange={setViewMode}
-                onExport={handleExport}
-                onCreate={() => { setEditingProduct(null); setShowModal(true); }}
-                activeFiltersCount={filteredProductsResult.activeFiltersCount}
-                onClearFilters={filteredProductsResult.clearFilters}
-                canCreate={can('product.create')}
-              />
-
-              {/* Tabs horizontaux (tablette + desktop sans sidebar) */}
-              <HorizontalTabs activeTab={activeTab} tabs={tabs} onTabChange={setActiveTab} colors={colors} />
-
-              {/* Contenu onglet */}
-              <div
-                id={`tabpanel-${activeTab}`}
-                role="tabpanel"
-                className="pp-anim-fade-up"
-                key={activeTab}
-              >
-                {renderTabContent()}
-              </div>
+            {/* Contenu onglet */}
+            <div
+              id={`tabpanel-${activeTab}`}
+              role="tabpanel"
+              className="pp-anim-fade-up"
+              key={activeTab}
+            >
+              {renderTabContent()}
             </div>
           </div>
         </div>

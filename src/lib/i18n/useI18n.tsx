@@ -45,7 +45,7 @@ function resolveInNamespace(namespace: Record<string, unknown>, lang: Language, 
       node = (node as Record<string, unknown>)[part];
     } else {
       // Key not found in this namespace
-      return key; // raw key as ultimate fallback
+      return key;
     }
   }
 
@@ -53,9 +53,11 @@ function resolveInNamespace(namespace: Record<string, unknown>, lang: Language, 
   if (node && typeof node === 'object') {
     if (hasLang(node, lang)) return String(node[lang]);
     if (hasLang(node, 'en')) return String((node as Record<string, string>)['en']);
+    return key;
   }
 
-  return typeof node === 'string' ? node : key;
+  if (typeof node === 'string') return node;
+  return key;
 }
 
 /* ─── Hook ─────────────────────────────────────────────────────────── */
@@ -89,17 +91,22 @@ export function useI18n(): UseI18n {
         const nsKey = key.slice(0, dot) as TranslationNamespace;
         const rest  = key.slice(dot + 1);
 
-        if (nsKey in translations) {
-          result = resolveInNamespace((translations as Record<string, unknown>)[nsKey] as Record<string, unknown>, ctx.lang, rest);
-        } else {
-          result = key;
-        }
+      if (nsKey in translations) {
+        const found = resolveInNamespace(
+          (translations as Record<string, unknown>)[nsKey] as Record<string, unknown>,
+          ctx.lang,
+          rest
+        );
+        result = found ?? key;
+      } else {
+        result = key;
+      }
       } else {
         // Key not namespaced — search all namespaces
         result = key;
         for (const ns of Object.values(translations) as Record<string, unknown>[]) {
           const found = resolveInNamespace(ns as Record<string, unknown>, ctx.lang, key);
-          if (found !== key) { result = found; break; }
+          if (found) { result = found; break; }
         }
       }
 

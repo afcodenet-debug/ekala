@@ -135,5 +135,125 @@
       "saving": "Enregistrement...",
       "saveChanges": "Enregistrer les modifications"
     }
+  },
+  "subscription": {
+    "grace": {
+      "statusLabel": "Période de grâce",
+      "title": "Accès limité en lecture seule",
+      "desc": "Votre abonnement a expiré. Vous pouvez consulter vos données mais les modifications sont désactivées.",
+      "cta": "Renouveler maintenant",
+      "secondary": "Continuer en lecture seule",
+      "readOnlyAccess": "Accès en lecture seule",
+      "dayRemaining": "1 jour restant",
+      "daysRemaining": "{days} jours restants"
+    },
+    "suspended": {
+      "statusLabel": "Abonnement suspendu",
+      "title": "Votre accès a été interrompu",
+      "desc": "Un paiement n'a pas pu être traité. Mettez à jour votre moyen de paiement pour rétablir l'accès immédiatement.",
+      "cta": "Mettre à jour le paiement",
+      "secondary": "Revenir au tableau de bord",
+      "meta": "Vos données sont préservées et restent accessibles à la réactivation."
+    },
+    "cancelled": {
+      "statusLabel": "Abonnement annulé",
+      "title": "Votre abonnement est terminé",
+      "desc": "Votre abonnement a été annulé à votre demande. Choisissez un plan pour retrouver un accès complet.",
+      "cta": "Choisir un plan",
+      "secondary": "Revenir au tableau de bord"
+    },
+    "expired": {
+      "statusLabel": "Abonnement expiré",
+      "title": "Votre abonnement a expiré",
+      "desc": "La période de grâce est écoulée. Renouvelez dès maintenant pour retrouver un accès complet à vos projets.",
+      "cta": "Renouveler l'abonnement",
+      "secondary": "Revenir au tableau de bord",
+      "meta": "Vos données sont sauvegardées pendant 90 jours après expiration."
+    },
+    "no_plan": {
+      "statusLabel": "Aucun abonnement",
+      "title": "Choisissez votre plan",
+      "desc": "Débloquez toutes les fonctionnalités en souscrivant à un abonnement. Commencez gratuitement pendant 14 jours.",
+      "cta": "Voir les plans disponibles",
+      "secondary": "Continuer sans abonnement",
+      "meta": "Aucune carte bancaire requise pour l'essai."
+    },
+    "close": "Fermer"
+  },
+  "pricing": {
+    "planCode": "{code}",
+    "price": {
+      "free": "Gratuit"
+    },
+    "periods": {
+      "weekly": "/ sem.",
+      "monthly": "/ mois",
+      "annual": "/ an"
+    },
+    "trial": {
+      "daysAccess": "{days} jours d'accès complet"
+    },
+    "quota": {
+      "users": "Utilisateurs",
+      "tables": "Tables",
+      "products": "Produits",
+      "ordersPerMonth": "Cmdes / mois"
+    },
+    "features": {
+      "qr_menu": "Menu QR public",
+      "pos": "POS complet",
+      "reports": {
+        "advanced": "Rapports avancés & analytics",
+        "standard": "Rapports standard & analytics",
+        "basic": "Rapports de base"
+      },
+      "inventory": "Gestion de stock",
+      "multi_branch": "Multi-succursales",
+      "api_access": "Accès API",
+      "priority_support": "Support prioritaire"
+    },
+    "badges": {
+      "trial": "ESSAI GRATUIT",
+      "popular": "POPULAIRE",
+      "pro": "PRO"
+    },
+    "cta": {
+      "trial": "Commencer gratuitement",
+      "choosePlan": "Choisir ce plan"
+    },
+    "hero": {
+      "eyebrow": "7 jours gratuits · sans carte bancaire",
+      "headline": "Le POS qui propulse<br />votre restaurant",
+      "subtitle": "Menu QR, gestion des tables, POS, stock, rapports — tout l'essentiel, à un prix qui respecte votre budget."
+    },
+    "trust": {
+      "noCommitment": "Sans engagement",
+      "supportIncluded": "Support inclus",
+      "dataHostedInAfrica": "Données hébergées en Afrique"
+    },
+    "billingToggle": {
+      "weekly": "Hebdo",
+      "monthly": "Mensuel",
+      "annual": "Annuel",
+      "annualBadge": "-20%"
+    },
+    "loading": {
+      "plans": "Chargement des plans…"
+    },
+    "error": {
+      "title": "Impossible de charger les plans",
+      "hint": "Vérifiez que le backend est accessible et que la migration SaaS a été appliquée.",
+      "unexpectedFormat": "Format de réponse inattendu"
+    },
+    "bottomNote": "Tous les plans incluent le chiffrement SSL, les sauvegardes automatiques et les mises à jour.<br>Résiliez à tout moment depuis votre espace de facturation.",
+    "footer": {
+      "subtitle": "POS & QR MENU",
+      "brand": "EKALA POS & QR Menu",
+      "copyright": "© {year} Ekala. Tous droits réservés."
+    },
+    "nav": {
+      "login": "Se connecter",
+      "start": "Démarrer"
+    }
   }
 }

@@ -373,7 +373,7 @@ const Dashboard = () => {
   const { t } = useI18n();
   const lang = useSettingsStore(s => s.language);
   const { currency } = useSettingsStore();
-  const navigate = useNavigate();
+  // const navigate = useNavigate();
 
   const [data, setData] = useState<any>(null);
   const [loading,    setLoading]    = useState(true);

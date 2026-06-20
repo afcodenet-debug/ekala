@@ -34,6 +34,7 @@ import notificationPreferencesRoutes from './routes/notification_preferences';
 import scheduledReportsLogRoutes from './routes/scheduled_reports_log';
 import vouchersRoutes from './routes/vouchers';
 import voucherPurchaseRoutes from './routes/voucher-purchase';
+import billingRoutes from './routes/billing.routes';
 import db, { initializeDatabase } from './db/database';
 import { startSupabasePullWorker, getPullSyncStatus } from './services/supabase-pull-sync.service';
 import { startSupabaseRealtimePull, getSupabaseRealtimeStatus } from './services/supabase-realtime-sync.service';
@@ -280,8 +281,24 @@ app.use('/api', (req, res, next) => {
 // Subscription Guard — intercepts all protected API requests
 // Place AFTER tenant scope (which injects tenant_id) and BEFORE routes
 app.use('/api', async (req, res, next) => {
-  // Skip subscription check for health, sync status, and SaaS routes
-  if (req.path === '/health' || req.path === '/sync/status' || req.path.startsWith('/saas') || req.path.startsWith('/voucher-purchase')) {
+  // Skip subscription check for health, sync status, and SaaS / subscription flows
+  const isPaymentOrVoucherFlow =
+    req.path.startsWith('/checkout') ||
+    req.path.startsWith('/payments/') ||
+    req.path.startsWith('/webhooks') ||
+    req.path.startsWith('/vouchers') ||
+    req.path.startsWith('/voucher-purchase') ||
+    req.path.startsWith('/billing');
+
+  if (
+    req.path === '/health' ||
+    req.path === '/sync/status' ||
+    req.path.startsWith('/saas') ||
+    isPaymentOrVoucherFlow ||
+    req.path.startsWith('/plans') ||
+    (req.path.startsWith('/tenants') && ['GET','HEAD','OPTIONS'].includes(req.method))
+  ) {
+    console.log('[SubGuard:SKIP]', { method: req.method, path: req.path, paymentFlow: isPaymentOrVoucherFlow });
     return next();
   }
 
@@ -314,33 +331,36 @@ app.use('/api', async (req, res, next) => {
     if (sub.state === 'active' || sub.state === 'trial') {
       return next();
     } else if (sub.state === 'grace') {
-      if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) {
-        res.setHeader('X-Subscription-Warning', 'grace_period');
-        res.setHeader('X-Subscription-Grace-Days', String(sub.graceDaysRemaining || 0));
-        return next();
-      }
-      return res.status(403).json({
-        error: 'SUBSCRIPTION_GRACE_PERIOD',
-        message: 'Abonnement expiré — accès en lecture seule pendant la période de grâce.',
-        graceDaysRemaining: sub.graceDaysRemaining,
-        planName: sub.planName,
-        renewalUrl: '/billing',
-      });
-    } else {
-      return res.status(403).json({
-        error: 'SUBSCRIPTION_REQUIRED',
-        message: sub.state === 'no_plan'
+      res.setHeader('X-Subscription-Warning', 'grace_period');
+      res.setHeader('X-Subscription-Grace-Days', String(sub.graceDaysRemaining || 0));
+      return next();
+    }
+
+    // expired | suspended | cancelled | no_plan | pending
+    console.log('[403:SUBSCRIPTION_BLOCKED]', {
+      tenantId, userId: (req as any).user?.sub, state: sub.state, method: req.method, path: req.originalUrl
+    });
+
+    const readOnlyPaths = ['/billing', '/subscription', '/profile', '/vouchers', '/voucher-purchase'];
+    const isReadOnlyPath = readOnlyPaths.some(p => req.path.startsWith(p));
+
+    if (isReadOnlyPath) return next();
+
+    return res.status(403).json({
+      error: sub.state === 'pending' ? 'SUBSCRIPTION_PENDING' : 'SUBSCRIPTION_REQUIRED',
+      message: sub.state === 'pending'
+        ? 'Compte en attente d\'activation. Veuillez saisir un code voucher.'
+        : sub.state === 'no_plan'
           ? 'Aucun abonnement actif. Choisissez un plan pour continuer.'
           : sub.state === 'cancelled'
             ? 'Abonnement annulé. Souscrivez à un nouveau plan.'
-            : 'Abonnement expiré. Renouvelez pour continuer.',
-        state: sub.state,
-        planName: sub.planName,
-        daysUntilRenewal: sub.daysUntilRenewal,
-        renewalUrl: '/billing',
-        pricingUrl: '/pricing',
-      });
-    }
+            : 'Abonnement expiré. Activez un voucher pour continuer.',
+      state: sub.state,
+      planName: sub.planName,
+      daysUntilRenewal: sub.daysUntilRenewal,
+      renewalUrl: '/billing',
+      pricingUrl: '/pricing',
+    });
   } catch (err: any) {
     console.error('[SubGuard] Middleware error:', err.message);
     // Fail-open: allow request on error
@@ -370,6 +390,7 @@ app.use('/api/notification_preferences', notificationPreferencesRoutes);
 app.use('/api/scheduled_reports_log', scheduledReportsLogRoutes);
 app.use('/api/vouchers', vouchersRoutes);
 app.use('/api/voucher-purchase', voucherPurchaseRoutes);
+app.use('/api/billing', billingRoutes);
 
 // =============================================================================
 // SaaS Multi-Tenant Routes (Phase 1 + 3)

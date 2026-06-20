@@ -132,15 +132,25 @@ export class SyncOrchestratorV2 {
     this.isSyncing = true;
 
     try {
-      const tenantIds = this.getLocalTenantIds();
-      if (tenantIds.length === 0) {
+      // Phase 0: Discover ALL remote tenants first (bidirectional discovery)
+      console.log(`[SyncV2] =========================================`);
+      console.log(`[SyncV2] Starting global sync - Phase 0: Remote tenant discovery`);
+      console.log(`[SyncV2] =========================================`);
+      
+      const allTenantIds = await this.discoverAllRemoteTenants();
+      
+      console.log(`[SyncV2] ✓ Found ${allTenantIds.length} total tenants (local + remote)`);
+      
+      if (allTenantIds.length === 0) {
         const bootstrapId = process.env.SYNC_TENANT_ID || '1';
-        console.log(`[SyncV2] Bootstrapping with tenant #${bootstrapId}`);
-        await this.syncTenant(bootstrapId);
-      } else {
-        for (const tId of tenantIds) {
-          await this.syncTenant(tId);
-        }
+        console.log(`[SyncV2] No tenants found, bootstrapping with tenant #${bootstrapId}`);
+        allTenantIds.push(bootstrapId);
+      }
+
+      // Phase 1: Sync each tenant
+      console.log(`[SyncV2] Starting global sync - Phase 1: Tenant synchronization`);
+      for (const tId of allTenantIds) {
+        await this.syncTenant(tId);
       }
 
       // DLQ retry automatique
@@ -162,7 +172,9 @@ export class SyncOrchestratorV2 {
 
   private async syncTenant(tenantId: string): Promise<void> {
     const startTime = Date.now();
+    console.log(`[SyncV2] =========================================`);
     console.log(`[SyncV2] Starting sync for tenant #${tenantId}`);
+    console.log(`[SyncV2] =========================================`);
 
     let totalPushed = 0, totalPulled = 0, totalErrors = 0;
 
@@ -173,8 +185,19 @@ export class SyncOrchestratorV2 {
       // Vérifier si le tenant existe localement
       const tenant = this.db.prepare('SELECT id FROM tenants WHERE id = ?').get(Number(tenantId));
       if (!tenant) {
-        console.warn(`[SyncV2] Tenant #${tenantId} not found, skipping data sync`);
+        console.warn(`[SyncV2] Tenant #${tenantId} not found locally, skipping data sync`);
         return;
+      }
+      
+      console.log(`[SyncV2] ✓ Local tenant #${tenantId} found`);
+
+      // Phase 2d: Discover remote tenants not yet in local DB (bidirectional sync)
+      try {
+        const discovered = await this.discoverRemoteTenants(tenantId);
+        if (discovered > 0) console.log(`[SyncV2] ✓ Discovered ${discovered} remote tenants`);
+        else console.log(`[SyncV2] No new remote tenants discovered`);
+      } catch (discoveryErr: any) {
+        console.warn('[SyncV2] ⚠ Remote tenant discovery partial failure:', discoveryErr?.message);
       }
 
       // Phase 2: Backfill - queue les orphelins locaux (résilient)
@@ -202,10 +225,12 @@ export class SyncOrchestratorV2 {
       }
 
       // Phase 3: Generic sync pour TOUTES les entités (dans l'ordre)
+      console.log(`[SyncV2] Starting generic sync for all entities...`);
       const result = await this.genericSync.fullSyncForTenant(tenantId);
       totalPushed += result.pushed;
       totalPulled += result.pulled;
       totalErrors += result.errors;
+      console.log(`[SyncV2] ✓ Generic sync completed - Pushed: ${result.pushed}, Pulled: ${result.pulled}, Errors: ${result.errors}`);
 
       // Phase 4: Legacy Order sync (PUSH ONLY - pas de pull)
       const ordersPushed = await this.orderSync.pushPendingOrders(tenantId);
@@ -220,12 +245,11 @@ export class SyncOrchestratorV2 {
       if (fixed > 0) console.log(`[SyncV2] Fixed ${fixed} integrity issues`);
 
       const duration = Date.now() - startTime;
-      if (totalPushed > 0 || totalPulled > 0 || totalErrors > 0) {
-        console.log(`[SyncV2] Tenant #${tenantId} - Pushed: ${totalPushed}, Pulled: ${totalPulled}, Errors: ${totalErrors} (${duration}ms)`);
-      }
-
+      console.log(`[SyncV2] ✓ Tenant #${tenantId} sync completed - Pushed: ${totalPushed}, Pulled: ${totalPulled}, Errors: ${totalErrors} (${duration}ms)`);
+      console.log(`[SyncV2] =========================================`);
     } catch (err) {
-      console.error(`[SyncV2] Sync failed for tenant #${tenantId}:`, err);
+      console.error(`[SyncV2] ✗ Sync failed for tenant #${tenantId}:`, err);
+      console.log(`[SyncV2] =========================================`);
     }
   }
 
@@ -255,23 +279,25 @@ export class SyncOrchestratorV2 {
       // Vérifier les remote_ids manquants après pull
       const entities = getEntitiesBySyncOrder();
       for (const def of entities) {
-        if (def.entity === 'tenant' || def.entity === 'setting') continue;
+        if (def.entity === 'setting') continue;
         try {
-          const emptyRemoteIds = this.db.prepare(`
-            SELECT COUNT(*) as count FROM ${def.localTable}
-            WHERE tenant_id = ? AND remote_id IS NULL
-          `).get(Number(tenantId)) as { count: number };
+          const whereClause = def.entity === 'tenant'
+            ? 'remote_id IS NULL AND id NOT IN (SELECT record_id FROM sync_outbox WHERE entity = ? AND status IN (\'pending\', \'in_progress\'))'
+            : 'tenant_id = ? AND remote_id IS NULL AND id NOT IN (SELECT record_id FROM sync_outbox WHERE entity = ? AND status IN (\'pending\', \'in_progress\'))';
+          const params = def.entity === 'tenant' ? [def.entity] : [Number(tenantId), def.entity];
 
-          if (emptyRemoteIds.count > 0) {
-            // Backfill automatique
+          const emptyRemoteIds = this.db.prepare(`
+            SELECT COUNT(*) as count FROM ${def.localTable} WHERE ${whereClause}
+          `).all(...(params as any[])) as { count: number }[];
+
+          if (emptyRemoteIds[0]?.count > 0) {
             const orphans = this.db.prepare(`
-              SELECT * FROM ${def.localTable}
-              WHERE tenant_id = ? AND remote_id IS NULL
-              AND id NOT IN (SELECT record_id FROM sync_outbox WHERE entity = ? AND status IN ('pending', 'in_progress'))
-            `).all(Number(tenantId), def.entity) as any[];
+              SELECT * FROM ${def.localTable} WHERE ${whereClause}
+            `).all(...(params as any[])) as any[];
 
             for (const record of orphans) {
-              this.genericSync.queueChange(def.entity, 'insert', record);
+              const recordToQueue = def.entity === 'tenant' ? { ...record, tenant_id: record.id } : record;
+              this.genericSync.queueChange(def.entity, 'insert', recordToQueue);
               fixed++;
             }
           }
@@ -338,6 +364,137 @@ export class SyncOrchestratorV2 {
       SET status = 'pending', updated_at = datetime('now')
       WHERE status = 'in_progress' OR (status = 'failed' AND retry_count < 5)
     `).run();
+  }
+
+  /**
+   * Discover ALL remote tenants from Supabase and ensure they exist locally
+   * This is called at the start of global sync to find tenants like #16 that exist
+   * only in Supabase
+   */
+  private async discoverAllRemoteTenants(): Promise<string[]> {
+    const allTenantIds = new Set<string>();
+    
+    try {
+      // Get local tenants first
+      const localTenants = this.getLocalTenantIds();
+      localTenants.forEach(id => allTenantIds.add(id));
+      console.log(`[SyncV2] Found ${localTenants.length} local tenants`);
+
+      // Discover remote tenants from Supabase
+      const since = this.cursor.getOrEpoch('tenant');
+      const { data: remoteTenants, error } = await this.supabase
+        .from('tenants')
+        .select('id, slug, name, owner_email, updated_at, created_at')
+        .order('updated_at', { ascending: true });
+
+      if (error) {
+        console.warn('[SyncV2] Failed to discover remote tenants:', error.message);
+        return Array.from(allTenantIds);
+      }
+
+      console.log(`[SyncV2] Found ${remoteTenants?.length || 0} remote tenants in Supabase`);
+
+      for (const remote of (remoteTenants || [])) {
+        const remoteId = String(remote.id);
+        allTenantIds.add(remoteId);
+
+        // Check if this remote tenant already exists locally
+        let existing = this.db.prepare('SELECT id FROM tenants WHERE id = ?').get(remote.id);
+        if (!existing && remote.slug) {
+          existing = this.db.prepare('SELECT id FROM tenants WHERE slug = ?').get(remote.slug);
+        }
+        if (!existing && remote.owner_email) {
+          existing = this.db.prepare('SELECT id FROM tenants WHERE owner_email = ?').get(remote.owner_email);
+        }
+
+        if (!existing) {
+          // Insert the missing tenant locally with remote_id
+          const cols = ['id', 'remote_id', 'slug', 'name', 'owner_email', 'updated_at', 'created_at'];
+          const vals = [remote.id, remote.id, remote.slug, remote.name, remote.owner_email, remote.updated_at, remote.created_at];
+          const placeholders = cols.map(() => '?').join(', ');
+
+          this.db.prepare(`
+            INSERT INTO tenants (${cols.map(c => `"${c}"`).join(', ')})
+            VALUES (${placeholders})
+          `).run(...vals);
+
+          console.log(`[SyncV2] ✓ Discovered and created remote tenant #${remote.id} (${remote.name}) locally`);
+        } else {
+          console.log(`[SyncV2] ✓ Remote tenant #${remote.id} (${remote.name}) already exists locally`);
+        }
+      }
+
+      // Update cursor
+      if (remoteTenants && remoteTenants.length > 0) {
+        const lastTs = remoteTenants[remoteTenants.length - 1].updated_at;
+        if (lastTs) {
+          this.cursor.set('tenant', lastTs instanceof Date ? lastTs.toISOString() : String(lastTs));
+        }
+      }
+
+      return Array.from(allTenantIds);
+    } catch (err: any) {
+      console.warn('[SyncV2] Remote tenant discovery error:', err?.message || err);
+      return Array.from(allTenantIds);
+    }
+  }
+
+  private async discoverRemoteTenants(forLocalTenantId: string): Promise<number> {
+    try {
+      // Pull all tenants changed since cursor to discover any new remote tenants
+      const since = this.cursor.getOrEpoch('tenant');
+      const { data: remoteTenants, error } = await this.supabase
+        .from('tenants')
+        .select('id, slug, name, owner_email, updated_at, created_at')
+        .gt('updated_at', since)
+        .order('updated_at', { ascending: true });
+
+      if (error) {
+        console.warn('[SyncV2] Failed to discover remote tenants:', error.message);
+        return 0;
+      }
+
+      let discovered = 0;
+
+      for (const remote of (remoteTenants || [])) {
+        // Check if this remote tenant already exists locally
+        let existing = this.db.prepare('SELECT id FROM tenants WHERE id = ?').get(remote.id);
+        if (!existing && remote.slug) {
+          existing = this.db.prepare('SELECT id FROM tenants WHERE slug = ?').get(remote.slug);
+        }
+        if (!existing && remote.owner_email) {
+          existing = this.db.prepare('SELECT id FROM tenants WHERE owner_email = ?').get(remote.owner_email);
+        }
+
+        if (!existing) {
+          // Insert the missing tenant locally with remote_id
+          const cols = ['id', 'remote_id', 'slug', 'name', 'owner_email', 'updated_at', 'created_at'];
+          const vals = [remote.id, remote.id, remote.slug, remote.name, remote.owner_email, remote.updated_at, remote.created_at];
+          const placeholders = cols.map(() => '?').join(', ');
+
+          this.db.prepare(`
+            INSERT INTO tenants (${cols.map(c => `"${c}"`).join(', ')})
+            VALUES (${placeholders})
+          `).run(...vals);
+
+          console.log(`[SyncV2] Discovered remote tenant #${remote.id} (${remote.name}) created locally`);
+          discovered++;
+        }
+      }
+
+      // Update cursor
+      if (remoteTenants && remoteTenants.length > 0) {
+        const lastTs = remoteTenants[remoteTenants.length - 1].updated_at;
+        if (lastTs) {
+          this.cursor.set('tenant', lastTs instanceof Date ? lastTs.toISOString() : String(lastTs));
+        }
+      }
+
+      return discovered;
+    } catch (err: any) {
+      console.warn('[SyncV2] Remote tenant discovery error:', err?.message || err);
+      return 0;
+    }
   }
 
   private getLocalTenantIds(): string[] {

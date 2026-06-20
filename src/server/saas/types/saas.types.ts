@@ -6,10 +6,10 @@
 // =============================================================================
 
 export type PlanPeriod = 'weekly' | 'monthly' | 'annual' | 'lifetime' | 'trial';
-export type TenantStatus = 'active' | 'suspended' | 'cancelled' | 'trial';
+export type TenantStatus = 'pending' | 'active' | 'suspended' | 'cancelled' | 'trial';
 export type SubscriptionStatus = 'pending' | 'active' | 'past_due' | 'cancelled' | 'expired' | 'trial';
 export type PaymentStatus = 'pending' | 'processing' | 'completed' | 'failed' | 'refunded' | 'cancelled';
-export type PaymentMethod = 'cash' | 'mobile_money' | 'bank_transfer' | 'card' | 'paystack' | 'stripe' | 'other';
+export type PaymentMethod = 'cash' | 'mobile_money' | 'bank_transfer' | 'card' | 'paystack' | 'stripe' | 'other' | 'voucher';
 export type TenantRole = 'owner' | 'admin' | 'manager' | 'cashier' | 'waiter' | 'staff';
 export type InvoiceStatus = 'draft' | 'open' | 'paid' | 'void' | 'uncollectible';
 

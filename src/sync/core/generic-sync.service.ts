@@ -93,6 +93,45 @@ export class GenericSyncService {
   }
 
   private async findExistingRemoteRecord(def: SyncEntityDefinition, payload: any, tenantId: string): Promise<any | null> {
+    if (def.entity === 'tenant') {
+      if (payload.remote_id) {
+        const { data } = await this.supabase
+          .from(def.remoteTable)
+          .select('id')
+          .eq('id', payload.remote_id)
+          .maybeSingle();
+        if (data) return data;
+      }
+
+      if (payload.slug) {
+        const { data } = await this.supabase
+          .from(def.remoteTable)
+          .select('id')
+          .eq('slug', payload.slug)
+          .maybeSingle();
+        if (data) return data;
+      }
+
+      if (payload.owner_email) {
+        const { data } = await this.supabase
+          .from(def.remoteTable)
+          .select('id')
+          .eq('owner_email', payload.owner_email)
+          .maybeSingle();
+        if (data) return data;
+      }
+
+      if (payload.name) {
+        const { data } = await this.supabase
+          .from(def.remoteTable)
+          .select('id')
+          .eq('name', payload.name)
+          .limit(1)
+          .single();
+        if (data) return data;
+      }
+    }
+
     if (def.entity === 'product' && tenantId) {
       if (payload.barcode) {
         const { data } = await this.supabase
@@ -172,7 +211,9 @@ export class GenericSyncService {
     const payload = JSON.stringify(record);
     const version = record.version || 1;
 
-    const tenantId = this.normalizeTenantId(record.tenant_id);
+    const tenantId = def.entity === 'tenant'
+      ? this.normalizeTenantId(record.id)
+      : this.normalizeTenantId(record.tenant_id);
 
     this.db.prepare(`
       INSERT INTO sync_outbox (id, entity, operation, record_id, payload, version, tenant_id)
@@ -197,7 +238,7 @@ export class GenericSyncService {
     const tenantIdNum = parseInt(tenantId, 10);
     const items = this.db.prepare(`
       SELECT * FROM sync_outbox
-      WHERE entity = ? AND status = 'pending' AND CAST(tenant_id AS INTEGER) = ?
+      WHERE entity = ? AND status = 'pending' AND (entity = 'tenant' OR CAST(tenant_id AS INTEGER) = ?)
       ORDER BY created_at ASC
       LIMIT 50
     `).all(entity, tenantIdNum) as any[];
@@ -267,11 +308,12 @@ export class GenericSyncService {
     const currentRemoteId = this.getRemoteId(localTable, recordId);
     const effectiveRemoteId = payload.remote_id || currentRemoteId;
 
-    if (effectiveRemoteId) safeUpdate.id = String(effectiveRemoteId);
-    else if (item.operation === 'update') {
+    if (effectiveRemoteId) {
+      safeUpdate.id = String(effectiveRemoteId);
+    } else {
       const existingRemote = await this.findExistingRemoteRecord(def, payload, tenantId);
       if (existingRemote) safeUpdate.id = String(existingRemote.id);
-      else return;
+      else if (item.operation === 'update') return;
     }
 
     // IMPORTANT:
@@ -518,11 +560,13 @@ export class GenericSyncService {
 
     let query = this.supabase.from(remoteTable).select('*');
 
-    if (entity === 'tenant') query = query.eq('id', tenantId);
-    else query = query.eq('tenant_id', tenantIdForQuery);
-
-    if (hasUpdatedAt) query = query.gt('updated_at', since).order('updated_at', { ascending: true });
-    else query = query.gt('created_at', since).order('created_at', { ascending: true });
+    if (entity === 'tenant') {
+      query = query.gt('updated_at', since).order('updated_at', { ascending: true });
+    } else {
+      query = query.eq('tenant_id', tenantIdForQuery);
+      if (hasUpdatedAt) query = query.gt('updated_at', since).order('updated_at', { ascending: true });
+      else query = query.gt('created_at', since).order('created_at', { ascending: true });
+    }
 
     const { data, error } = await query;
     if (error) {
@@ -536,7 +580,8 @@ export class GenericSyncService {
     const transaction = this.db.transaction((rows: any[]) => {
       for (const remote of rows) {
         try {
-          // Scoping tenant
+          // Scoping tenant: for tenant entity, accept any remote tenant (discovery sync)
+          // For other entities, filter by tenant_id
           if (entity !== 'tenant') {
             const remoteTenantId = remote.tenant_id;
             if (remoteTenantId && entity !== 'user') {
@@ -550,9 +595,8 @@ export class GenericSyncService {
                 continue;
               }
             }
-          } else {
-            if (String(remote.id) !== String(tenantId)) continue;
           }
+          // For tenant entity, no scoping - we sync ALL remote tenants for discovery
 
           const remoteId = Number(remote.id);
           if (isNaN(remoteId)) continue;
@@ -640,6 +684,18 @@ export class GenericSyncService {
         return this.db
           .prepare(`SELECT id, updated_at, created_at, version FROM tenants WHERE slug = ?`)
           .get(remote.slug) as any;
+      }
+
+      if (def.entity === 'tenant' && remote.owner_email) {
+        return this.db
+          .prepare(`SELECT id, updated_at, created_at, version FROM tenants WHERE owner_email = ?`)
+          .get(remote.owner_email) as any;
+      }
+
+      if (def.entity === 'tenant' && remote.name) {
+        return this.db
+          .prepare(`SELECT id, updated_at, created_at, version FROM tenants WHERE name = ?`)
+          .get(remote.name) as any;
       }
 
       if (def.entity === 'tenant_user' && remote.tenant_id && remote.user_id) {
@@ -792,13 +848,23 @@ export class GenericSyncService {
           } else {
             throw insertErr;
           }
-        } else if (String(insertErr?.code || '').includes('UNIQUE')) {
+} else if (String(insertErr?.code || '').includes('UNIQUE')) {
+          if (def.entity === 'tenant' && remote?.slug) {
+            const existing = this.db.prepare(`SELECT id, remote_id FROM tenants WHERE slug = ?`).get(remote.slug) as { id: number; remote_id: number | null } | undefined;
+            if (existing) {
+              this.db.prepare(`UPDATE ${localTable} SET ${setClauses} WHERE id = ?`).run(...params, existing.id);
+              if (!existing.remote_id) {
+                this.db.prepare(`UPDATE ${localTable} SET remote_id = ? WHERE id = ?`).run(remoteId, existing.id);
+              }
+              return;
+            }
+          }
           if (def.entity === 'tenant_user' && remote.tenant_id && remote.user_id) {
             const localTenantId = this.getLocalId('tenants', remote.tenant_id);
             const localUserId = this.getLocalId('users', remote.user_id);
             if (localTenantId && localUserId) {
               this.db
-                .prepare(`UPDATE tenant_users SET ${setClauses} WHERE tenant_id = ? AND user_id = ?`)
+                .prepare(`UPDATE ${localTable} SET ${setClauses} WHERE tenant_id = ? AND user_id = ?`)
                 .run(...params, localTenantId, localUserId);
             }
           } else {
@@ -873,14 +939,27 @@ export class GenericSyncService {
     let total = 0;
 
     for (const def of entities) {
-      if (def.entity === 'tenant' || !def.hasTenantId) continue;
+      // Skip entities without tenant_id (except tenant which is handled separately)
+      if (def.entity !== 'tenant' && !def.hasTenantId) continue;
 
       try {
         const tableInfo = this.db.prepare(`PRAGMA table_info(${def.localTable})`).all() as Array<{ name: string }>;
         const colNames = tableInfo.map((c) => c.name);
-        if (!colNames.includes('tenant_id') || !colNames.includes('remote_id')) continue;
+        if (!colNames.includes('remote_id')) continue;
 
-        if (def.entity === 'setting') {
+        if (def.entity === 'tenant') {
+          // For tenants: backfill by local id (no tenant_id filter)
+          const orphans = this.db.prepare(`
+            SELECT * FROM ${def.localTable}
+            WHERE remote_id IS NULL
+            AND id NOT IN (SELECT record_id FROM sync_outbox WHERE entity = ? AND status IN ('pending', 'in_progress'))
+          `).all(def.entity) as any[];
+
+          for (const record of orphans) {
+            this.queueChange(def.entity, 'insert', { ...record, tenant_id: record.id });
+            total++;
+          }
+        } else if (def.entity === 'setting') {
           const orphans = this.db
             .prepare(`
               SELECT * FROM ${def.localTable}
@@ -913,6 +992,13 @@ export class GenericSyncService {
     }
 
     return total;
+  }
+
+  /**
+   * Force sync for a specific tenant - useful for manual sync triggers
+   */
+  async forceSyncTenant(tenantId: string): Promise<SyncResult> {
+    return this.fullSyncForTenant(tenantId);
   }
 
   /**

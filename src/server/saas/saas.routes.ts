@@ -8,6 +8,8 @@ import type { ISaaSRepository } from './repositories/saas.repository.interface';
 import {
   SupabasePlanRepository, SupabaseTenantRepository,
 } from './repositories/supabase/saas-supabase.repository';
+import { SaaSError } from './types/saas.types';
+import { db } from './repositories/supabase/saas-supabase.repository';
 
 // =============================================================================
 // Provider: minimal version (only Plan + Tenant for the MVP).
@@ -156,6 +158,84 @@ export function createSaaSRouter(): Router {
       });
     } catch (e: any) {
       res.status(500).json({ error: 'GET_TENANT_FAILED', message: e.message });
+    }
+  });
+
+  // PATCH /api/tenants/:id/subscription — change plan for an existing authenticated tenant
+  router.patch('/tenants/:id/subscription', async (req, res) => {
+    try {
+      const id = Number(req.params.id);
+      const { plan_code, payment_method, payment_reference } = req.body || {};
+      if (!plan_code) {
+        return res.status(400).json({ error: 'MISSING_PLAN_CODE', message: 'plan_code is required' });
+      }
+      if (!r().tenants) return res.status(503).json({ error: 'SaaS not initialized' });
+
+      const tenant = await r().tenants!.findById(id);
+      if (!tenant) return res.status(404).json({ error: 'TENANT_NOT_FOUND' });
+
+      const plan = await r().plans!.findByCode(plan_code);
+      if (!plan) throw new PlanNotFoundError(plan_code);
+
+      const now = new Date();
+      const periodEnd = new Date(now.getTime() + plan.duration_days * 86400000);
+
+      const { data: updatedTenant, error: tErr } = await db()
+        .from('tenants')
+        .update({
+          status: plan.period === 'trial' ? 'trial' : 'active',
+          updated_at: now.toISOString(),
+        })
+        .eq('id', id)
+        .select()
+        .single();
+      if (tErr) throw new SaaSError(`Failed to update tenant: ${tErr.message}`, 500, 'TENANT_UPDATE_FAILED');
+
+      await db()
+        .from('subscriptions')
+        .update({
+          plan_id: plan.id,
+          status: plan.period === 'trial' ? 'trial' : 'active',
+          current_period_start: now.toISOString(),
+          current_period_end: periodEnd.toISOString(),
+          trial_started_at: plan.period === 'trial' ? now.toISOString() : null,
+          trial_ends_at: plan.period === 'trial' ? periodEnd.toISOString() : null,
+          auto_renew: plan.period !== 'trial',
+          payment_method: payment_method || null,
+          payment_reference: payment_reference || null,
+        })
+        .eq('tenant_id', id);
+
+      await r().tenants!.logAction(id, 'subscription.changed', 'subscription', id, null, {
+        plan_code,
+        payment_method,
+      });
+
+      res.json({ tenant: updatedTenant, plan });
+    } catch (e: any) {
+      console.error('[SaaS] changeSubscription error:', e);
+      const status = e instanceof SaaSError ? e.statusCode : 500;
+      res.status(status).json({ error: e.code || 'CHANGE_SUBSCRIPTION_FAILED', message: e.message });
+    }
+  });
+
+  // POST /api/tenants/:id/cancel-subscription — cancel an existing subscription
+  router.post('/tenants/:id/cancel-subscription', async (req, res) => {
+    try {
+      const id = Number(req.params.id);
+      if (!r().tenants) return res.status(503).json({ error: 'SaaS not initialized' });
+
+      const tenant = await r().tenants!.findById(id);
+      if (!tenant) return res.status(404).json({ error: 'TENANT_NOT_FOUND' });
+
+      const updated = await r().tenants!.cancel(id);
+      await r().tenants!.logAction(id, 'subscription.cancelled', 'subscription', id, null, {});
+
+      res.json({ tenant: updated });
+    } catch (e: any) {
+      console.error('[SaaS] cancelSubscription error:', e);
+      const status = e instanceof SaaSError ? e.statusCode : 500;
+      res.status(status).json({ error: e.code || 'CANCEL_SUBSCRIPTION_FAILED', message: e.message });
     }
   });
 
