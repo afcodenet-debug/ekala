@@ -135,7 +135,7 @@ export const useTableStore = create<TableStore>((set, get) => ({
 
   assignWaiter: async (tableId, waiterId) => {
     try {
-      await api.tables.assignWaiter(tableId, waiterId);
+      await api.tables.update(tableId, { assigned_waiter_id: waiterId }, get().role);
       // Re-fetch to get the waiter_name joined from the users table
       await get().fetchTables(true);
     } catch (err: any) {

@@ -17,22 +17,17 @@ interface NotificationStore {
   notifications: AppNotification[];
   unreadCount: number;
   isCenterOpen?: boolean;
-
   // Actions
   addNotification: (payload: Omit<AppNotification, 'id' | 'createdAt'>) => void;
   markAsRead: (id: string) => void;
   markAllAsRead: () => void;
   clearAll: () => void;
-
   // Used by watchers / pollers to inject server-side notifications
   ingestNotifications: (incoming: AppNotification[]) => void;
-
   // Future: load from backend (Phase 3 persistence)
   loadFromServer?: () => Promise<void>;
-
   // Role-based filtering helper (simple)
   getVisibleNotifications: (role?: string) => AppNotification[];
-
   // UI state for the NotificationCenter drawer
   openCenter?: () => void;
   closeCenter?: () => void;
@@ -50,7 +45,6 @@ export const useNotificationStore = create<NotificationStore>((set, get) => ({
       createdAt: new Date().toISOString(),
       ...payload,
     };
-
     set((state) => {
       const newList = [notif, ...state.notifications].slice(0, MAX_NOTIFICATIONS);
       return {
@@ -89,13 +83,10 @@ export const useNotificationStore = create<NotificationStore>((set, get) => ({
 
   ingestNotifications: (incoming) => {
     if (!incoming || incoming.length === 0) return;
-
     set((state) => {
       const existingIds = new Set(state.notifications.map((n) => n.id));
       const trulyNew = incoming.filter((n) => !existingIds.has(n.id));
-
       if (trulyNew.length === 0) return state;
-
       const merged = [...trulyNew, ...state.notifications].slice(0, MAX_NOTIFICATIONS);
       return {
         notifications: merged,
@@ -106,28 +97,18 @@ export const useNotificationStore = create<NotificationStore>((set, get) => ({
 
   getVisibleNotifications: (role) => {
     const all = get().notifications;
-
-    // Simple role-based filtering (can be expanded)
     if (!role) return all;
-
     return all.filter((n) => {
-      // Example rules - can be made more sophisticated
       if (role === 'waiter') {
-        return ['newQrOrder', 'orderAssigned', 'orderConfirm'].some((t) =>
-          n.type.includes(t)
-        );
+        return ['newQrOrder', 'orderAssigned', 'orderConfirm'].some((t) => n.type.includes(t));
       }
       if (role === 'cashier') {
-        return ['paymentFailed', 'dailyClosure', 'newQrOrder'].some((t) =>
-          n.type.includes(t)
-        );
+        return ['paymentFailed', 'dailyClosure', 'newQrOrder'].some((t) => n.type.includes(t));
       }
-      // admin + manager see everything
       return true;
     });
   },
 
-  // UI state for the NotificationCenter drawer
   openCenter: () => set({ isCenterOpen: true }),
   closeCenter: () => set({ isCenterOpen: false }),
 }));

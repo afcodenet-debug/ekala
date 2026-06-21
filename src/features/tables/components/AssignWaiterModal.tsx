@@ -1,7 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { X, UserPlus, User, CheckCircle2 } from 'lucide-react';
 import { useTableStore } from '../../../stores/useTableStore';
 import { useI18n } from '../../../lib/i18n';
+import { api } from '../../../lib/api-client';
 
 interface AssignWaiterModalProps {
   tableId: number | null;
@@ -23,22 +24,27 @@ export const AssignWaiterModal: React.FC<AssignWaiterModalProps> = ({
   const [selectedWaiterId, setSelectedWaiterId] = useState<string>('');
   const [waiters, setWaiters] = useState<any[]>([]);
   const [loadingWaiters, setLoadingWaiters] = useState(false);
+  const hasLoadedRef = useRef(false);
 
   const table = tables.find(t => t.id === tableId);
 
   useEffect(() => {
-    if (isOpen) {
+    if (isOpen && !hasLoadedRef.current) {
+      hasLoadedRef.current = true;
       fetchWaiters();
       setSelectedWaiterId(table?.assigned_waiter_id?.toString() || '');
       setError(null);
     }
-  }, [isOpen, table]);
+    if (!isOpen) {
+      hasLoadedRef.current = false;
+    }
+  }, [isOpen]);
 
   const fetchWaiters = async () => {
     setLoadingWaiters(true);
     try {
-      const response = await fetch('/api/users');
-      const data = await response.json();
+      const response = await api.users.getAll();
+      const data = response as any;
       const allUsers = Array.isArray(data) ? data : (data.users || []);
       const waiterUsers = allUsers.filter((u: any) => u.role === 'waiter' && u.is_active !== 0);
       setWaiters(waiterUsers);
@@ -82,7 +88,7 @@ export const AssignWaiterModal: React.FC<AssignWaiterModalProps> = ({
             </div>
             <div>
               <h2 style={{ fontSize: 18, fontWeight: 600, color: 'var(--text-1)', margin: 0 }}>{t('tables.assignWaiterTitle')}</h2>
-              <p style={{ fontSize: 12, color: 'var(--text-3)', margin: '2px 0 0' }}>{t('tables.assignWaiterSubtitle', { tableNumber: table?.table_number })}</p>
+              <p style={{ fontSize: 12, color: 'var(--text-3)', margin: '2px 0 0' }}>{t('tables.assignWaiterSubtitle', { tableNumber: table?.table_number ?? '' })}</p>
             </div>
           </div>
           <button onClick={onClose} style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, color: 'var(--text-3)', padding: 8, cursor: 'pointer' }}><X size={18}/></button>

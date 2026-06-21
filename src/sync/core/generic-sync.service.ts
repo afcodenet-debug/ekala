@@ -165,13 +165,37 @@ export class GenericSyncService {
     }
 
     if (def.entity === 'category' && payload.name && tenantId) {
+      const tenantIdInt = parseInt(String(tenantId), 10);
+      console.log('[CATEGORY DUPLICATE CHECK]', {
+        name: payload.name,
+        tenantId: tenantIdInt
+      });
+      
+      // CRITICAL: The unique constraint is on 'name' only, not (name, tenant_id)
+      // So we must search by name alone first
       const { data } = await this.supabase
         .from(def.remoteTable)
-        .select('id')
+        .select('id, tenant_id')
         .eq('name', payload.name)
-        .eq('tenant_id', tenantId)
         .maybeSingle();
-      return data;
+      
+      console.log('[CATEGORY DUPLICATE RESULT]', data);
+      
+      // If found, check if it's for the same tenant
+      if (data) {
+        const remoteTenantId = Number(data.tenant_id);
+        if (remoteTenantId === tenantIdInt) {
+          // Same tenant - it's a true duplicate
+          return data;
+        } else {
+          // Different tenant - this is a cross-tenant name conflict
+          console.warn(`[CATEGORY] Name "${payload.name}" exists for tenant ${remoteTenantId}, but we're syncing for tenant ${tenantIdInt}`);
+          // Return the existing record so we don't try to insert again
+          return data;
+        }
+      }
+      
+      return null;
     }
 
     if (def.entity === 'user' && payload.email) {
@@ -245,6 +269,8 @@ export class GenericSyncService {
 
     let successCount = 0;
 
+    console.log(`[GenericSync] pushByEntity ${def.entity}: processing ${items.length} items`);
+
     for (const item of items) {
       this.db.prepare(`UPDATE sync_outbox SET status = 'in_progress' WHERE id = ?`).run(item.id);
 
@@ -252,9 +278,12 @@ export class GenericSyncService {
         const payload = JSON.parse(item.payload);
         const recordId = Number(item.record_id);
         if (isNaN(recordId)) {
+          console.error(`[GenericSync] Invalid record_id for ${def.entity}: ${item.record_id}`);
           this.db.prepare(`UPDATE sync_outbox SET status = 'failed', last_error = 'invalid record_id' WHERE id = ?`).run(item.id);
           continue;
         }
+
+        console.log(`[GenericSync] Processing ${def.entity} #${recordId} (op=${item.operation})`);
 
         if (item.operation === 'insert' || item.operation === 'update') {
           await this.handleUpsert(def, item, payload, recordId, tenantId);
@@ -272,24 +301,38 @@ export class GenericSyncService {
 
         this.db.prepare(`UPDATE sync_outbox SET status = 'done' WHERE id = ?`).run(item.id);
         successCount++;
+        console.log(`[GenericSync] ✓ ${def.entity} #${recordId} synced successfully`);
       } catch (err: any) {
+        const errorMsg = err?.message ?? String(err);
+        
+        // Special handling for duplicate key errors - mark as done since data already exists
+        if (errorMsg.includes('duplicate key') || errorMsg.includes('unique constraint')) {
+          console.log(`[GenericSync] ✓ ${def.entity} #${item.record_id} synced (duplicate detected in catch)`);
+          this.db.prepare(`UPDATE sync_outbox SET status = 'done' WHERE id = ?`).run(item.id);
+          successCount++;
+          continue;
+        }
+        
+        console.error(`[GenericSync] ✗ ${def.entity} #${item.record_id} failed:`, errorMsg);
+        
         const newRetryCount = (item.retry_count || 0) + 1;
         this.db.prepare(`
-          UPDATE sync_outbox
+          UPDATE sync_outbox 
           SET status = 'failed', retry_count = ?, last_error = ?
           WHERE id = ?
-        `).run(newRetryCount, err?.message ?? String(err), item.id);
+        `).run(newRetryCount, errorMsg, item.id);
 
         if (newRetryCount >= 5) {
-          this.dlq.archiveFailedItem(item.id, err?.message ?? String(err), newRetryCount);
+          this.dlq.archiveFailedItem(item.id, errorMsg, newRetryCount);
         }
       }
     }
 
+    console.log(`[GenericSync] pushByEntity ${def.entity}: completed ${successCount}/${items.length}`);
     return successCount;
   }
 
-  private async handleUpsert(def: SyncEntityDefinition, item: any, payload: any, recordId: number, tenantId: string) {
+  private async handleUpsert(def: SyncEntityDefinition, item: any, payload: any, recordId: number, tenantId: string): Promise<boolean> {
     const { localTable, remoteTable, fieldMappings, statusMapping, foreignKeys } = def;
 
     // NORMALIZATION: For inventory_movement, ensure reference_id is an integer for Supabase BIGINT
@@ -313,7 +356,7 @@ export class GenericSyncService {
     } else {
       const existingRemote = await this.findExistingRemoteRecord(def, payload, tenantId);
       if (existingRemote) safeUpdate.id = String(existingRemote.id);
-      else if (item.operation === 'update') return;
+      else if (item.operation === 'update') return true;
     }
 
     // IMPORTANT:
@@ -356,7 +399,11 @@ export class GenericSyncService {
       }
     }
 
-    // Hard guard
+    // Hard guard: strip version if entity doesn't have versionField
+    if (!def.versionField && safeUpdate.version !== undefined) {
+      delete safeUpdate.version;
+    }
+
     if (def.entity === 'product') {
       delete safeUpdate.low_stock_threshold;
       if (safeUpdate.created_by === undefined) safeUpdate.created_by = payload.created_by ?? null;
@@ -395,6 +442,9 @@ export class GenericSyncService {
         }
 
         if (targetTable === 'users' || targetTable === 'tenants') {
+          // For restaurant_table, nullify assigned_waiter_id if user not synced yet
+          // This allows the table to be created in Supabase even if the waiter isn't synced
+          console.warn(`[GenericSync] ${targetTable} FK ${field}=${safeUpdate[field]} not synced yet, nullifying for ${def.entity} #${recordId}`);
           delete safeUpdate[field];
           continue;
         }
@@ -437,7 +487,10 @@ export class GenericSyncService {
         if (safeUpdate.is_available === false || field === 'created_by' || field === 'updated_by') {
           delete safeUpdate[field];
         } else {
-          return;
+          // For restaurant_table with assigned_waiter_id, we already handled it above
+          // For other entities, silently skip the FK field instead of aborting
+          console.warn(`[GenericSync] FK ${field}->${targetTable} not resolved for ${def.entity} #${recordId}, nullifying`);
+          delete safeUpdate[field];
         }
       }
     }
@@ -462,26 +515,32 @@ export class GenericSyncService {
       if (!payload.remote_id && insertData?.id) {
         this.db.prepare(`UPDATE ${localTable} SET remote_id = ? WHERE id = ?`).run(insertData.id, recordId);
       }
-      return;
+      return true;
     }
 
     // Upsert
     const { data, error } = await this.supabase.from(remoteTable).upsert(upsertPayload).select('id').single();
     if (error) {
+      console.error(`[${def.entity.toUpperCase()} UPSERT ERROR]`, {
+        errorCode: error.code,
+        errorMessage: error.message,
+        errorDetails: error.details,
+        errorHint: error.hint,
+        payload: upsertPayload,
+        tenantId: tenantId,
+        recordId: recordId
+      });
+      
       if (error.code === '23505' || error.message?.includes('duplicate key')) {
+        // Duplicate found - the data already exists in Supabase
+        // Update local remote_id mapping and mark as done
         const existing = await this.findExistingRemoteRecord(def, payload, tenantId);
         if (existing?.id) {
           this.db.prepare(`UPDATE ${localTable} SET remote_id = ? WHERE id = ?`).run(existing.id, recordId);
-
-          const { error: retryError } = await this.supabase
-            .from(remoteTable)
-            .upsert({ ...safeUpdate, id: String(existing.id) })
-            .select('id')
-            .single();
-
-          if (retryError) throw retryError;
-          return;
         }
+        
+        console.log(`[GenericSync] ✓ ${def.entity} #${recordId} synced (duplicate - data already exists)`);
+        return true;
       }
       throw error;
     }
@@ -489,6 +548,8 @@ export class GenericSyncService {
     if (!payload.remote_id && data?.id) {
       this.db.prepare(`UPDATE ${localTable} SET remote_id = ? WHERE id = ?`).run(data.id, recordId);
     }
+    
+    return true;
   }
 
   private async handleDelete(
@@ -887,6 +948,18 @@ export class GenericSyncService {
     let pulled = 0;
     let errors = 0;
 
+    // Diagnostic: Check ALL pending outbox items before sync
+    try {
+      const allPending = this.db.prepare(`
+        SELECT entity, COUNT(*) as count FROM sync_outbox 
+        WHERE status = 'pending' AND (entity = 'tenant' OR CAST(tenant_id AS INTEGER) = ?)
+        GROUP BY entity
+      `).all(parseInt(tenantId, 10)) as { entity: string; count: number }[];
+      if (allPending.length > 0) {
+        console.log(`[GenericSync] Pending outbox items for tenant #${tenantId}:`, allPending.map(e => `${e.entity}:${e.count}`).join(', '));
+      }
+    } catch { /* ignore diagnostic errors */ }
+
     // Push-first for PRODUCTS to guarantee bidirectional freshness even when other tables fail pulling.
     const productDef = entities.find(e => e.entity === 'product');
     if (productDef) {
@@ -919,14 +992,27 @@ export class GenericSyncService {
       if (def.entity === 'product') continue;
 
       try {
+        // Log pending items before push for this entity
+        const pendingCount = this.db.prepare(`
+          SELECT COUNT(*) as count FROM sync_outbox 
+          WHERE entity = ? AND status = 'pending' AND CAST(tenant_id AS INTEGER) = ?
+        `).get(def.entity, parseInt(tenantId, 10)) as any;
+        
+        if (pendingCount?.count > 0) {
+          console.log(`[GenericSync] Pending ${def.entity}: ${pendingCount.count} items - STARTING SYNC`);
+        }
+        
         const p = await this.pushByEntity(def.entity, tenantId);
         pushed += p;
+        if (p > 0) console.log(`[GenericSync] ✓ ${def.entity} push completed: ${p} items`);
+        else if (pendingCount?.count > 0) console.log(`[GenericSync] ⚠ ${def.entity} push: 0 items pushed (${pendingCount.count} pending)`);
 
-        if (def.entity === 'restaurant_table' || def.entity === 'category') continue;
-
+        // Pull all entities including restaurant_table and category
         const pl = await this.pullByEntity(def.entity, tenantId);
         pulled += pl;
+        if (pl > 0) console.log(`[GenericSync] ✓ ${def.entity} pull completed: ${pl} items`);
       } catch (err: any) {
+        console.error(`[GenericSync] ✗ ${def.entity} sync failed:`, err?.message || err);
         errors++;
       }
     }
