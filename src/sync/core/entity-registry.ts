@@ -300,6 +300,57 @@ export const SYNC_ENTITIES: SyncEntityDefinition[] = [
     hasUpdatedAt: true,
     hasTenantId: true,
   },
+
+  // ─── Demandes de paiement par voucher (ordre 97) ───
+  {
+    entity: 'subscription_payment_request',
+    localTable: 'subscription_payment_requests',
+    remoteTable: 'subscription_payment_requests',
+    syncOrder: 97,
+    allowedFields: [
+      'id', 'created_at', 'updated_at', 'tenant_id', 'remote_id',
+      'plan_id', 'voucher_code', 'requested_by', 'amount_cents', 'currency',
+      'requested_at', 'verification_deadline', 'expires_at', 'status',
+      'verified_by', 'verified_at', 'rejection_reason', 'notes',
+    ],
+    foreignKeys: {
+      tenant_id: 'tenants',
+      plan_id: 'plans',
+      requested_by: 'users',
+      verified_by: 'users',
+    },
+    hasUpdatedAt: true,
+    hasTenantId: true,
+  },
+  {
+    entity: 'voucher_request',
+    localTable: 'voucher_requests',
+    remoteTable: 'voucher_requests',
+    syncOrder: 97,
+    allowedFields: [
+      'id', 'created_at', 'updated_at', 'tenant_id', 'remote_id',
+      'plan_id', 'voucher_code', 'customer_email', 'status',
+      'requested_at', 'verification_deadline', 'expires_at',
+      'verified_at', 'verified_by',
+    ],
+    foreignKeys: {
+      tenant_id: 'tenants',
+      plan_id: 'plans',
+      verified_by: 'users',
+    },
+    hasUpdatedAt: true,
+    hasTenantId: true,
+  },
+  {
+    entity: 'voucher_audit_log',
+    localTable: 'voucher_audit_logs',
+    remoteTable: 'voucher_audit_logs',
+    syncOrder: 98,
+    allowedFields: ['id', 'created_at', 'voucher_request_id', 'action', 'actor_id', 'notes'],
+    foreignKeys: { voucher_request_id: 'voucher_requests', actor_id: 'users' },
+    hasUpdatedAt: false,
+    hasTenantId: false,
+  },
 ];
 
 /** Toutes les entités triées par ordre de sync */

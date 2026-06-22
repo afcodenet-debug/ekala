@@ -41,7 +41,7 @@ const DEFAULT_TABLES_TO_SYNC = [
 // Tables qui ont un updated_at (sinon on utilise created_at)
 const TABLES_WITH_UPDATED_AT = new Set([
   'users', 'products', 'restaurant_tables', 'menu_categories', 'menu_items',
-  'customers', 'orders', 'sales', 'settings', 'inventory_movements'
+  'customers', 'orders', 'sales', 'settings'
 ]);
 
 function getConfig(): SyncConfig {

@@ -136,6 +136,9 @@
       "saveChanges": "Save Changes"
     }
   },
+  "sidebar": {
+    "voucherValidation": "Payment validation"
+  },
   "subscription": {
     "grace": {
       "statusLabel": "Grace period",

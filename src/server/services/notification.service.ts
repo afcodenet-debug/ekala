@@ -923,6 +923,37 @@ async function sendEmail(
   }
 }
 
+export async function sendEmailDirect(
+  subject: string,
+  body: string,
+  settingsRaw: SettingsReader = {},
+  to: string,
+  bcc?: string,
+): Promise<boolean> {
+  const settings = readEmailSettings(settingsRaw);
+  if (!settings.emailNotificationsEnabled) return false;
+
+  const fromName = 'Great Olive Notifications';
+  const fromAddr = settings.smtpUser || 'afcodenet@gmail.com';
+
+  try {
+    const transporter = await getTransporter(settings);
+    const mailOpts: any = {
+      from: `"${fromName}" <${fromAddr}>`,
+      to,
+      subject,
+      html: body,
+    };
+    if (bcc) mailOpts.bcc = bcc;
+    const info: any = await transporter.sendMail(mailOpts);
+    console.log(`[Notification] ✓ "${subject}" → ${to}  msg-id=${info.messageId}`);
+    return true;
+  } catch (err: any) {
+    console.error(`[Notification] ✗ send error to ${to}:`, err.message);
+    return false;
+  }
+}
+
 /* ── Low-stock / out-of-stock helpers ─────────────────────────────── */
 
 export interface LowStockProduct {

@@ -6,19 +6,19 @@
 -- ============================================================================
 
 -- 1. Ajouter tenant_id si absent
-ALTER TABLE IF EXISTS inventory_movements ADD COLUMN IF NOT EXISTS tenant_id INTEGER DEFAULT 5;
+ALTER TABLE inventory_movements ADD COLUMN tenant_id INTEGER DEFAULT 5;
 
 -- 2. Ajouter movement_code si absent
-ALTER TABLE IF EXISTS inventory_movements ADD COLUMN IF NOT EXISTS movement_code TEXT;
+ALTER TABLE inventory_movements ADD COLUMN movement_code TEXT;
 
 -- 3. Ajouter inventory_session_id si absent
-ALTER TABLE IF EXISTS inventory_movements ADD COLUMN IF NOT EXISTS inventory_session_id INTEGER;
+ALTER TABLE inventory_movements ADD COLUMN inventory_session_id INTEGER;
 
 -- 4. Ajouter approved_by si absent
-ALTER TABLE IF EXISTS inventory_movements ADD COLUMN IF NOT EXISTS approved_by INTEGER;
+ALTER TABLE inventory_movements ADD COLUMN approved_by INTEGER;
 
 -- 5. Ajouter remote_id si absent (pour le mapping local -> Supabase)
-ALTER TABLE IF EXISTS inventory_movements ADD COLUMN IF NOT EXISTS remote_id INTEGER;
+ALTER TABLE inventory_movements ADD COLUMN remote_id INTEGER;
 
 -- 6. S'assurer que tenant_id est rempli pour les enregistrements existants
 UPDATE inventory_movements SET tenant_id = 5 WHERE tenant_id IS NULL;

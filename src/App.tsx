@@ -26,17 +26,27 @@ import InventoryAnalyticsPage from './features/products/components/InventoryAnal
 import CategoriesPage from './pages/CategoriesPage';
 import PublicMenuPage from './pages/PublicMenuPage';
 import PricingPage from './pages/saas/PricingPage';
+// import BillingPage from './pages/saas/BillingPage';
 import SignupPage from './pages/saas/SignupPage';
-import BillingPage from './pages/saas/BillingPage';
-import CheckoutPage from './pages/saas/CheckoutPage';
 import SetupAccountPage from './pages/saas/SetupAccountPage';
-import SubscriptionExpirationBanner from './components/SubscriptionExpirationBanner';
-import { SubscriptionGate, SubscriptionState } from './components/SubscriptionGate';
+import AdminPaymentsPage from './pages/saas/AdminPaymentsPage';
+import SubscriptionGate, { SubscriptionState } from './components/SubscriptionGate';
 import GlobalQrOrderNotifier from './components/GlobalQrOrderNotifier';
 import { GlobalNotificationToast } from './components/GlobalNotificationToast';
 import { NotificationCenter } from './components/NotificationCenter';
 import { useNotificationStore } from './stores/useNotificationStore';
 import { Menu } from 'lucide-react';
+import BillingPageV2 from './pages/saas/BillingPageV2';
+import AdminVouchersPage from './pages/admin/AdminVouchersPage';
+import PlatformLayout from './pages/platform/PlatformLayout';
+import PlatformDashboard from './pages/platform/PlatformDashboard';
+import TenantsPage from './pages/platform/TenantsPage';
+import SubscriptionsPage from './pages/platform/SubscriptionsPage';
+import VouchersPage from './pages/platform/VouchersPage';
+import AuditLogsPage from './pages/platform/AuditLogsPage';
+import SyncCenterPage from './pages/platform/SyncCenterPage';
+import PlatformLoginPage from './pages/platform/PlatformLoginPage';
+// import SettingsPage from './pages/SettingsPage';
 
 const ProtectedRoute = ({ children, roles }: { children: React.ReactNode, roles?: string[] }) => {
   const { isAuthenticated, user } = useAuthStore();
@@ -129,7 +139,6 @@ function App() {
             <Route path="/login" element={<LoginPage />} />
             <Route path="/pricing" element={<PricingPage />} />
             <Route path="/signup" element={<SignupPage />} />
-            <Route path="/checkout" element={<CheckoutPage />} />
             <Route path="/setup-account" element={<SetupAccountPage />} />
             {/* Public QR menu - always accessible without auth */}
             <Route path="/menu" element={<PublicMenuPage />} />
@@ -194,78 +203,101 @@ function App() {
                       onClose={() => useNotificationStore.getState().closeCenter?.()} 
                     />
 
-                    <main style={{
-                      flex: 1, 
-                      overflowY: 'auto', 
-                      position: 'relative',
-                      transition: 'all 240ms cubic-bezier(0.4, 0, 0.2, 1)'
-                    }} className="custom-scroll">
-                      <Routes>
-                        <Route path="/" element={<Dashboard />} />
-                        <Route path="/dashboard" element={<Dashboard />} />
-                        <Route path="/tables" element={<TablesPage />} />
-                        <Route path="/staff" element={
-                          <ProtectedRoute roles={['owner', 'admin', 'manager']}>
-                            <Staff />
-                          </ProtectedRoute>
-                        } />
-                        <Route path="/pos" element={<POS />} />
-                        <Route path="/orders" element={<OrdersPage />} />
-<Route path="/sales" element={
-                           <ProtectedRoute roles={['owner', 'admin', 'manager', 'cashier']}>
+                    <SubscriptionGate subscriptionInfo={subscriptionInfo}>
+                      <main style={{
+                        flex: 1,
+                        overflowY: 'auto',
+                        position: 'relative',
+                        transition: 'all 240ms cubic-bezier(0.4, 0, 0.2, 1)'
+                      }} className="custom-scroll">
+                        <Routes>
+                          <Route path="/" element={<Dashboard />} />
+                          <Route path="/dashboard" element={<Dashboard />} />
+                          <Route path="/tables" element={<TablesPage />} />
+                          <Route path="/staff" element={
+                            <ProtectedRoute roles={['owner', 'admin', 'manager']}>
+                              <Staff />
+                            </ProtectedRoute>
+                          } />
+                          <Route path="/pos" element={<POS />} />
+                          <Route path="/orders" element={<OrdersPage />} />
+                          <Route path="/sales" element={
+                            <ProtectedRoute roles={['owner', 'admin', 'manager', 'cashier']}>
                               <SalesHistoryPage />
                             </ProtectedRoute>
                           } />
-<Route path="/analytics" element={
+                          <Route path="/analytics" element={
                             <ProtectedRoute roles={['owner', 'admin', 'manager']}>
                               <InventoryAnalyticsPage />
                             </ProtectedRoute>
                           } />
-<Route path="/categories" element={
+                          <Route path="/categories" element={
                             <ProtectedRoute roles={['owner', 'admin', 'manager']}>
                               <CategoriesPage />
                             </ProtectedRoute>
                           } />
-<Route path="/products" element={
-                          <ProtectedRoute roles={['owner', 'admin', 'manager']}>
-                            <ProductsPage />
-                          </ProtectedRoute>
-                        } />
-                         <Route path="/products/:id" element={
-                          <ProtectedRoute roles={['owner', 'admin', 'manager']}>
-                            <ProductDetailsPage />
-                          </ProtectedRoute>
-                        } />
-                        <Route path="/reports" element={
-                          <ProtectedRoute roles={['owner', 'admin', 'manager', 'cashier']}>
-                            <Reports />
-                          </ProtectedRoute>
-                        } />
-                        <Route path="/expenses" element={
-                          <ProtectedRoute roles={['owner', 'admin', 'manager', 'cashier']}>
-                            <Expenses />
-                          </ProtectedRoute>
-                        } />
-                        <Route path="/users" element={
-                          <ProtectedRoute roles={['owner', 'admin']}>
-                            <UsersPage />
-                          </ProtectedRoute>
-                        } />
-<Route path="/settings" element={
+                          <Route path="/products" element={
+                            <ProtectedRoute roles={['owner', 'admin', 'manager']}>
+                              <ProductsPage />
+                            </ProtectedRoute>
+                          } />
+                          <Route path="/products/:id" element={
+                            <ProtectedRoute roles={['owner', 'admin', 'manager']}>
+                              <ProductDetailsPage />
+                            </ProtectedRoute>
+                          } />
+                          <Route path="/reports" element={
+                            <ProtectedRoute roles={['owner', 'admin', 'manager', 'cashier']}>
+                              <Reports />
+                            </ProtectedRoute>
+                          } />
+                          <Route path="/expenses" element={
+                            <ProtectedRoute roles={['owner', 'admin', 'manager', 'cashier']}>
+                              <Expenses />
+                            </ProtectedRoute>
+                          } />
+                          <Route path="/users" element={
+                            <ProtectedRoute roles={['owner', 'admin']}>
+                              <UsersPage />
+                            </ProtectedRoute>
+                          } />
+                          <Route path="/admin/payments" element={
+                            <ProtectedRoute roles={['owner', 'admin']}>
+                              <AdminPaymentsPage />
+                            </ProtectedRoute>
+                          } />
+                          <Route path="/settings" element={
                             <ProtectedRoute roles={['owner', 'admin']}>
                               <SettingsPage />
                             </ProtectedRoute>
                           } />
-                         <Route path="/billing" element={<BillingPage />} />
-                      </Routes>
-                    </main>
-                    <SubscriptionGate subscriptionInfo={subscriptionInfo}>
-                      <SubscriptionExpirationBanner />
+                          <Route path="/billing" element={<BillingPageV2 />} />
+                          <Route path="/admin/vouchers" element={
+                            <ProtectedRoute roles={['owner', 'admin']}>
+                              <AdminVouchersPage />
+                            </ProtectedRoute>
+                          } />
+                        </Routes>
+                      </main>
                     </SubscriptionGate>
                   </div>
                 </ProtectedRoute>
               }
             />
+
+            {/* Platform Login — totalement séparé du tenant login */}
+            <Route path="/platform/login" element={<PlatformLoginPage />} />
+
+            {/* Platform Routes (Super Admin) - Completely separate from tenant dashboard */}
+            <Route path="/platform" element={<PlatformLayout />}>
+              <Route index element={<PlatformDashboard />} />
+              <Route path="tenants" element={<TenantsPage />} />
+              <Route path="subscriptions" element={<SubscriptionsPage />} />
+              <Route path="sync" element={<SyncCenterPage />} />
+              <Route path="vouchers" element={<VouchersPage />} />
+              <Route path="audit-logs" element={<AuditLogsPage />} />
+              <Route path="settings" element={<SettingsPage />} />
+            </Route>
           </Routes>
         </I18nProvider>
       </QueryClientProvider>

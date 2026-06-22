@@ -8,16 +8,24 @@ interface Sale {
   payment_method: string;
   created_at: string;
   customer_name?: string;
+  items?: Array<{
+    name: string;
+    quantity: number;
+    unitPrice: number;
+    totalPrice: number;
+  }>;
 }
 
 const SalesHistoryPage = () => {
   const [sales, setSales] = useState<Sale[]>([]);
   const [loading, setLoading] = useState(true);
+  const [selectedSale, setSelectedSale] = useState<Sale | null>(null);
+  const [isModalOpen, setIsModalOpen] = useState(false);
 
   useEffect(() => {
     api.sales.getAll()
-      .then(data => {
-        setSales(data);
+      .then((data: any) => {
+        setSales(data as Sale[]);
         setLoading(false);
       })
       .catch(error => {
@@ -25,6 +33,16 @@ const SalesHistoryPage = () => {
         setLoading(false);
       });
   }, []);
+
+  const handleViewDetails = (sale: Sale) => {
+    setSelectedSale(sale);
+    setIsModalOpen(true);
+  };
+
+  const handleCloseModal = () => {
+    setIsModalOpen(false);
+    setSelectedSale(null);
+  };
 
   const handlePrint = async (saleId: number) => {
     try {
@@ -38,8 +56,9 @@ const SalesHistoryPage = () => {
 
   const printReceipt = async (receipt: any) => {
     try {
-      if (window.electronAPI?.printReceipt) {
-        const result = await window.electronAPI.printReceipt(receipt);
+      const electronWindow = window as any;
+      if (electronWindow.electronAPI?.printReceipt) {
+        const result = await electronWindow.electronAPI.printReceipt(receipt);
         if (result && !result.success) {
           throw new Error(result.error || 'Unknown printing error');
         }
@@ -172,7 +191,12 @@ const SalesHistoryPage = () => {
                   {sale.payment_method}
                 </td>
                 <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
-                  <button className="text-gold-600 hover:text-gold-800 mr-3">View</button>
+                  <button 
+                    onClick={() => handleViewDetails(sale)}
+                    className="text-gold-600 hover:text-gold-800 mr-3"
+                  >
+                    View
+                  </button>
                   <button 
                     onClick={() => handlePrint(sale.id)}
                     className="text-blue-600 hover:text-blue-800"
@@ -185,6 +209,81 @@ const SalesHistoryPage = () => {
           </tbody>
         </table>
       </div>
+
+      {/* Modal pour afficher les détails de la vente */}
+      {isModalOpen && selectedSale && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-xl shadow-xl max-w-2xl w-full mx-4 max-h-[90vh] overflow-y-auto">
+            <div className="p-6">
+              <div className="flex justify-between items-center mb-4">
+                <h2 className="text-2xl font-bold text-olive-800">Sale Details</h2>
+                <button
+                  onClick={handleCloseModal}
+                  className="text-gray-500 hover:text-gray-700 text-2xl"
+                >
+                  ×
+                </button>
+              </div>
+
+              <div className="space-y-4">
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <p className="text-sm text-gray-600">Invoice Number</p>
+                    <p className="font-medium">{selectedSale.invoice_number}</p>
+                  </div>
+                  <div>
+                    <p className="text-sm text-gray-600">Date</p>
+                    <p className="font-medium">{new Date(selectedSale.created_at).toLocaleString()}</p>
+                  </div>
+                  <div>
+                    <p className="text-sm text-gray-600">Payment Method</p>
+                    <p className="font-medium">{selectedSale.payment_method}</p>
+                  </div>
+                  <div>
+                    <p className="text-sm text-gray-600">Total Amount</p>
+                    <p className="font-medium text-lg">${selectedSale.total_amount.toFixed(2)}</p>
+                  </div>
+                </div>
+
+                {selectedSale.items && selectedSale.items.length > 0 && (
+                  <div>
+                    <h3 className="text-lg font-semibold mb-2">Items</h3>
+                    <table className="w-full border-collapse">
+                      <thead>
+                        <tr className="border-b">
+                          <th className="text-left py-2">Item</th>
+                          <th className="text-right py-2">Qty</th>
+                          <th className="text-right py-2">Price</th>
+                          <th className="text-right py-2">Total</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {selectedSale.items.map((item, idx) => (
+                          <tr key={idx} className="border-b">
+                            <td className="py-2">{item.name}</td>
+                            <td className="text-right py-2">{item.quantity}</td>
+                            <td className="text-right py-2">${item.unitPrice.toFixed(2)}</td>
+                            <td className="text-right py-2">${item.totalPrice.toFixed(2)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+
+                <div className="flex justify-end pt-4">
+                  <button
+                    onClick={handleCloseModal}
+                    className="px-4 py-2 bg-olive-600 text-white rounded-lg hover:bg-olive-700"
+                  >
+                    Close
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

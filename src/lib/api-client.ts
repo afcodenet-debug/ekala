@@ -398,6 +398,13 @@ export const api = {
   patch: <T>(url: string, data: any, options?: any) => request<T>(url, { method: 'PATCH', body: data, ...options }),
   delete: <T>(url: string, options?: any) => request<T>(url, { method: 'DELETE', ...options }),
 
+  // Billing — Voucher-First
+  billing: {
+    requestVoucher: (planId: number) => api.post<any>('/billing/request-voucher', { planId }),
+    paymentSent: (voucherCode: string) => api.post<any>('/billing/payment-sent', { voucherCode }),
+    getVoucherStatus: (code: string) => api.get<any>(`/vouchers/status/${encodeURIComponent(code)}`),
+  },
+
   // SaaS — subscription & billing
   saas: {
     changePlan: (tenantId: number, planCode: string, paymentMethod?: string, paymentReference?: string) =>
@@ -406,10 +413,6 @@ export const api = {
       api.post(`/tenants/${tenantId}/cancel-subscription`, {}),
     getTenant: (tenantId: number) =>
       api.get(`/tenants/${tenantId}`),
-    initiateCheckout: (tenantId: number, payload: Record<string, any>) =>
-      api.post(`/tenants/${tenantId}/checkout`, payload),
-    confirmPayment: (providerReference: string) =>
-      api.post(`/payments/${providerReference}/confirm`, {}),
     getPlans: () =>
       api.get('/plans'),
   }

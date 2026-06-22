@@ -486,6 +486,10 @@ export class GenericSyncService {
 
         if (safeUpdate.is_available === false || field === 'created_by' || field === 'updated_by') {
           delete safeUpdate[field];
+        } else if (def.entity === 'voucher_request' || def.entity === 'subscription_payment_request') {
+          // For voucher entities, preserve plan_id even if not resolved yet
+          // The plan_id is critical and should not be nullified
+          console.log(`[GenericSync] Preserving ${field} for ${def.entity} #${recordId} (FK resolution pending)`);
         } else {
           // For restaurant_table with assigned_waiter_id, we already handled it above
           // For other entities, silently skip the FK field instead of aborting

@@ -150,10 +150,9 @@ const SignupPage = () => {
         const params = new URLSearchParams({
           tenant_id: String(data.tenant.id),
           plan_code: selectedPlan.code,
-          method: form.payment_method || 'mobile_money',
-          provider: form.payment_provider || 'mtn_zm',
+          from: 'suspended',
         });
-        navigate(`/checkout?${params.toString()}`);
+        navigate(`/billing?${params.toString()}`);
         return;
       }
       setStep(3);

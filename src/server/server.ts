@@ -32,10 +32,8 @@ import customersRoutes from './routes/customers';
 import notificationsRoutes from './routes/notifications';
 import notificationPreferencesRoutes from './routes/notification_preferences';
 import scheduledReportsLogRoutes from './routes/scheduled_reports_log';
-import vouchersRoutes from './routes/vouchers';
-import voucherPurchaseRoutes from './routes/voucher-purchase';
 import billingRoutes from './routes/billing.routes';
-import db, { initializeDatabase } from './db/database';
+import { db, initializeDatabase } from './db/database';
 import { startSupabasePullWorker, getPullSyncStatus } from './services/supabase-pull-sync.service';
 import { startSupabaseRealtimePull, getSupabaseRealtimeStatus } from './services/supabase-realtime-sync.service';
 import { startScheduledReports } from './services/scheduled-reports.service';
@@ -46,6 +44,13 @@ import { env } from './config/env';
 import { createSaaSRouter } from './saas/saas.routes';
 import { createSaaSPaymentRouter } from './saas/saas-payment.routes';
 import { startSubscriptionExpirationCron } from './saas/cron/subscription-expiration.cron';
+import { startVoucherExpirationCron } from './saas/cron/voucher-expiration.cron';
+import { startExpirationCron } from './saas/cron/expiration.cron';
+import { adminSubscriptionsRouter, adminVouchersRouter } from './routes/admin.subscriptions';
+import platformRoutes from './routes/platform.routes';
+import syncDiagnosticRoutes from './routes/sync-diagnostic.routes';
+import platformAuthRoutes from './platform/platform-auth.routes';
+import { bootstrapPlatform } from './platform/platform-bootstrap';
 
 const app = express();
 
@@ -252,7 +257,11 @@ app.use('/api', (req, res, next) => {
   // GET /api/payments/:providerRef/status
   // POST /api/payments/:providerRef/confirm
   // POST /api/webhooks/*
-  if (p === '/plans' || p.startsWith('/plans') || 
+  // Platform auth (login) is public
+  // POST /api/platform/auth/login
+  // Platform auth endpoints (plateforme) - gérés par requirePlatformAuth
+  if (p.startsWith('/platform') ||
+      p === '/plans' || p.startsWith('/plans') ||
       p === '/tenants' || p.startsWith('/tenants/') ||
       p.startsWith('/payments') || p.startsWith('/webhooks')) {
     return next();
@@ -270,6 +279,7 @@ app.use('/api', (req, res, next) => {
   // SaaS endpoints are public and do not rely on tenant scope from JWT
   // Public QR Menu endpoints
   if (p.startsWith('/menu') ||
+      p.startsWith('/platform') ||
       p === '/plans' || p === '/tenants' || p.startsWith('/tenants/') ||
       p.startsWith('/payments') || p.startsWith('/webhooks')) {
     return next();
@@ -286,9 +296,10 @@ app.use('/api', async (req, res, next) => {
     req.path.startsWith('/checkout') ||
     req.path.startsWith('/payments/') ||
     req.path.startsWith('/webhooks') ||
+    req.path.startsWith('/billing') ||
     req.path.startsWith('/vouchers') ||
-    req.path.startsWith('/voucher-purchase') ||
-    req.path.startsWith('/billing');
+    req.path.startsWith('/admin/subscriptions') ||
+    req.path.startsWith('/admin/vouchers');
 
   if (
     req.path === '/health' ||
@@ -341,7 +352,7 @@ app.use('/api', async (req, res, next) => {
       tenantId, userId: (req as any).user?.sub, state: sub.state, method: req.method, path: req.originalUrl
     });
 
-    const readOnlyPaths = ['/billing', '/subscription', '/profile', '/vouchers', '/voucher-purchase'];
+    const readOnlyPaths = ['/billing', '/subscription', '/profile', '/vouchers', '/admin/subscriptions', '/admin/vouchers'];
     const isReadOnlyPath = readOnlyPaths.some(p => req.path.startsWith(p));
 
     if (isReadOnlyPath) return next();
@@ -388,9 +399,24 @@ app.use('/api/customers', customersRoutes);
 app.use('/api/notifications', notificationsRoutes);
 app.use('/api/notification_preferences', notificationPreferencesRoutes);
 app.use('/api/scheduled_reports_log', scheduledReportsLogRoutes);
-app.use('/api/vouchers', vouchersRoutes);
-app.use('/api/voucher-purchase', voucherPurchaseRoutes);
 app.use('/api/billing', billingRoutes);
+app.use('/api/admin/subscriptions', adminSubscriptionsRouter);
+app.use('/api/admin/vouchers', adminVouchersRouter);
+
+// =============================================================================
+// Platform Auth Routes — MUST BE FIRST (no tenant scope required)
+// =============================================================================
+app.use('/api/platform', platformAuthRoutes);
+
+// =============================================================================
+// Platform Routes (Super Admin) — MUST BE BEFORE tenant scope middleware
+// =============================================================================
+app.use('/api/platform', platformRoutes);
+
+// =============================================================================
+// Sync Diagnostic Routes
+// =============================================================================
+app.use('/api/platform', syncDiagnosticRoutes);
 
 // =============================================================================
 // SaaS Multi-Tenant Routes (Phase 1 + 3)
@@ -398,6 +424,8 @@ app.use('/api/billing', billingRoutes);
 app.use('/api', createSaaSRouter());
 app.use('/api', createSaaSPaymentRouter());
 startSubscriptionExpirationCron();
+startVoucherExpirationCron();
+startExpirationCron();
 
 // ─── SYNC ENGINE INITIALIZATION (SYNCHRONOUS - MUST BE BEFORE app.listen) ───
 // CRITICAL: This MUST run before app.listen() so that getProductSyncService()
@@ -427,8 +455,15 @@ if (!env.RENDER_CLOUD_MODE && db) {
   }
 }
 
-app.listen(PORT, () => {
+app.listen(PORT, async () => {
   console.log(`[RENDER BOOT] Express listening on port ${PORT}`);
+
+  // Bootstrap Super Admin Platform
+  try {
+    await bootstrapPlatform();
+  } catch (err) {
+    console.error('[RENDER BOOT] Platform bootstrap failed:', err);
+  }
 
   if (env.RENDER_CLOUD_MODE) {
     console.log('══════════════════════════════════════════════════════════════');

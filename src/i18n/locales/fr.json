@@ -136,6 +136,9 @@
       "saveChanges": "Enregistrer les modifications"
     }
   },
+  "sidebar": {
+    "voucherValidation": "Validation paiements"
+  },
   "subscription": {
     "grace": {
       "statusLabel": "Période de grâce",

@@ -26,16 +26,8 @@ import { useLocation } from 'react-router-dom';
 
 const { colors } = EnterpriseTokens;
 
-// ─── Design tokens premium ────────────────────────────────────────────────────
+// ─── Design tokens ────────────────────────────────────────────────────────────
 const dt = {
-  space: {
-    xs:  '4px',
-    sm:  '8px',
-    md:  '16px',
-    lg:  '24px',
-    xl:  '32px',
-    xxl: '48px',
-  },
   text: {
     xs:   'clamp(10px, 1.5vw, 11px)',
     sm:   'clamp(11px, 1.8vw, 13px)',
@@ -43,13 +35,12 @@ const dt = {
     md:   'clamp(15px, 2.2vw, 17px)',
     lg:   'clamp(18px, 2.8vw, 22px)',
     xl:   'clamp(22px, 3.5vw, 28px)',
-    xxl:  'clamp(28px, 4.5vw, 38px)',
   },
   ease: {
-    snap:    'all 0.12s cubic-bezier(0.4,0,0.2,1)',
-    smooth:  'all 0.22s cubic-bezier(0.4,0,0.2,1)',
-    spring:  'all 0.35s cubic-bezier(0.34,1.56,0.64,1)',
-    reveal:  'all 0.45s cubic-bezier(0.22,1,0.36,1)',
+    snap:   'all 0.12s cubic-bezier(0.4,0,0.2,1)',
+    smooth: 'all 0.22s cubic-bezier(0.4,0,0.2,1)',
+    spring: 'all 0.35s cubic-bezier(0.34,1.56,0.64,1)',
+    reveal: 'all 0.45s cubic-bezier(0.22,1,0.36,1)',
   },
   shadow: {
     sm:  '0 1px 3px rgba(0,0,0,0.06), 0 1px 2px rgba(0,0,0,0.04)',
@@ -60,7 +51,7 @@ const dt = {
   },
 };
 
-// ─── useBreakpoint hook léger ─────────────────────────────────────────────────
+// ─── useBreakpoint ────────────────────────────────────────────────────────────
 function useBreakpoint() {
   const [w, setW] = useState(() => typeof window !== 'undefined' ? window.innerWidth : 1200);
   useEffect(() => {
@@ -71,7 +62,7 @@ function useBreakpoint() {
   return { isMobile: w < 640, isTablet: w >= 640 && w < 1024, isDesktop: w >= 1024, width: w };
 }
 
-// ─── CSS global ───────────────────────────────────────────────────────────────
+// ─── Global styles ────────────────────────────────────────────────────────────
 const GlobalStyles = ({ colors }: { colors: any }) => (
   <style>{`
     @import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;0,9..40,800;1,9..40,400&family=DM+Mono:wght@400;500&display=swap');
@@ -85,128 +76,119 @@ const GlobalStyles = ({ colors }: { colors: any }) => (
       -moz-osx-font-smoothing: grayscale;
     }
 
-    /* ── Scrollbars ── */
     .pp-scroll-hide { scrollbar-width: none; -ms-overflow-style: none; }
     .pp-scroll-hide::-webkit-scrollbar { display: none; }
     .pp-scroll-x { overflow-x: auto; -webkit-overflow-scrolling: touch; }
 
-    /* ── Subtle page backdrop texture ── */
+    /* Ambient background glow */
     .pp-bg-texture {
       position: fixed; inset: 0; pointer-events: none; z-index: 0;
       background-image:
-        radial-gradient(ellipse 60% 40% at 15% 0%, ${colors.accent?.blue ?? '#3b82f6'}07 0%, transparent 60%),
-        radial-gradient(ellipse 50% 35% at 100% 15%, ${colors.accent?.gold ?? '#f59e0b'}06 0%, transparent 60%);
+        radial-gradient(ellipse 70% 45% at 10% 0%,  ${colors.accent?.blue ?? '#3b82f6'}08 0%, transparent 65%),
+        radial-gradient(ellipse 55% 40% at 95% 10%, ${colors.accent?.gold ?? '#f59e0b'}07 0%, transparent 65%),
+        radial-gradient(ellipse 40% 30% at 50% 100%,${colors.accent?.blue ?? '#3b82f6'}04 0%, transparent 70%);
     }
 
     /* ── Animations ── */
     @keyframes pp-fade-up {
-      from { opacity: 0; transform: translateY(14px); }
+      from { opacity: 0; transform: translateY(12px); }
       to   { opacity: 1; transform: translateY(0); }
     }
-    @keyframes pp-fade-in {
-      from { opacity: 0; }
-      to   { opacity: 1; }
-    }
+    @keyframes pp-fade-in  { from { opacity: 0; } to { opacity: 1; } }
     @keyframes pp-scale-in {
-      from { opacity: 0; transform: scale(0.95) translateY(8px); }
-      to   { opacity: 1; transform: scale(1) translateY(0); }
+      from { opacity: 0; transform: scale(0.96) translateY(6px); }
+      to   { opacity: 1; transform: scale(1)    translateY(0); }
     }
     @keyframes pp-toast-in {
-      from { opacity: 0; transform: translateY(16px) scale(0.94); }
-      to   { opacity: 1; transform: translateY(0) scale(1); }
+      from { opacity: 0; transform: translateY(18px) scale(0.93); }
+      to   { opacity: 1; transform: translateY(0)    scale(1); }
     }
     @keyframes pp-shimmer {
       0%   { background-position: -600px 0; }
       100% { background-position:  600px 0; }
     }
-    @keyframes pp-pulse {
-      0%, 100% { opacity: 1; }
-      50% { opacity: 0.5; }
-    }
-    @keyframes pp-dot-bounce {
-      0%, 80%, 100% { transform: scale(0.8); opacity: 0.5; }
-      40% { transform: scale(1.2); opacity: 1; }
-    }
-    @keyframes pp-ring-spin {
-      to { transform: rotate(360deg); }
-    }
-    @keyframes pp-float {
-      0%, 100% { transform: translateY(0); }
-      50% { transform: translateY(-3px); }
+    @keyframes pp-pulse  { 0%,100%{opacity:1} 50%{opacity:0.35} }
+    @keyframes pp-float  { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-3px)} }
+    @keyframes pp-ring-spin { to { transform: rotate(360deg); } }
+    @keyframes pp-glow-pulse {
+      0%,100% { box-shadow: 0 0 0 0 currentColor; }
+      50%     { box-shadow: 0 0 0 4px transparent; }
     }
 
-    .pp-anim-fade-up   { animation: pp-fade-up  0.45s cubic-bezier(0.22,1,0.36,1) both; }
-    .pp-anim-scale-in  { animation: pp-scale-in 0.35s cubic-bezier(0.22,1,0.36,1) both; }
-    .pp-anim-fade-in   { animation: pp-fade-in  0.3s ease both; }
+    .pp-anim-fade-up   { animation: pp-fade-up  0.42s cubic-bezier(0.22,1,0.36,1) both; }
+    .pp-anim-scale-in  { animation: pp-scale-in 0.32s cubic-bezier(0.22,1,0.36,1) both; }
+    .pp-anim-fade-in   { animation: pp-fade-in  0.28s ease both; }
 
-    /* Stagger children */
-    .pp-stagger > * { animation: pp-fade-up 0.4s cubic-bezier(0.22,1,0.36,1) both; }
-    .pp-stagger > *:nth-child(1) { animation-delay: 0ms; }
-    .pp-stagger > *:nth-child(2) { animation-delay: 50ms; }
-    .pp-stagger > *:nth-child(3) { animation-delay: 100ms; }
-    .pp-stagger > *:nth-child(4) { animation-delay: 150ms; }
-    .pp-stagger > *:nth-child(5) { animation-delay: 200ms; }
+    /* Stagger */
+    .pp-stagger > * { animation: pp-fade-up 0.38s cubic-bezier(0.22,1,0.36,1) both; }
+    .pp-stagger > *:nth-child(1) { animation-delay:   0ms; }
+    .pp-stagger > *:nth-child(2) { animation-delay:  45ms; }
+    .pp-stagger > *:nth-child(3) { animation-delay:  90ms; }
+    .pp-stagger > *:nth-child(4) { animation-delay: 135ms; }
+    .pp-stagger > *:nth-child(5) { animation-delay: 180ms; }
 
-    .pp-grid-stagger > * { animation: pp-scale-in 0.35s cubic-bezier(0.22,1,0.36,1) both; }
-    .pp-grid-stagger > *:nth-child(1) { animation-delay: 0ms; }
-    .pp-grid-stagger > *:nth-child(2) { animation-delay: 30ms; }
-    .pp-grid-stagger > *:nth-child(3) { animation-delay: 60ms; }
-    .pp-grid-stagger > *:nth-child(4) { animation-delay: 90ms; }
-    .pp-grid-stagger > *:nth-child(5) { animation-delay: 120ms; }
-    .pp-grid-stagger > *:nth-child(6) { animation-delay: 150ms; }
-    .pp-grid-stagger > *:nth-child(n+7) { animation-delay: 170ms; }
+    .pp-grid-stagger > * { animation: pp-scale-in 0.32s cubic-bezier(0.22,1,0.36,1) both; }
+    .pp-grid-stagger > *:nth-child(1) { animation-delay:  0ms; }
+    .pp-grid-stagger > *:nth-child(2) { animation-delay: 28ms; }
+    .pp-grid-stagger > *:nth-child(3) { animation-delay: 56ms; }
+    .pp-grid-stagger > *:nth-child(4) { animation-delay: 84ms; }
+    .pp-grid-stagger > *:nth-child(5) { animation-delay:112ms; }
+    .pp-grid-stagger > *:nth-child(6) { animation-delay:140ms; }
+    .pp-grid-stagger > *:nth-child(n+7){ animation-delay:160ms; }
 
-    /* ── Interactive states ── */
+    /* ── Button base ── */
     .pp-btn {
-      cursor: pointer;
-      border: none;
-      font-family: inherit;
-      font-weight: 600;
-      letter-spacing: -0.01em;
-      transition: all 0.15s cubic-bezier(0.4,0,0.2,1);
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      gap: 6px;
-      white-space: nowrap;
-      user-select: none;
-      -webkit-tap-highlight-color: transparent;
-      position: relative;
+      cursor: pointer; border: none; font-family: inherit;
+      font-weight: 600; letter-spacing: -0.01em;
+      transition: ${dt.ease.smooth};
+      display: inline-flex; align-items: center; justify-content: center;
+      gap: 6px; white-space: nowrap; user-select: none;
+      -webkit-tap-highlight-color: transparent; position: relative;
     }
-    .pp-btn:active { transform: scale(0.97); }
+    .pp-btn:active   { transform: scale(0.97); }
+    .pp-btn:disabled { opacity: 0.45; cursor: not-allowed; }
     .pp-btn:focus-visible {
       outline: 2px solid ${colors.accent?.blue ?? '#3b82f6'};
       outline-offset: 2px;
     }
-    .pp-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
     .pp-btn-primary {
-      background: linear-gradient(135deg, ${colors.accent?.blue ?? '#3b82f6'} 0%, color-mix(in srgb, ${colors.accent?.blue ?? '#3b82f6'} 80%, #fff) 100%);
+      background: linear-gradient(135deg, ${colors.accent?.blue ?? '#3b82f6'}, color-mix(in srgb, ${colors.accent?.blue ?? '#3b82f6'} 78%, #fff));
       color: #fff;
       box-shadow: 0 2px 8px ${colors.accent?.blue ?? '#3b82f6'}35;
     }
-    .pp-btn-primary:hover { filter: brightness(1.06); transform: translateY(-1px); box-shadow: 0 6px 18px ${(colors.accent?.blue ?? '#3b82f6')}45; }
+    .pp-btn-primary:hover:not(:disabled) {
+      filter: brightness(1.07);
+      transform: translateY(-1px);
+      box-shadow: 0 8px 20px ${colors.accent?.blue ?? '#3b82f6'}45;
+    }
 
     .pp-btn-ghost {
       background: transparent;
       color: ${colors.text2 ?? '#6b7280'};
       border: 1px solid ${colors.border ?? '#e5e7eb'};
     }
-    .pp-btn-ghost:hover { background: ${colors.surface ?? '#f9fafb'}; color: ${colors.text1 ?? '#111'}; border-color: ${colors.text3 ?? '#9ca3af'}40; }
+    .pp-btn-ghost:hover:not(:disabled) {
+      background: ${colors.surface ?? '#f9fafb'};
+      color: ${colors.text1 ?? '#111'};
+      border-color: ${colors.text3 ?? '#9ca3af'}50;
+    }
 
     .pp-btn-danger {
-      background: linear-gradient(135deg, ${colors.accent?.red ?? '#ef4444'} 0%, color-mix(in srgb, ${colors.accent?.red ?? '#ef4444'} 80%, #fff) 100%);
+      background: linear-gradient(135deg, ${colors.accent?.red ?? '#ef4444'}, color-mix(in srgb, ${colors.accent?.red ?? '#ef4444'} 78%, #fff));
       color: #fff;
-      box-shadow: 0 2px 8px ${colors.accent?.red ?? '#ef4444'}35;
+      box-shadow: 0 2px 8px ${colors.accent?.red ?? '#ef4444'}30;
     }
-    .pp-btn-danger:hover { filter: brightness(1.06); transform: translateY(-1px); }
+    .pp-btn-danger:hover:not(:disabled) {
+      filter: brightness(1.07); transform: translateY(-1px);
+    }
 
     /* ── Card ── */
     .pp-card {
       background: ${colors.card ?? '#fff'};
       border: 1px solid ${colors.border ?? '#e5e7eb'};
       border-radius: 18px;
-      transition: box-shadow 0.25s ease, border-color 0.25s ease, transform 0.25s ease;
+      transition: box-shadow 0.22s ease, border-color 0.22s ease, transform 0.22s ease;
       position: relative;
     }
     .pp-card:hover { box-shadow: ${dt.shadow.md}; }
@@ -219,17 +201,15 @@ const GlobalStyles = ({ colors }: { colors: any }) => (
         ${colors.surface ?? '#f3f4f6'} 80%
       );
       background-size: 600px 100%;
-      animation: pp-shimmer 1.6s infinite;
+      animation: pp-shimmer 1.5s infinite;
       border-radius: 8px;
     }
 
-    /* ── Pill nav (tablette + desktop) ── */
+    /* ── Pill nav (tablet + desktop) ── */
     .pp-pillnav { display: inline-flex !important; }
-    @media (max-width: 639px) {
-      .pp-pillnav { display: none !important; }
-    }
+    @media (max-width: 639px) { .pp-pillnav { display: none !important; } }
 
-    /* ── Mobile bottom nav (mobile uniquement) ── */
+    /* ── Mobile bottom nav ── */
     .pp-mobile-nav {
       display: none;
       position: fixed !important;
@@ -240,10 +220,10 @@ const GlobalStyles = ({ colors }: { colors: any }) => (
     .pp-mobile-nav > div { pointer-events: auto; }
     @media (max-width: 639px) {
       .pp-mobile-nav { display: block !important; }
-      .pp-root main { padding-bottom: 96px !important; }
+      .pp-root main  { padding-bottom: 100px !important; }
     }
 
-    /* ── Grid card view ── */
+    /* ── Product grid ── */
     .pp-product-grid {
       display: grid;
       gap: 16px;
@@ -252,8 +232,6 @@ const GlobalStyles = ({ colors }: { colors: any }) => (
     @media (max-width: 639px) {
       .pp-product-grid { grid-template-columns: 1fr; gap: 12px; }
     }
-
-    /* ── Table responsive ── */
     @media (max-width: 639px) {
       .pp-table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
     }
@@ -270,100 +248,148 @@ const GlobalStyles = ({ colors }: { colors: any }) => (
     [data-tooltip]::before {
       content: attr(data-tooltip);
       position: absolute;
-      bottom: calc(100% + 8px);
-      left: 50%;
+      bottom: calc(100% + 8px); left: 50%;
       transform: translateX(-50%) scale(0.9);
-      background: ${colors.text1 ?? '#111'}ee;
+      background: ${colors.text1 ?? '#111'}f0;
       color: ${colors.bg ?? '#fff'};
-      font-size: 11px;
-      font-weight: 500;
-      padding: 5px 10px;
-      border-radius: 6px;
-      white-space: nowrap;
-      pointer-events: none;
-      opacity: 0;
-      transition: all 0.15s ease;
-      z-index: 999;
+      font-size: 11px; font-weight: 500;
+      padding: 5px 10px; border-radius: 7px;
+      white-space: nowrap; pointer-events: none;
+      opacity: 0; transition: all 0.15s ease; z-index: 999;
     }
-    [data-tooltip]:hover::before {
-      opacity: 1;
-      transform: translateX(-50%) scale(1);
-    }
+    [data-tooltip]:hover::before { opacity: 1; transform: translateX(-50%) scale(1); }
 
-    /* ── Scrollbar styling (desktop, when not hidden) ── */
+    /* ── Scrollbar (desktop) ── */
     @media (min-width: 1024px) {
-      .pp-scroll-visible::-webkit-scrollbar { height: 6px; width: 6px; }
+      .pp-scroll-visible::-webkit-scrollbar { height: 4px; width: 4px; }
       .pp-scroll-visible::-webkit-scrollbar-track { background: transparent; }
-      .pp-scroll-visible::-webkit-scrollbar-thumb { background: ${colors.border ?? '#e5e7eb'}; border-radius: 999px; }
+      .pp-scroll-visible::-webkit-scrollbar-thumb {
+        background: ${colors.border ?? '#e5e7eb'};
+        border-radius: 999px;
+      }
       .pp-scroll-visible::-webkit-scrollbar-thumb:hover { background: ${colors.text3 ?? '#9ca3af'}; }
     }
 
-    /* Touch comfort */
-    @media (pointer: coarse) {
-      .pp-btn { min-height: 40px; }
+    @media (pointer: coarse) { .pp-btn { min-height: 40px; } }
+
+    /* ── Product card accent strip ── */
+    .pp-product-card-strip {
+      position: absolute; top: 0; left: 0; right: 0; height: 2px;
+      border-radius: 18px 18px 0 0;
+      opacity: 0; transition: opacity 220ms ease;
+    }
+    .pp-card:hover .pp-product-card-strip { opacity: 1; }
+
+    /* ── Pill nav indicator ── */
+    .pp-pill-indicator {
+      transition: left 0.30s cubic-bezier(0.34,1.56,0.64,1);
     }
   `}</style>
 );
 
-// ─── Badge de statut de stock ────────────────────────────────────────────────
+// ─── StockBadge ───────────────────────────────────────────────────────────────
 const StockBadge = ({ qty, min, colors }: { qty: number; min: number; colors: any }) => {
-  const isOut  = qty <= 0;
-  const isLow  = !isOut && qty <= min;
+  const isOut = qty <= 0;
+  const isLow = !isOut && qty <= min;
+
   const cfg = isOut
-    ? { label: 'Rupture', bg: colors.accent?.redDim,   color: colors.accent?.red,   dot: colors.accent?.red }
+    ? { label: 'Rupture',  color: colors.accent?.red,   bg: `${colors.accent?.red}14`,   border: `${colors.accent?.red}28`   }
     : isLow
-    ? { label: 'Bas',     bg: colors.accent?.amberDim, color: colors.accent?.amber, dot: colors.accent?.amber }
-    : { label: 'Stock OK',bg: colors.accent?.greenDim, color: colors.accent?.green, dot: colors.accent?.green };
+    ? { label: 'Stock bas', color: colors.accent?.amber, bg: `${colors.accent?.amber}12`, border: `${colors.accent?.amber}28` }
+    : { label: 'En stock',  color: colors.accent?.green, bg: `${colors.accent?.green}11`, border: `${colors.accent?.green}28` };
+
   return (
     <span style={{
       display: 'inline-flex', alignItems: 'center', gap: '5px',
-      padding: '4px 10px', borderRadius: 999,
-      background: cfg.bg, color: cfg.color,
+      padding: '3px 9px', borderRadius: 999,
+      background: cfg.bg,
+      border: `1px solid ${cfg.border}`,
+      color: cfg.color,
       fontSize: dt.text.xs, fontWeight: 700, letterSpacing: '0.03em',
       flexShrink: 0,
     }}>
       <span style={{
-        width: 5, height: 5, borderRadius: '50%', background: cfg.dot, flexShrink: 0,
-        animation: isOut ? 'pp-pulse 1.6s ease-in-out infinite' : 'none',
+        width: 5, height: 5, borderRadius: '50%',
+        background: cfg.color, flexShrink: 0,
+        boxShadow: `0 0 0 2px ${cfg.color}20`,
+        animation: isOut ? 'pp-pulse 1.5s ease-in-out infinite' : 'none',
       }} />
       {cfg.label}
     </span>
   );
 };
 
-// ─── Carte produit (mode grille) ──────────────────────────────────────────────
+// ─── ProductCard ──────────────────────────────────────────────────────────────
 const ProductCard = ({
   product, isHighlighted, onAdjust, onViewDetails, t, colors,
-}: { product: Product; isHighlighted: boolean; onAdjust: (p: Product) => void; onViewDetails: (p: Product) => void; t: (k: string) => string; colors: any }) => {
+}: {
+  product: Product; isHighlighted: boolean;
+  onAdjust: (p: Product) => void; onViewDetails: (p: Product) => void;
+  t: (k: string) => string; colors: any;
+}) => {
   const margin = product.selling_price > 0
     ? ((product.selling_price - product.buying_price) / product.selling_price * 100).toFixed(1)
     : '0.0';
+  const marginNum = parseFloat(margin);
+  const marginColor = marginNum > 30
+    ? colors.accent?.green
+    : marginNum > 15
+    ? colors.accent?.amber
+    : colors.accent?.red;
+
+  const stockPct = Math.min(100, product.stock_quantity <= 0
+    ? 0
+    : (product.stock_quantity / Math.max(product.stock_quantity, product.minimum_stock * 2)) * 100);
+
+  const stockColor = product.stock_quantity <= 0
+    ? colors.accent?.red
+    : product.stock_quantity <= product.minimum_stock
+    ? colors.accent?.amber
+    : colors.accent?.green;
 
   return (
     <article
       className="pp-card pp-anim-scale-in"
       style={{
         padding: '20px',
-        display: 'flex', flexDirection: 'column', gap: '16px',
+        display: 'flex', flexDirection: 'column', gap: '14px',
         border: isHighlighted
           ? `2px solid ${colors.accent?.blue}`
           : `1px solid ${colors.border}`,
         boxShadow: isHighlighted ? dt.shadow.glow(colors.accent?.blue) : undefined,
+        overflow: 'hidden',
       }}
-      onMouseEnter={e => { e.currentTarget.style.transform = 'translateY(-2px)'; }}
-      onMouseLeave={e => { e.currentTarget.style.transform = 'translateY(0)'; }}
+      onMouseEnter={e => { e.currentTarget.style.transform = 'translateY(-3px)'; e.currentTarget.style.boxShadow = dt.shadow.lg; }}
+      onMouseLeave={e => { e.currentTarget.style.transform = 'translateY(0)'; e.currentTarget.style.boxShadow = isHighlighted ? dt.shadow.glow(colors.accent?.blue) : ''; }}
     >
+      {/* Accent strip */}
+      <div
+        className="pp-product-card-strip"
+        style={{ background: `linear-gradient(90deg, transparent, ${stockColor}80, transparent)` }}
+      />
+
       {/* Header */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '10px' }}>
         <div style={{ minWidth: 0 }}>
-          <p style={{ fontSize: dt.text.xs, color: colors.text3, fontWeight: 600, marginBottom: '3px', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+          <p style={{
+            fontSize: dt.text.xs, color: colors.text3, fontWeight: 700,
+            marginBottom: '3px', textTransform: 'uppercase', letterSpacing: '0.07em',
+          }}>
             {product.category_name}
           </p>
-          <h3 style={{ fontSize: dt.text.md, fontWeight: 700, color: colors.text1, lineHeight: 1.3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          <h3 style={{
+            fontSize: dt.text.md, fontWeight: 720, color: colors.text1,
+            lineHeight: 1.25, overflow: 'hidden', textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap', letterSpacing: '-0.01em',
+          }}>
             {product.name}
           </h3>
           {product.barcode && (
-            <p style={{ fontSize: dt.text.xs, color: colors.text3, fontFamily: "'DM Mono', monospace", marginTop: '4px' }}>
+            <p style={{
+              fontSize: dt.text.xs, color: colors.text3,
+              fontFamily: "'DM Mono', monospace", marginTop: '4px',
+              letterSpacing: '0.03em',
+            }}>
               {product.barcode}
             </p>
           )}
@@ -371,51 +397,55 @@ const ProductCard = ({
         <StockBadge qty={product.stock_quantity} min={product.minimum_stock} colors={colors} />
       </div>
 
+      {/* Divider */}
+      <div style={{ height: '1px', background: `${colors.border}80` }} />
+
       {/* Metrics */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '10px' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '8px' }}>
         {[
-          { label: 'Achat', val: `$${product.buying_price.toFixed(2)}` },
-          { label: 'Vente', val: `$${product.selling_price.toFixed(2)}` },
-          { label: 'Marge',  val: `${margin}%`,
-            color: parseFloat(margin) > 30
-              ? colors.accent?.green
-              : parseFloat(margin) > 15
-              ? colors.accent?.amber
-              : colors.accent?.red
-          },
+          { label: 'Achat', val: `$${product.buying_price.toFixed(2)}`,  color: colors.text1  },
+          { label: 'Vente', val: `$${product.selling_price.toFixed(2)}`, color: colors.text1  },
+          { label: 'Marge', val: `${margin}%`,                           color: marginColor    },
         ].map(m => (
           <div key={m.label} style={{
             background: colors.surface,
             borderRadius: '10px',
-            padding: '10px 8px',
+            padding: '10px 6px',
             textAlign: 'center',
-            border: `1px solid ${colors.border}40`,
+            border: `1px solid ${colors.border}50`,
           }}>
-            <p style={{ fontSize: dt.text.xs, color: colors.text3, fontWeight: 500, marginBottom: '4px' }}>{m.label}</p>
-            <p style={{ fontSize: dt.text.sm, fontWeight: 700, color: m.color ?? colors.text1, fontFamily: "'DM Mono', monospace" }}>{m.val}</p>
+            <p style={{ fontSize: dt.text.xs, color: colors.text3, fontWeight: 600, marginBottom: '5px' }}>
+              {m.label}
+            </p>
+            <p style={{
+              fontSize: dt.text.sm, fontWeight: 720, color: m.color,
+              fontFamily: "'DM Mono', monospace", letterSpacing: '-0.01em',
+            }}>
+              {m.val}
+            </p>
           </div>
         ))}
       </div>
 
       {/* Stock bar */}
       <div>
-        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px' }}>
-          <span style={{ fontSize: dt.text.xs, color: colors.text3, fontWeight: 500 }}>Stock actuel</span>
-          <span style={{ fontSize: dt.text.xs, fontWeight: 700, color: colors.text1, fontFamily: "'DM Mono', monospace" }}>
-            {product.stock_quantity} {product.unit}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '7px' }}>
+          <span style={{ fontSize: dt.text.xs, color: colors.text3, fontWeight: 600 }}>Stock actuel</span>
+          <span style={{
+            fontSize: dt.text.xs, fontWeight: 720, color: colors.text1,
+            fontFamily: "'DM Mono', monospace",
+          }}>
+            {product.stock_quantity} <span style={{ color: colors.text3, fontWeight: 500 }}>{product.unit}</span>
           </span>
         </div>
-        <div style={{ height: '5px', borderRadius: '3px', background: colors.border, overflow: 'hidden' }}>
+        {/* Track */}
+        <div style={{ height: '4px', borderRadius: '4px', background: `${colors.border}80`, overflow: 'hidden' }}>
           <div style={{
-            height: '100%',
-            borderRadius: '3px',
-            width: `${Math.min(100, product.stock_quantity <= 0 ? 0 : (product.stock_quantity / Math.max(product.stock_quantity, product.minimum_stock * 2)) * 100)}%`,
-            background: product.stock_quantity <= 0
-              ? colors.accent?.red
-              : product.stock_quantity <= product.minimum_stock
-              ? `linear-gradient(90deg, ${colors.accent?.amber}, ${colors.accent?.amber}cc)`
-              : `linear-gradient(90deg, ${colors.accent?.green}, ${colors.accent?.green}cc)`,
+            height: '100%', borderRadius: '4px',
+            width: `${stockPct}%`,
+            background: `linear-gradient(90deg, ${stockColor}, ${stockColor}cc)`,
             transition: dt.ease.smooth,
+            boxShadow: `0 0 6px ${stockColor}50`,
           }} />
         </div>
       </div>
@@ -441,67 +471,84 @@ const ProductCard = ({
   );
 };
 
-// ─── Toast premium ────────────────────────────────────────────────────────────
+// ─── Toast ────────────────────────────────────────────────────────────────────
 const Toast = ({
   type, msg, onDismiss, isMobile, colors,
 }: { type: 'success' | 'error'; msg: string; onDismiss: () => void; isMobile: boolean; colors: any }) => {
   const isSuccess = type === 'success';
   const accent = isSuccess ? colors.accent?.green : colors.accent?.red;
-  const dim    = isSuccess ? colors.accent?.greenDim : colors.accent?.redDim;
 
   return (
     <div
-      role="status" aria-live="polite"
+      role="status"
+      aria-live="polite"
       style={{
         position: 'fixed',
-        bottom: isMobile ? '76px' : '24px',
+        bottom: isMobile ? '80px' : '24px',
         right: isMobile ? '12px' : '24px',
         left: isMobile ? '12px' : 'auto',
         zIndex: 9999,
         maxWidth: isMobile ? 'none' : '380px',
-        background: dim,
-        border: `1px solid ${accent}40`,
+        background: isSuccess ? 'rgba(10,10,20,0.92)' : `${accent}10`,
+        border: `1px solid ${accent}${isSuccess ? '18' : '32'}`,
         borderRadius: '14px',
-        padding: '14px 18px',
-        display: 'flex',
-        alignItems: 'center',
-        gap: '12px',
-        boxShadow: dt.shadow.xl,
-        backdropFilter: 'blur(16px)',
-        WebkitBackdropFilter: 'blur(16px)',
-        animation: 'pp-toast-in 0.35s cubic-bezier(0.34,1.56,0.64,1) both',
+        padding: '14px 16px',
+        display: 'flex', alignItems: 'center', gap: '12px',
+        boxShadow: `0 20px 48px rgba(0,0,0,0.45), 0 4px 12px rgba(0,0,0,0.25), 0 0 0 1px ${accent}10`,
+        backdropFilter: 'blur(20px)',
+        WebkitBackdropFilter: 'blur(20px)',
+        animation: 'pp-toast-in 0.32s cubic-bezier(0.34,1.56,0.64,1) both',
       }}
     >
-      <span style={{
-        width: '28px', height: '28px', borderRadius: '50%', flexShrink: 0,
-        background: accent, color: '#fff',
+      {/* Icon circle */}
+      <div style={{
+        width: '30px', height: '30px', borderRadius: '50%', flexShrink: 0,
+        background: `${accent}18`,
+        border: `1px solid ${accent}30`,
+        color: accent,
         display: 'flex', alignItems: 'center', justifyContent: 'center',
-        fontSize: '13px', fontWeight: 800,
-        boxShadow: `0 0 0 5px ${accent}20`,
+        fontSize: '14px', fontWeight: 800,
+        boxShadow: `0 0 0 4px ${accent}0c`,
       }}>
         {isSuccess ? '✓' : '✕'}
+      </div>
+
+      <span style={{
+        flex: 1, fontSize: dt.text.sm, fontWeight: 600,
+        color: isSuccess ? colors.text1 : accent,
+        lineHeight: 1.5,
+      }}>
+        {msg}
       </span>
-      <span style={{ flex: 1, fontSize: dt.text.sm, fontWeight: 600, color: accent, lineHeight: 1.5 }}>{msg}</span>
+
       <button
-        type="button" onClick={onDismiss}
+        type="button"
+        onClick={onDismiss}
         style={{
-          width: '28px', height: '28px', borderRadius: '50%',
-          border: 'none', background: `${accent}15`,
-          color: accent, cursor: 'pointer', flexShrink: 0,
+          width: '26px', height: '26px', borderRadius: '7px',
+          border: `1px solid ${colors.border}`,
+          background: 'rgba(255,255,255,0.04)',
+          color: colors.text3,
+          cursor: 'pointer', flexShrink: 0,
           display: 'flex', alignItems: 'center', justifyContent: 'center',
-          fontSize: '14px', transition: dt.ease.snap,
+          fontSize: '12px', transition: dt.ease.snap,
         }}
         aria-label="Fermer"
-      >✕</button>
+        onMouseEnter={e => { e.currentTarget.style.background = 'rgba(255,255,255,0.09)'; e.currentTarget.style.color = colors.text2; }}
+        onMouseLeave={e => { e.currentTarget.style.background = 'rgba(255,255,255,0.04)'; e.currentTarget.style.color = colors.text3; }}
+      >
+        ✕
+      </button>
     </div>
   );
 };
 
-// ─── Navigation principale — pill segmented control (toutes tailles) ─────────
+// ─── PillNav ──────────────────────────────────────────────────────────────────
 const PillNav = ({
   activeTab, tabs, onTabChange, colors, isMobile,
 }: { activeTab: string; tabs: any[]; onTabChange: (id: string) => void; colors: any; isMobile?: boolean }) => {
   const activeIndex = tabs.findIndex(tab => tab.id === activeTab);
+
   return (
     <div
       className="pp-pillnav pp-scroll-x pp-scroll-hide"
@@ -515,15 +562,16 @@ const PillNav = ({
         background: colors.surface,
         border: `1px solid ${colors.border}`,
         borderRadius: '16px',
-        boxShadow: 'inset 0 1px 2px rgba(0,0,0,0.04)',
-        marginBottom: isMobile ? '16px' : '24px',
+        boxShadow: 'inset 0 1px 3px rgba(0,0,0,0.08)',
+        marginBottom: isMobile ? '14px' : '22px',
         maxWidth: '100%',
         width: isMobile ? '100%' : 'auto',
       }}
     >
-      {/* Indicateur glissant */}
+      {/* Sliding indicator */}
       <div
         aria-hidden="true"
+        className="pp-pill-indicator"
         style={{
           position: 'absolute',
           top: '5px', bottom: '5px',
@@ -531,11 +579,11 @@ const PillNav = ({
           width: `calc((100% - 10px) / ${tabs.length})`,
           background: colors.card,
           borderRadius: '12px',
-          boxShadow: `${dt.shadow.sm}, 0 0 0 1px ${colors.border}80`,
-          transition: 'left 0.32s cubic-bezier(0.34,1.56,0.64,1)',
+          boxShadow: `0 1px 4px rgba(0,0,0,0.12), 0 0 0 1px ${colors.border}`,
           pointerEvents: 'none',
         }}
       />
+
       {tabs.map(tab => {
         const active = activeTab === tab.id;
         return (
@@ -547,24 +595,30 @@ const PillNav = ({
             onClick={() => onTabChange(tab.id)}
             className="pp-btn"
             style={{
-              position: 'relative',
-              zIndex: 1,
+              position: 'relative', zIndex: 1,
               flex: '1 1 0',
-              padding: isMobile ? '9px 8px' : '10px 18px',
+              padding: isMobile ? '9px 8px' : '10px 20px',
               borderRadius: '12px',
               fontSize: isMobile ? dt.text.xs : dt.text.sm,
               fontWeight: active ? 700 : 500,
               color: active ? colors.text1 : colors.text3,
               background: 'transparent',
-              gap: isMobile ? '4px' : '8px',
+              gap: isMobile ? '4px' : '7px',
               whiteSpace: 'nowrap',
-              transition: 'color 0.22s ease',
+              letterSpacing: active ? '-0.01em' : '0',
+              transition: 'color 0.2s ease, font-weight 0.2s ease',
             }}
             onMouseEnter={e => { if (!active) e.currentTarget.style.color = colors.text2; }}
             onMouseLeave={e => { if (!active) e.currentTarget.style.color = colors.text3; }}
           >
-            <span style={{ fontSize: isMobile ? '14px' : '16px', lineHeight: 1, filter: active ? 'none' : 'grayscale(0.4) opacity(0.75)' }}>{tab.icon}</span>
-            <span style={isMobile ? { overflow: 'hidden', textOverflow: 'ellipsis' } : undefined}>{tab.label}</span>
+            <span style={{
+              fontSize: isMobile ? '14px' : '15px', lineHeight: 1,
+              filter: active ? 'none' : 'grayscale(0.5) opacity(0.65)',
+              transition: 'filter 0.2s ease',
+            }}>
+              {tab.icon}
+            </span>
+            <span>{tab.label}</span>
           </button>
         );
       })}
@@ -572,30 +626,24 @@ const PillNav = ({
   );
 };
 
-// ─── Navigation mobile (bottom bar flottante) ─────────────────────────────────
+// ─── MobileNav ────────────────────────────────────────────────────────────────
 const MobileNav = ({
   activeTab, tabs, onTabChange, hasFilters, onClearFilters, colors,
 }: { activeTab: string; tabs: any[]; onTabChange: (id: string) => void; hasFilters: boolean; onClearFilters: () => void; colors: any }) => (
   <>
     <nav
       className="pp-mobile-nav"
-      style={{
-        padding: '0 12px calc(10px + env(safe-area-inset-bottom, 0px))',
-      }}
+      style={{ padding: '0 14px calc(12px + env(safe-area-inset-bottom, 0px))' }}
     >
-      <div
-        style={{
-          display: 'flex',
-          gap: '2px',
-          padding: '6px',
-          background: `${colors.card}f5`,
-          border: `1px solid ${colors.border}`,
-          borderRadius: '20px',
-          backdropFilter: 'blur(24px)',
-          WebkitBackdropFilter: 'blur(24px)',
-          boxShadow: '0 12px 32px rgba(0,0,0,0.14), 0 2px 8px rgba(0,0,0,0.06)',
-        }}
-      >
+      <div style={{
+        display: 'flex', gap: '2px', padding: '6px',
+        background: `${colors.card}f2`,
+        border: `1px solid ${colors.border}`,
+        borderRadius: '20px',
+        backdropFilter: 'blur(28px)',
+        WebkitBackdropFilter: 'blur(28px)',
+        boxShadow: '0 16px 40px rgba(0,0,0,0.18), 0 2px 8px rgba(0,0,0,0.08), 0 0 0 1px rgba(255,255,255,0.04)',
+      }}>
         {tabs.map(tab => {
           const active = activeTab === tab.id;
           return (
@@ -605,95 +653,112 @@ const MobileNav = ({
               className="pp-btn"
               onClick={() => onTabChange(tab.id)}
               style={{
-                flex: 1,
-                flexDirection: 'column',
-                gap: '2px',
-                padding: '8px 4px',
-                borderRadius: '14px',
-                fontSize: '9px',
-                fontWeight: active ? 700 : 500,
+                flex: 1, flexDirection: 'column', gap: '3px',
+                padding: '8px 4px', borderRadius: '14px',
+                fontSize: '9.5px', fontWeight: active ? 700 : 500,
                 color: active ? colors.accent?.blue : colors.text3,
-                background: active ? `${colors.accent?.blue}12` : 'transparent',
+                background: active ? `${colors.accent?.blue}10` : 'transparent',
                 border: 'none',
                 letterSpacing: '0.02em',
+                transition: 'color 0.18s ease, background 0.18s ease',
               }}
             >
-              <span style={{ fontSize: '19px', lineHeight: 1, animation: active ? 'pp-float 1.8s ease-in-out infinite' : 'none' }}>{tab.icon}</span>
+              <span style={{
+                fontSize: '18px', lineHeight: 1,
+                filter: active ? 'none' : 'grayscale(0.45) opacity(0.6)',
+                animation: active ? 'pp-float 1.8s ease-in-out infinite' : 'none',
+                transition: 'filter 0.18s ease',
+              }}>
+                {tab.icon}
+              </span>
               <span>{tab.label}</span>
             </button>
           );
         })}
       </div>
     </nav>
+
     {hasFilters && (
       <button
         type="button" className="pp-btn pp-btn-danger"
         onClick={onClearFilters}
         style={{
           position: 'fixed',
-          bottom: 'calc(78px + env(safe-area-inset-bottom, 0px))',
+          bottom: 'calc(82px + env(safe-area-inset-bottom, 0px))',
           right: '16px',
           zIndex: 1001,
-          width: '44px', height: '44px',
+          width: '42px', height: '42px',
           borderRadius: '50%',
-          boxShadow: `0 4px 16px ${colors.accent?.red}40`,
-          fontSize: '16px',
+          boxShadow: `0 6px 18px ${colors.accent?.red}45`,
+          fontSize: '15px',
         }}
         aria-label="Effacer les filtres"
-      >✕</button>
+      >
+        ✕
+      </button>
     )}
   </>
 );
 
-// ─── Bulk action bar ──────────────────────────────────────────────────────────
+// ─── BulkBar ──────────────────────────────────────────────────────────────────
 const BulkBar = ({
   count, onAdjust, onArchive, onDelete, onClear, t, isMobile, colors,
-}: { count: number; onAdjust: () => void; onArchive: () => void; onDelete: () => void; onClear: () => void; t: (k: string, o?: any) => string; isMobile: boolean; colors: any }) => (
+}: {
+  count: number; onAdjust: () => void; onArchive: () => void;
+  onDelete: () => void; onClear: () => void;
+  t: (k: string, o?: any) => string; isMobile: boolean; colors: any;
+}) => (
   <div
     className="pp-anim-fade-up"
     style={{
-      background: `${colors.accent?.blue}08`,
-      border: `1px solid ${colors.accent?.blue}25`,
+      background: `${colors.accent?.blue}07`,
+      border: `1px solid ${colors.accent?.blue}20`,
       borderRadius: '14px',
-      padding: isMobile ? '12px' : '14px 20px',
+      padding: isMobile ? '12px 14px' : '14px 20px',
       display: 'flex',
       flexDirection: isMobile ? 'column' : 'row',
       alignItems: isMobile ? 'flex-start' : 'center',
       justifyContent: 'space-between',
-      gap: isMobile ? '10px' : '16px',
+      gap: isMobile ? '10px' : '14px',
       backdropFilter: 'blur(8px)',
     }}
   >
+    {/* Count badge */}
     <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
       <span style={{
         width: '28px', height: '28px', borderRadius: '50%',
-        background: colors.accent?.blue, color: '#fff',
+        background: colors.accent?.blue,
+        color: '#fff',
         display: 'flex', alignItems: 'center', justifyContent: 'center',
         fontSize: dt.text.sm, fontWeight: 800, flexShrink: 0,
         boxShadow: `0 0 0 4px ${colors.accent?.blue}18`,
-      }}>{count}</span>
+      }}>
+        {count}
+      </span>
       <span style={{ fontSize: dt.text.sm, fontWeight: 600, color: colors.text1 }}>
         {t('products.selected')}
       </span>
     </div>
+
+    {/* Actions */}
     <div style={{
       display: 'flex', gap: '6px', flexWrap: 'wrap',
       width: isMobile ? '100%' : 'auto',
     }}>
       {([
-        { label: t('products.bulkAdjust'),  bg: colors.accent?.amber, fn: onAdjust },
-        { label: t('products.bulkArchive'), bg: colors.accent?.gold,  fn: onArchive },
-        { label: t('products.bulkDelete'),  bg: colors.accent?.red,   fn: onDelete },
-      ] as const).map(({ label, bg, fn }) => (
+        { label: t('products.bulkAdjust'),  color: colors.accent?.amber, fn: onAdjust  },
+        { label: t('products.bulkArchive'), color: colors.accent?.gold,  fn: onArchive },
+        { label: t('products.bulkDelete'),  color: colors.accent?.red,   fn: onDelete  },
+      ] as const).map(({ label, color, fn }) => (
         <button
           key={label} type="button" className="pp-btn"
           onClick={fn}
           style={{
             padding: '9px 14px', borderRadius: '10px',
-            background: bg, border: 'none', color: '#fff',
+            background: color, border: 'none', color: '#fff',
             fontSize: dt.text.xs, fontWeight: 700,
             flex: isMobile ? '1 1 calc(33% - 4px)' : '0 0 auto',
-            boxShadow: `0 2px 8px ${bg}40`,
+            boxShadow: `0 3px 10px ${color}35`,
             letterSpacing: '0.02em',
           }}
           onMouseEnter={e => { e.currentTarget.style.filter = 'brightness(1.1)'; e.currentTarget.style.transform = 'translateY(-1px)'; }}
@@ -706,8 +771,7 @@ const BulkBar = ({
         type="button" className="pp-btn pp-btn-ghost"
         onClick={onClear}
         style={{
-          padding: '9px 14px', borderRadius: '10px',
-          fontSize: dt.text.xs,
+          padding: '9px 14px', borderRadius: '10px', fontSize: dt.text.xs,
           flex: isMobile ? '1 1 100%' : '0 0 auto',
         }}
       >
@@ -717,40 +781,40 @@ const BulkBar = ({
   </div>
 );
 
-// ─── Skeleton de chargement ───────────────────────────────────────────────────
-const SkeletonRows = ({ count = 5, colors }: { count?: number; colors: any }) => (
+// ─── SkeletonRows ─────────────────────────────────────────────────────────────
+const SkeletonRows = ({ count = 5 }: { count?: number; colors: any }) => (
   <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', padding: '16px 0' }}>
     {Array.from({ length: count }).map((_, i) => (
-      <div key={i} className="pp-skeleton" style={{ height: '56px', animationDelay: `${i * 80}ms` }} />
+      <div key={i} className="pp-skeleton" style={{ height: '54px', animationDelay: `${i * 70}ms` }} />
     ))}
   </div>
 );
 
-// ─── Section card ─────────────────────────────────────────────────────────────
+// ─── Card ─────────────────────────────────────────────────────────────────────
 const Card = ({
   children, style, noPad, isMobile,
 }: { children: React.ReactNode; style?: React.CSSProperties; noPad?: boolean; isMobile?: boolean }) => (
   <section
     className="pp-card"
-    style={{
-      padding: noPad ? 0 : isMobile ? '16px' : '28px',
-      width: '100%', minWidth: 0,
-      ...style,
-    }}
+    style={{ padding: noPad ? 0 : isMobile ? '16px' : '28px', width: '100%', minWidth: 0, ...style }}
   >
     {children}
   </section>
 );
 
-// ─── Séparateur avec label ────────────────────────────────────────────────────
+// ─── Divider ──────────────────────────────────────────────────────────────────
 const Divider = ({ label, colors }: { label?: string; colors: any }) => (
-  <div style={{
-    display: 'flex', alignItems: 'center', gap: '12px',
-    margin: '4px 0',
-  }}>
-    <div style={{ flex: 1, height: '1px', background: colors.border }} />
-    {label && <span style={{ fontSize: dt.text.xs, color: colors.text3, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.1em', flexShrink: 0 }}>{label}</span>}
-    <div style={{ flex: 1, height: '1px', background: colors.border }} />
+  <div style={{ display: 'flex', alignItems: 'center', gap: '12px', margin: '4px 0' }}>
+    <div style={{ flex: 1, height: '1px', background: `${colors.border}80` }} />
+    {label && (
+      <span style={{
+        fontSize: dt.text.xs, color: colors.text3, fontWeight: 700,
+        textTransform: 'uppercase', letterSpacing: '0.1em', flexShrink: 0,
+      }}>
+        {label}
+      </span>
+    )}
+    <div style={{ flex: 1, height: '1px', background: `${colors.border}80` }} />
   </div>
 );
 
@@ -762,7 +826,7 @@ const ProductsPage = () => {
   const location = useLocation();
   const highlightProductId = location.state?.highlightProductId;
   const { can } = useProductPermissions();
-  const { isMobile, isTablet, isDesktop } = useBreakpoint();
+  const { isMobile, isTablet } = useBreakpoint();
 
   const {
     products, categories,
@@ -771,28 +835,28 @@ const ProductsPage = () => {
   } = useProductStore();
 
   type InventoryTab = 'overview' | 'analytics' | 'movements' | 'categories';
-  const [activeTab, setActiveTab]           = useState<InventoryTab>('overview');
-  const [viewMode, setViewMode]             = useState<'table' | 'grid'>('table');
-  const [showModal, setShowModal]           = useState(false);
-  const [showStockModal, setShowStockModal] = useState(false);
-  const [editingProduct, setEditingProduct] = useState<Product | null>(null);
-  const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
-  const [selectedIds, setSelectedIds]       = useState<number[]>([]);
-  const [sortField, setSortField]           = useState<'name' | 'stock_quantity' | 'selling_price'>('name');
-  const [sortDirection, setSortDirection]   = useState<'asc' | 'desc'>('asc');
-  const [toast, setToast]                   = useState<{ type: 'success' | 'error'; msg: string } | null>(null);
+  const [activeTab, setActiveTab]               = useState<InventoryTab>('overview');
+  const [viewMode, setViewMode]                 = useState<'table' | 'grid'>('table');
+  const [showModal, setShowModal]               = useState(false);
+  const [showStockModal, setShowStockModal]     = useState(false);
+  const [editingProduct, setEditingProduct]     = useState<Product | null>(null);
+  const [selectedProduct, setSelectedProduct]   = useState<Product | null>(null);
+  const [selectedIds, setSelectedIds]           = useState<number[]>([]);
+  const [sortField, setSortField]               = useState<'name' | 'stock_quantity' | 'selling_price'>('name');
+  const [sortDirection, setSortDirection]       = useState<'asc' | 'desc'>('asc');
+  const [toast, setToast]                       = useState<{ type: 'success' | 'error'; msg: string } | null>(null);
   const [bulkArchiveConfirm, setBulkArchiveConfirm] = useState(false);
   const [bulkDeleteConfirm, setBulkDeleteConfirm]   = useState(false);
   const [deleteConfirmId, setDeleteConfirmId]       = useState<number | null>(null);
 
-  const { movements, loading: movementsLoading }          = useInventoryMovements(6);
-  const { movements: fullMovements, loading: fullMovementsLoading } = useInventoryMovements(500);
+  const { movements, loading: movementsLoading }                      = useInventoryMovements(6);
+  const { movements: fullMovements, loading: fullMovementsLoading }   = useInventoryMovements(500);
   const filteredProductsResult = useInventoryFilters(products, categories);
   const stats = useInventoryStats(products);
 
   const sortedProducts = useMemo(() => {
     const copy = [...filteredProductsResult.filteredProducts];
-    const dir  = sortDirection === 'asc' ? 1 : -1;
+    const dir = sortDirection === 'asc' ? 1 : -1;
     return copy.sort((a, b) =>
       sortField === 'name'
         ? dir * a.name.localeCompare(b.name)
@@ -816,26 +880,22 @@ const ProductsPage = () => {
     setSortField(field as typeof sortField); setSortDirection('asc');
   }, [sortField]);
 
-  const handleSelectRow = useCallback((id: number, selected: boolean) =>
+  const handleSelectRow    = useCallback((id: number, selected: boolean) =>
     setSelectedIds(p => selected ? [...p, id] : p.filter(i => i !== id)), []);
 
-  const handleSelectAll = useCallback((selected: boolean) =>
+  const handleSelectAll    = useCallback((selected: boolean) =>
     setSelectedIds(selected ? pagination.pageItems.map(p => p.id) : []), [pagination.pageItems]);
 
-  const handleEdit        = useCallback((p: Product) => { setEditingProduct(p); setShowModal(true); }, []);
-  const handleAdjust      = useCallback((p: Product) => { setSelectedProduct(p); setShowStockModal(true); }, []);
-  const handleViewDetails = useCallback((p: Product) => { window.location.href = `/products/${p.id}`; }, []);
-
-  const handleBulkAdjust = useCallback(() => {
+  const handleEdit         = useCallback((p: Product) => { setEditingProduct(p); setShowModal(true); }, []);
+  const handleAdjust       = useCallback((p: Product) => { setSelectedProduct(p); setShowStockModal(true); }, []);
+  const handleViewDetails  = useCallback((p: Product) => { window.location.href = `/products/${p.id}`; }, []);
+  const handleBulkAdjust   = useCallback(() => {
     if (!selectedIds.length) return;
     const p = products.find(p => p.id === selectedIds[0]);
     if (p) { setSelectedProduct(p); setShowStockModal(true); }
   }, [selectedIds, products]);
 
-  const handleBulkArchive = useCallback(async () => {
-    if (!selectedIds.length) return;
-    setBulkArchiveConfirm(true);
-  }, [selectedIds]);
+  const handleBulkArchive  = useCallback(async () => { if (selectedIds.length) setBulkArchiveConfirm(true); }, [selectedIds]);
 
   const confirmBulkArchive = useCallback(async () => {
     if (!selectedIds.length) return;
@@ -847,12 +907,9 @@ const ProductsPage = () => {
     setSelectedIds([]); fetchProducts();
   }, [selectedIds, updateProduct, fetchProducts, t]);
 
-  const handleBulkDelete = useCallback(async () => {
-    if (!selectedIds.length) return;
-    setBulkDeleteConfirm(true);
-  }, [selectedIds]);
+  const handleBulkDelete   = useCallback(async () => { if (selectedIds.length) setBulkDeleteConfirm(true); }, [selectedIds]);
 
-  const confirmBulkDelete = useCallback(async () => {
+  const confirmBulkDelete  = useCallback(async () => {
     if (!selectedIds.length) return;
     setBulkDeleteConfirm(false);
     let ok = 0;
@@ -886,9 +943,7 @@ const ProductsPage = () => {
     if (res.success) fetchProducts();
   }, [fetchProducts, t, updateProduct]);
 
-  const requestDelete = useCallback((id: number) => {
-    setDeleteConfirmId(id);
-  }, []);
+  const requestDelete = useCallback((id: number) => setDeleteConfirmId(id), []);
 
   const confirmDelete = useCallback(async () => {
     if (!deleteConfirmId) return;
@@ -901,9 +956,7 @@ const ProductsPage = () => {
     fetchCategories(); fetchProducts();
   }, [deleteConfirmId, deleteProduct, fetchCategories, fetchProducts, t]);
 
-  const handleDelete = useCallback(async (id: number) => {
-    requestDelete(id);
-  }, [requestDelete]);
+  const handleDelete = useCallback(async (id: number) => requestDelete(id), [requestDelete]);
 
   const handleStockConfirm = async (qty: number, type: 'addition' | 'subtraction', reason: string) => {
     if (!selectedProduct) return;
@@ -942,11 +995,12 @@ const ProductsPage = () => {
       if (!res.success) {
         let msg = editingProduct ? t('products.failedToSave') : t('products.failedToCreate');
         if (res.error === 'PRODUCT_NAME_DUPLICATE') msg = t('products.nameDuplicate');
-        if (res.error === 'PRODUCT_SKU_DUPLICATE') msg = t('products.skuDuplicate');
-        setToast({ type: 'error', msg });
-        return;
+        if (res.error === 'PRODUCT_SKU_DUPLICATE')  msg = t('products.skuDuplicate');
+        setToast({ type: 'error', msg }); return;
       }
-      setToast({ type: 'success', msg: editingProduct ? t('products.savedSuccess', { name: data.name }) : t('products.createdSuccess', { name: data.name }) });
+      setToast({ type: 'success', msg: editingProduct
+        ? t('products.savedSuccess',   { name: data.name })
+        : t('products.createdSuccess', { name: data.name }) });
     } catch (err: any) {
       console.error('[ProductsPage] save error:', err);
       setToast({ type: 'error', msg: err.message || t('common.error') });
@@ -955,15 +1009,14 @@ const ProductsPage = () => {
     }
   }, [editingProduct, fetchProducts, fetchCategories, createProduct, updateProduct, t]);
 
-  // Tabs
   const tabs: Array<{ id: InventoryTab; label: string; icon: string }> = [
-    { id: 'overview',    label: t('products.tabOverview'),    icon: '📦' },
-    { id: 'analytics',  label: t('products.tabAnalytics'),   icon: '📊' },
-    { id: 'movements',  label: t('products.tabMovements'),   icon: '📋' },
-    { id: 'categories', label: t('products.tabCategories'),  icon: '🏷️' },
+    { id: 'overview',    label: t('products.tabOverview'),   icon: '📦' },
+    { id: 'analytics',  label: t('products.tabAnalytics'),  icon: '📊' },
+    { id: 'movements',  label: t('products.tabMovements'),  icon: '📋' },
+    { id: 'categories', label: t('products.tabCategories'), icon: '🏷️' },
   ];
 
-  // ── Contenu des onglets ────────────────────────────────────────────────────
+  // ── Tab content ────────────────────────────────────────────────────────────
   const renderTabContent = () => {
     switch (activeTab) {
       case 'overview':
@@ -999,8 +1052,7 @@ const ProductsPage = () => {
                   <div className="pp-product-grid pp-grid-stagger">
                     {pagination.pageItems.map(p => (
                       <ProductCard
-                        key={p.id}
-                        product={p}
+                        key={p.id} product={p}
                         isHighlighted={highlightProductId === p.id}
                         onAdjust={handleAdjust}
                         onViewDetails={handleViewDetails}
@@ -1062,7 +1114,6 @@ const ProductsPage = () => {
       case 'movements':
         return (
           <Card isMobile={isMobile}>
-            {/* Header */}
             <div style={{
               display: 'flex',
               flexDirection: isMobile ? 'column' : 'row',
@@ -1072,21 +1123,29 @@ const ProductsPage = () => {
               marginBottom: isMobile ? '16px' : '24px',
             }}>
               <div>
-                <h2 style={{ fontSize: dt.text.lg, fontWeight: 800, color: colors.text1, letterSpacing: '-0.02em', margin: 0 }}>
+                <h2 style={{
+                  fontSize: dt.text.lg, fontWeight: 800, color: colors.text1,
+                  letterSpacing: '-0.02em', margin: 0,
+                }}>
                   {t('products.fullMovementHistory')}
                 </h2>
-                <p style={{ fontSize: dt.text.sm, color: colors.text3, marginTop: '4px' }}>
+                <p style={{ fontSize: dt.text.sm, color: colors.text3, marginTop: '5px' }}>
                   Historique complet des mouvements de stock
                 </p>
               </div>
               <span style={{
                 display: 'inline-flex', alignItems: 'center', gap: '7px',
-                padding: '6px 14px', borderRadius: 999,
-                background: colors.surface, border: `1px solid ${colors.border}`,
-                fontSize: dt.text.xs, fontWeight: 600, color: colors.text2,
+                padding: '5px 14px', borderRadius: 999,
+                background: colors.surface,
+                border: `1px solid ${colors.border}`,
+                fontSize: dt.text.xs, fontWeight: 700, color: colors.text2,
                 flexShrink: 0,
               }}>
-                <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: colors.accent?.green }} />
+                <span style={{
+                  width: '6px', height: '6px', borderRadius: '50%',
+                  background: colors.accent?.green,
+                  boxShadow: `0 0 0 2px ${colors.accent?.green}20`,
+                }} />
                 {fullMovements.length} {t('products.records')}
               </span>
             </div>
@@ -1113,7 +1172,7 @@ const ProductsPage = () => {
     }
   };
 
-  // ── Rendu principal ────────────────────────────────────────────────────────
+  // ── Render ─────────────────────────────────────────────────────────────────
   const mainPad = isMobile ? '12px 10px' : isTablet ? '20px 18px' : '36px 32px';
 
   return (
@@ -1121,28 +1180,20 @@ const ProductsPage = () => {
       <GlobalStyles colors={colors} />
       <div className="pp-bg-texture" />
 
-      <main
-        style={{
-          background: colors.bg,
-          minHeight: '100vh',
-          padding: mainPad,
-          position: 'relative',
-          zIndex: 1,
-        }}
-      >
-        <div
-          style={{
-            maxWidth: 1600,
-            margin: '0 auto',
-            display: 'flex',
-            flexDirection: 'column',
+      <main style={{
+        background: colors.bg, minHeight: '100vh',
+        padding: mainPad, position: 'relative', zIndex: 1,
+      }}>
+        <div style={{
+          maxWidth: 1600, margin: '0 auto',
+          display: 'flex', flexDirection: 'column',
+          gap: isMobile ? '12px' : '20px',
+        }}>
+          <div style={{
+            minWidth: 0, width: '100%',
+            display: 'flex', flexDirection: 'column',
             gap: isMobile ? '12px' : '20px',
-          }}
-        >
-          {/* Zone contenu principal */}
-          <div style={{ minWidth: 0, width: '100%', display: 'flex', flexDirection: 'column', gap: isMobile ? '12px' : '20px' }}>
-
-            {/* En-tête page */}
+          }}>
             <InventoryHeader
               viewMode={viewMode}
               onViewModeChange={setViewMode}
@@ -1153,10 +1204,8 @@ const ProductsPage = () => {
               canCreate={can('product.create')}
             />
 
-            {/* Navigation pill (tablette + desktop) */}
             <PillNav activeTab={activeTab} tabs={tabs} onTabChange={setActiveTab} colors={colors} />
 
-            {/* Contenu onglet */}
             <div
               id={`tabpanel-${activeTab}`}
               role="tabpanel"
@@ -1169,7 +1218,6 @@ const ProductsPage = () => {
         </div>
       </main>
 
-      {/* Toast */}
       {toast && (
         <Toast
           type={toast.type} msg={toast.msg}
@@ -1178,7 +1226,6 @@ const ProductsPage = () => {
         />
       )}
 
-      {/* Navigation mobile */}
       <MobileNav
         activeTab={activeTab} tabs={tabs} onTabChange={setActiveTab}
         hasFilters={filteredProductsResult.activeFiltersCount > 0}
@@ -1186,7 +1233,6 @@ const ProductsPage = () => {
         colors={colors}
       />
 
-      {/* Modales */}
       <ProductModal
         isOpen={showModal}
         onClose={() => setShowModal(false)}
@@ -1201,7 +1247,6 @@ const ProductsPage = () => {
         onConfirm={handleStockConfirm}
       />
 
-      {/* Premium delete confirmation dialogs */}
       <ConfirmDialog
         open={!!deleteConfirmId}
         title={t('products.deleteConfirm') || 'Confirmer la suppression'}
@@ -1213,7 +1258,7 @@ const ProductsPage = () => {
       />
       <ConfirmDialog
         open={bulkArchiveConfirm}
-        title={t('products.bulkArchiveConfirmTitle') || 'Confirmer l\'archivage'}
+        title={t('products.bulkArchiveConfirmTitle') || "Confirmer l'archivage"}
         message={t('products.bulkArchiveConfirm', { count: selectedIds.length })}
         confirmLabel={t('products.bulkArchive') || 'Archiver'}
         danger={false}

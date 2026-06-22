@@ -22,6 +22,9 @@ const REALTIME_TABLES = [
   'suppliers',
   'vouchers',
   'voucher_redemptions',
+  'voucher_requests',
+  'voucher_audit_logs',
+  'subscription_payment_requests',
 ];
 
 const FK_MAP: Record<string, Record<string, string>> = {
@@ -40,6 +43,9 @@ const FK_MAP: Record<string, Record<string, string>> = {
   purchase_order_items: { purchase_order_id: 'purchase_orders', product_id: 'products' },
   vouchers: { plan_id: 'plans' },
   voucher_redemptions: { voucher_id: 'vouchers', tenant_id: 'tenants', subscription_id: 'subscriptions' },
+  voucher_requests: { tenant_id: 'tenants', plan_id: 'plans', verified_by: 'users' },
+  voucher_audit_logs: { voucher_request_id: 'voucher_requests', actor_id: 'users' },
+  subscription_payment_requests: { tenant_id: 'tenants', plan_id: 'plans', requested_by: 'users', verified_by: 'users' },
 };
 
 const BOOLEAN_COLUMNS = new Set([

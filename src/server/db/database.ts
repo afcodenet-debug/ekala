@@ -95,7 +95,252 @@ try {
   dbInstance = null;
 }
 
-export const db = dbInstance;
+export let db: any = null;
+
+// Query-builder minimal (compatible where().first().count().insert().update().orderBy())
+// Permet aux plateformes d'utiliser: db('users').where(...).first()
+
+interface QueryBuilder {
+  where(col: string | ((qb: QueryBuilder) => void), val?: any, op?: string): QueryBuilder;
+  whereRaw(sql: string): QueryBuilder;
+  orWhere(col: string, val: any, op?: string): QueryBuilder;
+  first(): any;
+  all(): any[];
+  count(col?: string): QueryBuilder;
+  insert(data: Record<string, any>): { lastInsertRowid: number };
+  update(data: Record<string, any>): { changes: number };
+  orderBy(col: string): QueryBuilder;
+  groupBy(col: string): QueryBuilder;
+  select(...cols: string[]): QueryBuilder;
+  leftJoin(table: string, condition: string): QueryBuilder;
+  join(table: string, leftCol: string, rightCol: string): QueryBuilder;
+  limit(n: number): QueryBuilder;
+  offset(n: number): QueryBuilder;
+  clone(): QueryBuilder;
+  as(alias: string): string;
+}
+
+export function createQueryBuilder(rawDb: any, table: string): QueryBuilder {
+  const clauses: { kind: string; col?: string; val?: any; op?: string; raw?: string }[] = [];
+  let selectCols: string = '*';
+  let orderCol: string | null = null;
+  let groupCol: string | null = null;
+  let countCol: string | null = null;
+  let limitN: number | null = null;
+  let offsetN: number | null = null;
+  const joins: { kind: string; table: string; condition: string }[] = [];
+
+  const cloneState = () => ({ clauses: JSON.parse(JSON.stringify(clauses)), selectCols, orderCol, groupCol, countCol, limitN, offsetN, joins: JSON.parse(JSON.stringify(joins)), table });
+
+  const buildSelect = () => (countCol ? `COUNT(${countCol}) as count` : selectCols);
+
+  const toSql = (state?: { clauses?: any[]; joins?: any[]; table?: string; selectCols?: string; countCol?: string | null; groupCol?: string | null; orderCol?: string | null; limitN?: number | null; offsetN?: number | null }) => {
+    const c = state?.clauses ?? clauses;
+    const j = state?.joins ?? joins;
+    const t = state?.table ?? table;
+    const sc = state?.selectCols ?? selectCols;
+    const cc = state?.countCol ?? countCol;
+    const gc = state?.groupCol ?? groupCol;
+    const oc = state?.orderCol ?? orderCol;
+    const ln = state?.limitN ?? limitN;
+    const on = state?.offsetN ?? offsetN;
+    const whereParts: string[] = [];
+    const vals: any[] = [];
+    for (const x of c) {
+      if (x.kind === 'where' || x.kind === 'orWhere') {
+        const prefix = x.kind === 'orWhere' ? 'OR' : '';
+        if (x.raw) {
+          whereParts.push(`${prefix} ${x.raw}`);
+        } else {
+          whereParts.push(`${prefix} ${x.col} ${x.op || '='} ?`);
+          vals.push(x.val);
+        }
+      }
+    }
+    let sql = `SELECT ${cc ? `COUNT(${cc}) as count` : sc} FROM ${t}`;
+    for (const jj of j) {
+      sql += ` ${jj.kind} ${jj.table} ON ${jj.condition}`;
+    }
+    const whereStr = whereParts.join('');
+    if (whereStr) sql += ' WHERE ' + whereStr;
+    if (gc) sql += ` GROUP BY ${gc}`;
+    if (oc) sql += ` ORDER BY ${oc}`;
+    if (ln) sql += ` LIMIT ${ln}`;
+    if (on) sql += ` OFFSET ${on}`;
+    return { sql, vals };
+  };
+
+  return {
+    where(col: string | ((qb: QueryBuilder) => void), val?: any, op?: string) {
+      if (typeof col === 'function') {
+        const sub = createQueryBuilder(rawDb, table);
+        col(sub);
+        const subState = (sub as any)._state;
+        if (subState?.clauses?.length) {
+          clauses.push(...subState.clauses);
+        }
+      } else {
+        clauses.push({ kind: 'where', col, val: op ?? val, op: '=' });
+      }
+      return this as any;
+    },
+    whereRaw(sql: string) {
+      clauses.push({ kind: 'where', raw: sql });
+      return this as any;
+    },
+    orWhere(col: string, val: any, op?: string) {
+      clauses.push({ kind: 'orWhere', col, val: op ?? val, op: '=' });
+      return this as any;
+    },
+    select(...cols: string[]) {
+      selectCols = cols.join(', ');
+      return this as any;
+    },
+    orderBy(col: string) {
+      orderCol = col;
+      return this as any;
+    },
+    groupBy(col: string) {
+      groupCol = col;
+      return this as any;
+    },
+    join(tbl: string, leftCol: string, rightCol: string) {
+      joins.push({ kind: 'JOIN', table: tbl, condition: `${leftCol} = ${rightCol}` });
+      return this as any;
+    },
+    leftJoin(tbl: string, condition: string) {
+      joins.push({ kind: 'LEFT JOIN', table: tbl, condition });
+      return this as any;
+    },
+    limit(n: number) {
+      limitN = n;
+      return this as any;
+    },
+    offset(n: number) {
+      offsetN = n;
+      return this as any;
+    },
+    clone() {
+      return createQueryBuilder(rawDb, table) as any;
+    },
+    all() {
+      const { sql, vals } = toSql();
+      if (!rawDb) return [];
+      try {
+        return rawDb.prepare(sql).all(...vals);
+      } catch {
+        return [];
+      }
+    },
+    first() {
+      const s = cloneState();
+      s.limitN = s.limitN ?? 1;
+      const { sql, vals } = toSql(s);
+      if (!rawDb) return null;
+      try {
+        return rawDb.prepare(sql).all(...vals)[0] || null;
+      } catch {
+        return null;
+      }
+    },
+    count(col = 'id') {
+      const m = String(col).match(/^(.+?)\s+as\s+(\w+)$/i);
+      countCol = m ? m[1].trim() : col;
+      return this as any;
+    },
+    insert(data: Record<string, any>) {
+      if (!rawDb) return { lastInsertRowid: 0 };
+      const cols = Object.keys(data);
+      const vals = cols.map(c => data[c]);
+      const ph = cols.map(() => '?').join(',');
+      const result = rawDb.prepare(`INSERT INTO ${table} (${cols.join(',')}) VALUES (${ph})`).run(...vals);
+      return { lastInsertRowid: result.lastInsertRowid };
+    },
+    update(data: Record<string, any>) {
+      if (!rawDb) return { changes: 0 };
+      const setCols = Object.keys(data);
+      const setVals = setCols.map(c => data[c]);
+      const whereParts: string[] = [];
+      const whereVals: any[] = [];
+      const extraParts: string[] = [];
+      for (const c of clauses) {
+        if (c.kind === 'where' || c.kind === 'orWhere') {
+          const prefix = c.kind === 'orWhere' ? 'OR' : '';
+          if (c.raw) {
+            extraParts.push(`${prefix} ${c.raw}`);
+          } else {
+            whereParts.push(`${prefix} ${c.col} ${c.op || '='} ?`);
+            whereVals.push(c.val);
+          }
+        }
+      }
+      const whereStr = [...extraParts, ...whereParts].join(' AND ');
+      const sql = `UPDATE ${table} SET ${setCols.map(c => `${c} = ?`).join(', ')}${whereStr ? ' WHERE ' + whereStr : ''}`;
+      try {
+        const r = rawDb.prepare(sql).run(...setVals, ...whereVals);
+        return { changes: r.changes };
+      } catch {
+        return { changes: 0 };
+      }
+    },
+    as(alias: string) {
+      const { sql, vals } = toSql();
+      if (!rawDb) return `(${sql}) AS ${alias}`;
+      return `(${sql}) AS ${alias}`;
+    },
+  } as any;
+}
+
+function _exec(rawDb: any, table: string, selectCols: string, countCol: string | null, clauses: any[], joins: any[], order: string | null, limit: number | null, offsetN: number | null): any[] {
+  if (!rawDb) return [];
+  const whereParts: string[] = [];
+  const vals: any[] = [];
+  for (const c of clauses) {
+    if (c.type === 'where') {
+      if (c.raw) {
+        whereParts.push(c.raw);
+      } else {
+        whereParts.push(`${c.col} ${c.op || '='} ?`);
+        vals.push(c.val);
+      }
+    }
+  }
+  const select = countCol ? `COUNT(${countCol}) as count` : selectCols;
+  let sql = `SELECT ${select} FROM ${table}`;
+  for (const j of joins) {
+    sql += ` ${j.kind} ${j.table} ON ${j.condition}`;
+  }
+  if (whereParts.length) sql += ' WHERE ' + whereParts.join(' AND ');
+  if (order) sql += ` ORDER BY ${order}`;
+  if (limit) sql += ` LIMIT ${limit}`;
+  if (offsetN) sql += ` OFFSET ${offsetN}`;
+  try {
+    return rawDb.prepare(sql).all(...vals);
+  } catch {
+    return [];
+  }
+}
+
+export function queryBuilder(table: string): QueryBuilder {
+  return createQueryBuilder(dbInstance, table);
+}
+
+// Wrappe db en fonction callable: db('users') → QueryBuilder
+function makeCallable(rawDb: any): any {
+  if (!rawDb) return () => createQueryBuilder(null, '');
+  const call = ((tableName: string) => createQueryBuilder(rawDb, tableName)) as any;
+  return new Proxy(call, {
+    get(_target, prop: string) {
+      if (prop === 'then') return undefined;
+      const val = (rawDb as any)?.[prop];
+      if (typeof val === 'function') return val.bind(rawDb);
+      return val;
+    },
+  });
+}
+
+const callableDb = makeCallable(dbInstance);
+db = callableDb;
 
 // --- public factory --------------------------------------------------------
 
@@ -1167,4 +1412,4 @@ function ensureNotificationTables(): void {
 // Export
 // ───────────────────────────────────────────────────────────────────────────────
 
-export default db;
+export default callableDb;

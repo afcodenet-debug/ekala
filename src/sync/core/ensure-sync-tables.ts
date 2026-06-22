@@ -195,6 +195,23 @@ export function ensureSyncTables(db: Database.Database) {
       console.warn('[SyncTables] ensureSyncColumns encountered issues (non-critical):', err?.message);
     }
 
+    // --- sync_metadata (PullSync V2 cursor / state) ---
+    // Some environments ship without this table; PullSync expects it to exist.
+    try {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS sync_metadata (
+          key TEXT PRIMARY KEY,
+          tenant_id INTEGER,
+          value TEXT,
+          last_sync_at DATETIME,
+          updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+      `);
+    } catch (err: any) {
+      console.warn('[SyncTables] Could not ensure sync_metadata:', err?.message || err);
+    }
+
     console.log('[SyncTables] All sync tables and columns ensured');
   } catch (err: any) {
     // Final safety net - log but never throw

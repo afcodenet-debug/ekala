@@ -2,33 +2,37 @@ import { useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../stores/useAuthStore';
 import { useI18n } from '../lib/i18n';
+
 import { EnterpriseTokens } from '../lib/design-system';
 import { APP_NAME } from '../lib/app-config';
 import { useOrderStore } from '../stores/useOrderStore';
 import { useNotificationStore } from '../stores/useNotificationStore';
 import { useUIStore } from '../stores/useUIStore';
-import { Bell, X, ChevronLeft } from 'lucide-react';
+import { NotificationBadge } from './NotificationBadge';
+import { SettingsSelector } from './SettingsSelector';
+
 import {
+  Bell,
+  BarChart3,
+  ChevronLeft,
+  ChevronRight,
+  CreditCard,
+  DollarSign,
+  History,
+  LineChart,
+  LogOut,
+  Package,
+  ShieldCheck,
+  Settings,
+  Tag,
+  Table as TableIcon,
+  Users,
+  Wallet,
+  X,
+  Zap,
   LayoutDashboard,
   UtensilsCrossed,
-  Table as TableIcon,
-  History,
-  Package,
-  Users,
-  BarChart3,
-  Settings,
-  LogOut,
-  Wallet,
-  DollarSign,
-  ChevronRight,
-  ShieldCheck,
-  Zap,
-  LineChart,
-  Tag,
 } from 'lucide-react';
-import { SettingsSelector } from './SettingsSelector';
-import { NotificationBadge } from './NotificationBadge';
-import { UpgradeModal } from './UpgradeModal';
 
 const MENU = [
   { path: '/',           labelKey: 'sidebar.dashboard',    icon: LayoutDashboard, roles: ['owner', 'admin', 'manager', 'cashier'] },
@@ -44,12 +48,13 @@ const MENU = [
   { path: '/expenses',   labelKey: 'sidebar.expenses',     icon: DollarSign,      roles: ['owner', 'admin', 'manager', 'cashier'] },
   { path: '/users',      labelKey: 'sidebar.systemAccess', icon: Settings,        roles: ['owner', 'admin'] },
   { path: '/settings',   labelKey: 'sidebar.settings',     icon: Settings,        roles: ['owner', 'admin'] },
+  { path: '/admin/vouchers', labelKey: 'sidebar.voucherValidation', icon: CreditCard, roles: ['owner', 'admin'] },
 ];
 
 const SECTIONS = [
   { tKey: 'sidebar.operations', paths: ['/', '/pos', '/orders', '/tables'] },
   { tKey: 'sidebar.inventory',  paths: ['/sales', '/products', '/categories', '/analytics'] },
-  { tKey: 'sidebar.pilotage',   paths: ['/staff', '/reports', '/expenses', '/users', '/settings'] },
+  { tKey: 'sidebar.pilotage',   paths: ['/staff', '/reports', '/expenses', '/users', '/settings', '/admin/vouchers'] },
 ];
 
 type SidebarProps = { onClose?: () => void };
@@ -75,8 +80,6 @@ const Sidebar = ({ onClose }: SidebarProps) => {
     label: t(section.tKey),
     items: filteredMenu.filter(item => section.paths.includes(item.path)),
   })).filter(g => g.items.length > 0);
-
-  const [showUpgradeModal, setShowUpgradeModal] = useState(false);
 
   const handleClose = () => {
     onClose?.();
@@ -516,7 +519,7 @@ const Sidebar = ({ onClose }: SidebarProps) => {
             {(user?.status === 'trial' || user?.status === 'past_due' || user?.status === 'expired') && (
               <div style={{ marginTop: 10 }}>
                 <button
-                  onClick={() => { setShowUpgradeModal(true); handleClose(); }}
+                  onClick={handleClose}
                   style={{
                     width: '100%',
                     fontSize: 10,
@@ -636,12 +639,6 @@ const Sidebar = ({ onClose }: SidebarProps) => {
         </div>
 
       </aside>
-
-      <UpgradeModal
-        isOpen={showUpgradeModal}
-        onClose={() => setShowUpgradeModal(false)}
-        onSuccess={() => { /* will reload */ }}
-      />
     </>
   );
 };
