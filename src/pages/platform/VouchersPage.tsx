@@ -176,13 +176,14 @@ const VouchersPage = () => {
     setLoading(true);
     try {
       const data = await api.platform.getVouchers({ page, limit: 50, status: statusFilter || undefined });
-      if (data.success) {
+      if (data.success && Array.isArray(data.vouchers)) {
         setVouchers(data.vouchers);
-        setTotalPages(data.pagination.pages);
-        setTotal(data.pagination.total);
+        setTotalPages(data.pagination?.pages || 0);
+        setTotal(data.pagination?.total || 0);
       }
     } catch (error: any) {
       console.error('Failed to load vouchers:', error);
+      setVouchers([]);
     } finally {
       setLoading(false);
     }

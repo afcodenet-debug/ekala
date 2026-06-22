@@ -170,13 +170,14 @@ const SubscriptionsPage = () => {
     setLoading(true);
     try {
       const data = await api.platform.getSubscriptions({ page, limit: 50, status: statusFilter || undefined });
-      if (data.success) {
+      if (data.success && Array.isArray(data.subscriptions)) {
         setSubscriptions(data.subscriptions);
-        setTotalPages(data.pagination.pages);
-        setTotal(data.pagination.total);
+        setTotalPages(data.pagination?.pages || 0);
+        setTotal(data.pagination?.total || 0);
       }
     } catch (error: any) {
       console.error('Failed to load subscriptions:', error);
+      setSubscriptions([]);
     } finally {
       setLoading(false);
     }

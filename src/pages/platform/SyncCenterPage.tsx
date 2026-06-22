@@ -5,6 +5,8 @@ import {
 } from 'lucide-react';
 import { api } from '../../lib/api-client';
 
+const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001';
+
 interface SyncJob {
   id: number;
   table_name: string;
@@ -214,13 +216,14 @@ const SyncCenterPage = () => {
     setLoading(true);
     try {
       const data = await api.platform.getSyncJobs({ page, limit: 50 });
-      if (data.success) {
+      if (data.success && Array.isArray(data.jobs)) {
         setJobs(data.jobs);
-        setTotalPages(data.pagination.pages);
-        setTotal(data.pagination.total);
+        setTotalPages(data.pagination?.pages || 0);
+        setTotal(data.pagination?.total || 0);
       }
     } catch (error: any) {
       console.error('Failed to load sync jobs:', error);
+      setJobs([]);
     } finally {
       setLoading(false);
     }

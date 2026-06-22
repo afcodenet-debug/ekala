@@ -165,13 +165,14 @@ const AuditLogsPage = () => {
     setLoading(true);
     try {
       const data = await api.platform.getAuditLogs({ page, limit: 50, action: actionFilter || undefined });
-      if (data.success) {
+      if (data.success && Array.isArray(data.logs)) {
         setLogs(data.logs);
-        setTotalPages(data.pagination.pages);
-        setTotal(data.pagination.total);
+        setTotalPages(data.pagination?.pages || 0);
+        setTotal(data.pagination?.total || 0);
       }
     } catch (error: any) {
       console.error('Failed to load audit logs:', error);
+      setLogs([]);
     } finally {
       setLoading(false);
     }
