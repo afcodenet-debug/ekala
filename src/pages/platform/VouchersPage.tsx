@@ -1,7 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { CheckCircle, XCircle, Eye, ChevronLeft, ChevronRight, CreditCard } from 'lucide-react';
-
-const API_BASE = (window as any).VITE_API_BASE_URL || 'https://ekala-api.onrender.com/api';
+import { api } from '../../lib/api-client';
 
 interface Voucher {
   id: number;
@@ -176,24 +175,13 @@ const VouchersPage = () => {
   const loadVouchers = async () => {
     setLoading(true);
     try {
-      const params = new URLSearchParams({
-        page: page.toString(),
-        limit: '50',
-        ...(statusFilter && { status: statusFilter }),
-      });
-
-      const response = await fetch(`${API_BASE}/platform/vouchers?${params}`, {
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('platform_token')}`,
-        },
-      });
-      const data = await response.json();
+      const data = await api.platform.getVouchers({ page, limit: 50, status: statusFilter || undefined });
       if (data.success) {
         setVouchers(data.vouchers);
         setTotalPages(data.pagination.pages);
         setTotal(data.pagination.total);
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error('Failed to load vouchers:', error);
     } finally {
       setLoading(false);
@@ -204,21 +192,15 @@ const VouchersPage = () => {
     if (!confirm('Approuver ce voucher ? Cela activera l\'abonnement du tenant.')) return;
 
     try {
-      const response = await fetch(`${API_BASE}/platform/vouchers/${voucherId}/approve`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('platform_token')}`,
-        },
-      });
-      const data = await response.json();
+      const data = await api.platform.approveVoucher(voucherId);
       if (data.success) {
         loadVouchers();
       } else {
         alert(data.message || 'Erreur');
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error('Failed to approve voucher:', error);
-      alert('Erreur lors de l\'approbation');
+      alert(error.message || 'Erreur lors de l\'approbation');
     }
   };
 
@@ -227,23 +209,15 @@ const VouchersPage = () => {
     if (!reason) return;
 
     try {
-      const response = await fetch(`${API_BASE}/platform/vouchers/${voucherId}/reject`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('platform_token')}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ reason }),
-      });
-      const data = await response.json();
+      const data = await api.platform.rejectVoucher(voucherId, reason);
       if (data.success) {
         loadVouchers();
       } else {
         alert(data.message || 'Erreur');
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error('Failed to reject voucher:', error);
-      alert('Erreur lors du rejet');
+      alert(error.message || 'Erreur lors du rejet');
     }
   };
 

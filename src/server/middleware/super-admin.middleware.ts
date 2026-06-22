@@ -62,11 +62,11 @@ export function requireSuperAdmin(req: Request, res: Response, next: NextFunctio
       return;
     }
 
-    // 4. Vérifier que le rôle est bien super_admin
-    if (user.role !== 'super_admin') {
-      res.status(403).json({ 
-        error: 'FORBIDDEN', 
-        message: 'Rôle invalide — Super Admin requis' 
+    // 4. Vérifier que le rôle est bien super_admin (ou owner pour les utilisateurs plateforme)
+    if (user.role !== 'super_admin' && user.role !== 'owner') {
+      res.status(403).json({
+        error: 'FORBIDDEN',
+        message: 'Rôle invalide — Super Admin requis'
       });
       return;
     }
@@ -189,7 +189,7 @@ export async function isSuperAdmin(userId: number): Promise<boolean> {
     const result = await db('users')
       .where('id', userId)
       .where('is_super_admin', 1)
-      .where('role', 'super_admin')
+      .whereIn('role', ['super_admin', 'owner'])
       .first();
 
     return !!result;
@@ -259,8 +259,8 @@ export function requirePermission(permission: string) {
         return;
       }
 
-      // Super Admin a tous les droits
-      if (user.is_super_admin && user.role === 'super_admin') {
+      // Super Admin a tous les droits (inclut les owners plateforme)
+      if (user.is_super_admin && (user.role === 'super_admin' || user.role === 'owner')) {
         next();
         return;
       }

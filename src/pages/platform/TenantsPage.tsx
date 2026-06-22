@@ -3,8 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import {
   Search, Ban, CheckCircle, Eye, ChevronLeft, ChevronRight, Building2
 } from 'lucide-react';
-
-const API_BASE = (window as any).VITE_API_BASE_URL || 'https://ekala-api.onrender.com/api';
+import { api } from '../../lib/api-client';
 
 interface Tenant {
   id: number;
@@ -264,25 +263,20 @@ const TenantsPage = () => {
   const loadTenants = async () => {
     setLoading(true);
     try {
-      const params = new URLSearchParams({
-        page: page.toString(),
-        limit: '50',
+      const params = {
+        page,
+        limit: 50,
         ...(search && { search }),
         ...(statusFilter && { status: statusFilter }),
-      });
+      };
 
-      const response = await fetch(`${API_BASE}/platform/tenants?${params}`, {
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('platform_token')}`,
-        },
-      });
-      const data = await response.json();
+      const data = await api.platform.getTenants(params);
       if (data.success) {
         setTenants(data.tenants);
         setTotalPages(data.pagination.pages);
         setTotal(data.pagination.total);
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error('Failed to load tenants:', error);
     } finally {
       setLoading(false);
@@ -300,23 +294,15 @@ const TenantsPage = () => {
     if (!reason) return;
 
     try {
-      const response = await fetch(`${API_BASE}/platform/tenants/${tenantId}/suspend`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('platform_token')}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ reason }),
-      });
-      const data = await response.json();
+      const data = await api.platform.suspendTenant(tenantId, reason);
       if (data.success) {
         loadTenants();
       } else {
         alert(data.message || 'Erreur');
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error('Failed to suspend tenant:', error);
-      alert('Erreur lors de la suspension');
+      alert(error.message || 'Erreur lors de la suspension');
     }
   };
 
@@ -324,21 +310,15 @@ const TenantsPage = () => {
     if (!confirm('Réactiver ce tenant ?')) return;
 
     try {
-      const response = await fetch(`${API_BASE}/platform/tenants/${tenantId}/activate`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('platform_token')}`,
-        },
-      });
-      const data = await response.json();
+      const data = await api.platform.activateTenant(tenantId);
       if (data.success) {
         loadTenants();
       } else {
         alert(data.message || 'Erreur');
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error('Failed to activate tenant:', error);
-      alert('Erreur lors de la réactivation');
+      alert(error.message || 'Erreur lors de la réactivation');
     }
   };
 

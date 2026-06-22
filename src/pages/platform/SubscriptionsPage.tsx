@@ -3,8 +3,7 @@ import {
   TrendingUp, TrendingDown, Activity, DollarSign,
   Calendar, ChevronLeft, ChevronRight, Filter
 } from 'lucide-react';
-
-const API_BASE = (window as any).VITE_API_BASE_URL || 'https://ekala-api.onrender.com/api';
+import { api } from '../../lib/api-client';
 
 interface Subscription {
   id: number;
@@ -170,24 +169,13 @@ const SubscriptionsPage = () => {
   const loadSubscriptions = async () => {
     setLoading(true);
     try {
-      const params = new URLSearchParams({
-        page: page.toString(),
-        limit: '50',
-        ...(statusFilter && { status: statusFilter }),
-      });
-
-      const response = await fetch(`${API_BASE}/platform/subscriptions?${params}`, {
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('platform_token')}`,
-        },
-      });
-      const data = await response.json();
+      const data = await api.platform.getSubscriptions({ page, limit: 50, status: statusFilter || undefined });
       if (data.success) {
         setSubscriptions(data.subscriptions);
         setTotalPages(data.pagination.pages);
         setTotal(data.pagination.total);
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error('Failed to load subscriptions:', error);
     } finally {
       setLoading(false);

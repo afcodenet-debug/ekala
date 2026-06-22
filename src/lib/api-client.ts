@@ -43,6 +43,89 @@ const API_BASE: string = (() => {
 // ── JWT Token Management ──────────────────────────────────────────────────────
 
 const AUTH_STORAGE_KEY = 'ekala-auth';
+const PLATFORM_AUTH_STORAGE_KEY = 'platform_token';
+
+// ── Platform JWT Token Management ───────────────────────────────────────────────
+function getPlatformToken(): string | null {
+  try {
+    return localStorage.getItem(PLATFORM_AUTH_STORAGE_KEY);
+  } catch {
+    return null;
+  }
+}
+
+export function setPlatformToken(token: string): void {
+  try {
+    localStorage.setItem(PLATFORM_AUTH_STORAGE_KEY, token);
+  } catch {}
+}
+
+export function clearPlatformToken(): void {
+  try {
+    localStorage.removeItem(PLATFORM_AUTH_STORAGE_KEY);
+  } catch {}
+}
+
+// ── Platform Request helper with auto-Bearer token ────────────────────────────────
+export async function requestPlatform<T>(
+  endpoint: string,
+  options: any = {}
+): Promise<T> {
+  const token = getPlatformToken();
+  const url = `${API_BASE}${endpoint}`;
+
+  const authHeaders: Record<string, string> = {};
+  if (token && !options.headers?.Authorization) {
+    authHeaders['Authorization'] = `Bearer ${token}`;
+  }
+
+  const config: RequestInit = {
+    headers: {
+      'Content-Type': 'application/json',
+      ...authHeaders,
+      ...options.headers,
+    },
+    ...options,
+  };
+
+  const response = await fetch(url, config);
+
+  if (response.status === 401) {
+    clearPlatformToken();
+    const errorText = await response.text().catch(() => '');
+    let errorJson: any;
+    try { errorJson = JSON.parse(errorText); } catch { errorJson = {}; }
+    const apiError = new Error(errorJson?.message || 'Session expirée. Veuillez vous reconnecter.');
+    (apiError as any).status = 401;
+    throw apiError;
+  }
+
+  if (!response.ok) {
+    const text = await response.text().catch(() => 'No response body');
+    let parsedError: any;
+    try { parsedError = JSON.parse(text); } catch { parsedError = null; }
+    const errorMessage = parsedError?.error || parsedError?.message || text || `HTTP ${response.status}`;
+    const apiError = new Error(errorMessage);
+    (apiError as any).status = response.status;
+    (apiError as any).body = parsedError ?? text;
+    throw apiError;
+  }
+
+  const contentType = response.headers.get('content-type') || '';
+  if (contentType.includes('application/json') || contentType.includes('+json')) {
+    return response.json();
+  }
+
+  const text = await response.text().catch(() => '');
+  try {
+    return JSON.parse(text);
+  } catch {
+    const apiError = new Error(`Réponse non-JSON. HTTP ${response.status}`);
+    (apiError as any).status = response.status;
+    (apiError as any).body = text;
+    throw apiError;
+  }
+}
 
 interface AuthPersistedState {
   state: {
@@ -405,15 +488,62 @@ export const api = {
     getVoucherStatus: (code: string) => api.get<any>(`/vouchers/status/${encodeURIComponent(code)}`),
   },
 
-  // SaaS — subscription & billing
-  saas: {
-    changePlan: (tenantId: number, planCode: string, paymentMethod?: string, paymentReference?: string) =>
-      api.patch(`/tenants/${tenantId}/subscription`, { plan_code: planCode, payment_method: paymentMethod, payment_reference: paymentReference }),
-    cancelSubscription: (tenantId: number) =>
-      api.post(`/tenants/${tenantId}/cancel-subscription`, {}),
-    getTenant: (tenantId: number) =>
-      api.get(`/tenants/${tenantId}`),
-    getPlans: () =>
-      api.get('/plans'),
-  }
-};
+// SaaS — subscription & billing
+   saas: {
+     changePlan: (tenantId: number, planCode: string, paymentMethod?: string, paymentReference?: string) =>
+       api.patch(`/tenants/${tenantId}/subscription`, { plan_code: planCode, payment_method: paymentMethod, payment_reference: paymentReference }),
+     cancelSubscription: (tenantId: number) =>
+       api.post(`/tenants/${tenantId}/cancel-subscription`, {}),
+     getTenant: (tenantId: number) =>
+       api.get(`/tenants/${tenantId}`),
+     getPlans: () =>
+       api.get('/plans'),
+   },
+
+   // Platform — admin portal (uses platform_token)
+   platform: {
+     // Auth
+     login: (email: string, password: string) =>
+       requestPlatform<{ success: boolean; token: string; user: any }>('/platform/auth/login', { method: 'POST', body: { email, password } }),
+     me: () => requestPlatform<{ success: boolean; user: any; permissions: string[] }>('/platform/auth/me'),
+     logout: () => requestPlatform<{ success: boolean }>('/platform/auth/logout', { method: 'POST' }),
+     refresh: (token: string) => requestPlatform<{ success: boolean; token: string }>('/platform/auth/refresh', { method: 'POST', body: { token } }),
+     // Tenants
+     getTenants: (params?: { page?: number; limit?: number; search?: string; status?: string }) =>
+       requestPlatform<{ success: boolean; tenants: any[]; pagination: any }>('/platform/tenants', { params }),
+     getTenant: (id: number) =>
+       requestPlatform<{ success: boolean; tenant: any }>('/platform/tenants/' + id),
+     suspendTenant: (id: number, reason: string) =>
+       requestPlatform('/platform/tenants/' + id + '/suspend', { method: 'POST', body: { reason } }),
+     activateTenant: (id: number) =>
+       requestPlatform('/platform/tenants/' + id + '/activate', { method: 'POST' }),
+     // Vouchers
+     getVouchers: (params?: { page?: number; limit?: number; status?: string }) =>
+       requestPlatform<{ success: boolean; vouchers: any[]; pagination: any }>('/platform/vouchers', { params }),
+     approveVoucher: (id: number) =>
+       requestPlatform('/platform/vouchers/' + id + '/approve', { method: 'POST' }),
+     rejectVoucher: (id: number, reason: string) =>
+       requestPlatform('/platform/vouchers/' + id + '/reject', { method: 'POST', body: { reason } }),
+     // Subscriptions
+     getSubscriptions: (params?: { page?: number; limit?: number; status?: string }) =>
+       requestPlatform<{ success: boolean; subscriptions: any[]; pagination: any }>('/platform/subscriptions', { params }),
+// Stats
+      getStats: () =>
+        requestPlatform<{ success: boolean; stats: any }>('/platform/stats'),
+      // Settings
+      getSettings: () =>
+        requestPlatform<{ success: boolean; settings: Record<string, string> }>('/platform/settings'),
+      updateSetting: (key: string, value: string) =>
+        requestPlatform<{ success: boolean }>('/platform/settings/' + key, { method: 'PUT', body: { value } }),
+      // Audit Logs
+      getAuditLogs: (params?: { page?: number; limit?: number; action?: string; tenant_id?: string }) =>
+        requestPlatform<{ success: boolean; logs: any[]; pagination: any }>('/platform/audit-logs', { params }),
+      // Sync
+      getSyncJobs: (params?: { page?: number; limit?: number }) =>
+        requestPlatform<{ success: boolean; jobs: any[]; pagination: any }>('/platform/sync/jobs', { params }),
+      getSyncStats: () =>
+        requestPlatform<{ success: boolean; stats: any }>('/platform/sync/stats'),
+      retryFailedSync: (maxAttempts?: number) =>
+        requestPlatform<{ success: boolean; retried: number }>('/platform/sync/retry-failed', { method: 'POST', body: { maxAttempts } }),
+   }
+ };
