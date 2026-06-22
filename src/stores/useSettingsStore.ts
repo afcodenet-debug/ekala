@@ -3,11 +3,12 @@ import { persist } from 'zustand/middleware';
 import { api } from '../lib/api-client';
 import { useAuthStore } from './useAuthStore';
 import { APP_NAME } from '../lib/app-config';
+import { useI18n } from '../lib/i18n';
 
 export type Currency = 'ZMW' | 'CDF' | 'USD' | 'EUR';
 export type Language = 'en' | 'fr' | 'pt';
 
-export type Role = 'ADMIN' | 'MANAGER' | 'SERVER' | 'WAITER';
+export type Role = 'ADMIN' | 'MANAGER' | 'CASHIER' | 'SERVER' | 'WAITER';
 export type NotificationType = 
   | 'lowStock'
   | 'outOfStock'
@@ -27,6 +28,7 @@ export interface RoleNotificationSettings {
 export interface RoleNotificationConfig {
   ADMIN: RoleNotificationSettings;
   MANAGER: RoleNotificationSettings;
+  CASHIER: RoleNotificationSettings;
   SERVER: RoleNotificationSettings;
   WAITER?: RoleNotificationSettings;
 }
@@ -88,6 +90,7 @@ export interface SettingsState {
 const defaultRoleConfig: RoleNotificationConfig = {
   ADMIN: { notifications: { lowStock: true, inventory: true, stockAdj: true, sales: true, newProduct: true, orderConfirm: true, productDeleted: true, outOfStock: true }, emails: [] },
   MANAGER: { notifications: { lowStock: true, inventory: true, stockAdj: true, sales: true, orderConfirm: true, outOfStock: true }, emails: [] },
+  CASHIER: { notifications: { sales: true, orderConfirm: true, lowStock: true }, emails: [] },
   SERVER: { notifications: { sales: true, orderConfirm: true }, emails: [] },
   WAITER: { notifications: { sales: true, orderConfirm: true, lowStock: true }, emails: [] }
 };
@@ -159,6 +162,14 @@ export const useSettingsStore = create<SettingsState>()(
           },
           emails: []
         },
+        CASHIER: {
+          notifications: {
+            sales: true,
+            orderConfirm: true,
+            lowStock: true
+          },
+          emails: []
+        },
         SERVER: {
           notifications: {
             lowStock: false,
@@ -188,7 +199,6 @@ export const useSettingsStore = create<SettingsState>()(
           
           if (settings.app_language) {
             updates.language = settings.app_language as Language;
-            i18n.changeLanguage(settings.app_language);
           }
           if (settings.app_currency) updates.currency = settings.app_currency as Currency;
           if (settings.currency_symbol) updates.currencySymbol = settings.currency_symbol;
@@ -269,7 +279,6 @@ export const useSettingsStore = create<SettingsState>()(
 
       setLanguage: async (lang: Language) => {
         set({ language: lang });
-        i18n.changeLanguage(lang);
 
         const role = useAuthStore.getState().user?.role;
         if (role === 'admin' || role === 'manager') {

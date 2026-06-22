@@ -6,8 +6,6 @@ import {
 } from 'lucide-react';
 import { api } from '../../lib/api-client';
 
-const API_BASE = (window as any).VITE_API_BASE_URL || 'https://ekala-api.onrender.com/api';
-
 interface PlatformStats {
   totalTenants: number;
   activeTenants: number;
@@ -181,16 +179,11 @@ const PlatformDashboard = () => {
   const loadStats = async () => {
     setLoading(true);
     try {
-      const response = await fetch(`${API_BASE}/platform/stats`, {
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('platform_token')}`,
-        },
-      });
-      const data = await response.json();
+      const data = await api.platform.getStats();
       if (data.success) {
         setStats(data.stats);
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error('Failed to load stats:', error);
     } finally {
       setLoading(false);

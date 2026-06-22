@@ -149,11 +149,9 @@ const SettingsPage = () => {
   const loadSettings = async () => {
     setLoading(true);
     try {
-      const data = await api.platform.getStats(); // Note: using stats as placeholder, settings endpoint exists
-      // Try to load settings properly
-      const settingsResponse = await api.platform.getStats();
-      if (settingsResponse.success && settingsResponse.stats) {
-        setSettings(settingsResponse.stats as any);
+      const data = await api.platform.getSettings();
+      if (data.success) {
+        setSettings(data.settings);
       }
     } catch (error: any) {
       console.error('Failed to load settings:', error);
@@ -166,21 +164,13 @@ const SettingsPage = () => {
     setSaving(true);
     setMessage('');
     try {
-      const response = await fetch(`${API_BASE}/platform/settings/${key}`, {
-        method: 'PUT',
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('platform_token')}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ value }),
-      });
-      const data = await response.json();
+      const data = await api.platform.updateSetting(key, value);
       if (data.success) {
         setSettings({ ...settings, [key]: value });
         setMessage('Paramètre sauvegardé avec succès');
         setTimeout(() => setMessage(''), 3000);
       } else {
-        alert(data.message || 'Erreur');
+        alert((data as any).message || 'Erreur');
       }
     } catch (error: any) {
       console.error('Failed to save setting:', error);

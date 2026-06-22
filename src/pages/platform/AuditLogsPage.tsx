@@ -1,7 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { FileText, ChevronLeft, ChevronRight, Filter } from 'lucide-react';
-
-const API_BASE = (window as any).VITE_API_BASE_URL || 'https://ekala-api.onrender.com/api';
+import { api } from '../../lib/api-client';
 
 interface AuditLog {
   id: number;
@@ -165,24 +164,13 @@ const AuditLogsPage = () => {
   const loadLogs = async () => {
     setLoading(true);
     try {
-      const params = new URLSearchParams({
-        page: page.toString(),
-        limit: '50',
-        ...(actionFilter && { action: actionFilter }),
-      });
-
-      const response = await fetch(`${API_BASE}/platform/audit-logs?${params}`, {
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('platform_token')}`,
-        },
-      });
-      const data = await response.json();
+      const data = await api.platform.getAuditLogs({ page, limit: 50, action: actionFilter || undefined });
       if (data.success) {
         setLogs(data.logs);
         setTotalPages(data.pagination.pages);
         setTotal(data.pagination.total);
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error('Failed to load audit logs:', error);
     } finally {
       setLoading(false);

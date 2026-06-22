@@ -3,8 +3,7 @@ import {
   RefreshCw, CheckCircle, XCircle, AlertTriangle,
   Clock, Activity, ChevronLeft, ChevronRight
 } from 'lucide-react';
-
-const API_BASE = (window as any).VITE_API_BASE_URL || 'https://ekala-api.onrender.com/api';
+import { api } from '../../lib/api-client';
 
 interface SyncJob {
   id: number;
@@ -214,23 +213,13 @@ const SyncCenterPage = () => {
   const loadJobs = async () => {
     setLoading(true);
     try {
-      const params = new URLSearchParams({
-        page: page.toString(),
-        limit: '50',
-      });
-
-      const response = await fetch(`${API_BASE}/platform/sync/jobs?${params}`, {
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('platform_token')}`,
-        },
-      });
-      const data = await response.json();
+      const data = await api.platform.getSyncJobs({ page, limit: 50 });
       if (data.success) {
         setJobs(data.jobs);
         setTotalPages(data.pagination.pages);
         setTotal(data.pagination.total);
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error('Failed to load sync jobs:', error);
     } finally {
       setLoading(false);
@@ -239,16 +228,11 @@ const SyncCenterPage = () => {
 
   const loadStats = async () => {
     try {
-      const response = await fetch(`${API_BASE}/platform/sync/stats`, {
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('platform_token')}`,
-        },
-      });
-      const data = await response.json();
+      const data = await api.platform.getSyncStats();
       if (data.success) {
-        setStats(data.stats);
+        setStats(data.stats.by_status);
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error('Failed to load sync stats:', error);
     }
   };
@@ -270,9 +254,9 @@ const SyncCenterPage = () => {
       } else {
         alert(data.message || 'Erreur');
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error('Failed to trigger sync:', error);
-      alert('Erreur lors du déclenchement');
+      alert(error.message || 'Erreur lors du déclenchement');
     } finally {
       setSyncing(false);
     }
@@ -280,33 +264,25 @@ const SyncCenterPage = () => {
 
   const handleRetryFailed = async () => {
     if (!confirm('Réessayer tous les jobs échoués ?')) return;
-    
+
     try {
-      const response = await fetch(`${API_BASE}/platform/sync/retry-failed`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('platform_token')}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ maxAttempts: 5 }),
-      });
-      const data = await response.json();
+      const data = await api.platform.retryFailedSync(5);
       if (data.success) {
         alert(`${data.retried} jobs remis en attente`);
         loadJobs();
         loadStats();
       } else {
-        alert(data.message || 'Erreur');
+        alert((data as any).message || 'Erreur');
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error('Failed to retry failed jobs:', error);
-      alert('Erreur lors de la réinitialisation');
+      alert(error.message || 'Erreur lors de la réinitialisation');
     }
   };
 
   const handleCleanup = async () => {
     if (!confirm('Supprimer les jobs complétés de plus de 7 jours ?')) return;
-    
+
     try {
       const response = await fetch(`${API_BASE}/platform/sync/cleanup`, {
         method: 'DELETE',
@@ -324,9 +300,9 @@ const SyncCenterPage = () => {
       } else {
         alert(data.message || 'Erreur');
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error('Failed to cleanup jobs:', error);
-      alert('Erreur lors du nettoyage');
+      alert(error.message || 'Erreur lors du nettoyage');
     }
   };
 
