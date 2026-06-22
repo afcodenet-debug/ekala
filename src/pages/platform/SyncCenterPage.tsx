@@ -221,7 +221,7 @@ const SyncCenterPage = () => {
 
       const response = await fetch(`${API_BASE}/platform/sync/jobs?${params}`, {
         headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token')}`,
+          'Authorization': `Bearer ${localStorage.getItem('platform_token')}`,
         },
       });
       const data = await response.json();
@@ -241,7 +241,7 @@ const SyncCenterPage = () => {
     try {
       const response = await fetch(`${API_BASE}/platform/sync/stats`, {
         headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token')}`,
+          'Authorization': `Bearer ${localStorage.getItem('platform_token')}`,
         },
       });
       const data = await response.json();
@@ -259,7 +259,7 @@ const SyncCenterPage = () => {
       const response = await fetch(`${API_BASE}/platform/sync/trigger`, {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token')}`,
+          'Authorization': `Bearer ${localStorage.getItem('platform_token')}`,
         },
       });
       const data = await response.json();
@@ -285,7 +285,7 @@ const SyncCenterPage = () => {
       const response = await fetch(`${API_BASE}/platform/sync/retry-failed`, {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token')}`,
+          'Authorization': `Bearer ${localStorage.getItem('platform_token')}`,
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({ maxAttempts: 5 }),
@@ -311,7 +311,7 @@ const SyncCenterPage = () => {
       const response = await fetch(`${API_BASE}/platform/sync/cleanup`, {
         method: 'DELETE',
         headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token')}`,
+          'Authorization': `Bearer ${localStorage.getItem('platform_token')}`,
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({ daysOld: 7 }),

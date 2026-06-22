@@ -178,7 +178,7 @@ const SubscriptionsPage = () => {
 
       const response = await fetch(`${API_BASE}/platform/subscriptions?${params}`, {
         headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token')}`,
+          'Authorization': `Bearer ${localStorage.getItem('platform_token')}`,
         },
       });
       const data = await response.json();

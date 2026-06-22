@@ -184,7 +184,7 @@ const VouchersPage = () => {
 
       const response = await fetch(`${API_BASE}/platform/vouchers?${params}`, {
         headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token')}`,
+          'Authorization': `Bearer ${localStorage.getItem('platform_token')}`,
         },
       });
       const data = await response.json();
@@ -207,7 +207,7 @@ const VouchersPage = () => {
       const response = await fetch(`${API_BASE}/platform/vouchers/${voucherId}/approve`, {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token')}`,
+          'Authorization': `Bearer ${localStorage.getItem('platform_token')}`,
         },
       });
       const data = await response.json();
@@ -230,7 +230,7 @@ const VouchersPage = () => {
       const response = await fetch(`${API_BASE}/platform/vouchers/${voucherId}/reject`, {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token')}`,
+          'Authorization': `Bearer ${localStorage.getItem('platform_token')}`,
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({ reason }),

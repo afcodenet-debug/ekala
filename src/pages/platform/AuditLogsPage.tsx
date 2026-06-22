@@ -173,7 +173,7 @@ const AuditLogsPage = () => {
 
       const response = await fetch(`${API_BASE}/platform/audit-logs?${params}`, {
         headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token')}`,
+          'Authorization': `Bearer ${localStorage.getItem('platform_token')}`,
         },
       });
       const data = await response.json();

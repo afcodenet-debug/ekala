@@ -3,13 +3,13 @@
 // =============================================================================
 
 import { Router, Request, Response } from 'express';
-import { requireSuperAdmin } from '../middleware/super-admin.middleware';
+import { requirePlatformAuth } from '../platform/platform-auth.middleware';
 import db from '../db/database';
 
 const router = Router();
 
 // GET /platform/sync/health — Santé globale de la synchronisation
-router.get('/sync/health', requireSuperAdmin, async (req: Request, res: Response) => {
+router.get('/sync/health', requirePlatformAuth, async (req: Request, res: Response) => {
   try {
     const health = {
       status: 'healthy',
@@ -119,7 +119,7 @@ router.get('/sync/health', requireSuperAdmin, async (req: Request, res: Response
 });
 
 // GET /platform/sync/stats — Statistiques détaillées
-router.get('/sync/stats', requireSuperAdmin, async (req: Request, res: Response) => {
+router.get('/sync/stats', requirePlatformAuth, async (req: Request, res: Response) => {
   try {
     const now = new Date();
     const oneHourAgo = new Date(now.getTime() - 60 * 60 * 1000).toISOString();
@@ -184,7 +184,7 @@ router.get('/sync/stats', requireSuperAdmin, async (req: Request, res: Response)
 });
 
 // GET /platform/sync/tables — Liste des tables synchronisées
-router.get('/sync/tables', requireSuperAdmin, async (req: Request, res: Response) => {
+router.get('/sync/tables', requirePlatformAuth, async (req: Request, res: Response) => {
   try {
     // Récupérer les tables uniques de l'outbox
     const tables = await db('sync_outbox')
@@ -226,7 +226,7 @@ router.get('/sync/tables', requireSuperAdmin, async (req: Request, res: Response
 });
 
 // POST /platform/sync/retry-failed — Réessayer les jobs échoués
-router.post('/sync/retry-failed', requireSuperAdmin, async (req: Request, res: Response) => {
+router.post('/sync/retry-failed', requirePlatformAuth, async (req: Request, res: Response) => {
   try {
     const maxAttempts = parseInt(req.body.maxAttempts as string) || 5;
     
@@ -253,7 +253,7 @@ router.post('/sync/retry-failed', requireSuperAdmin, async (req: Request, res: R
 });
 
 // DELETE /platform/sync/cleanup — Nettoyer les vieux jobs complétés
-router.delete('/sync/cleanup', requireSuperAdmin, async (req: Request, res: Response) => {
+router.delete('/sync/cleanup', requirePlatformAuth, async (req: Request, res: Response) => {
   try {
     const daysOld = parseInt(req.body.daysOld as string) || 7;
     const cutoffDate = new Date(Date.now() - daysOld * 24 * 60 * 60 * 1000).toISOString();

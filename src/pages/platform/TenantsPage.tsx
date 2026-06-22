@@ -273,7 +273,7 @@ const TenantsPage = () => {
 
       const response = await fetch(`${API_BASE}/platform/tenants?${params}`, {
         headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token')}`,
+          'Authorization': `Bearer ${localStorage.getItem('platform_token')}`,
         },
       });
       const data = await response.json();
@@ -303,7 +303,7 @@ const TenantsPage = () => {
       const response = await fetch(`${API_BASE}/platform/tenants/${tenantId}/suspend`, {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token')}`,
+          'Authorization': `Bearer ${localStorage.getItem('platform_token')}`,
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({ reason }),
@@ -327,7 +327,7 @@ const TenantsPage = () => {
       const response = await fetch(`${API_BASE}/platform/tenants/${tenantId}/activate`, {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token')}`,
+          'Authorization': `Bearer ${localStorage.getItem('platform_token')}`,
         },
       });
       const data = await response.json();
