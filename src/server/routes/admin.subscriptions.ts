@@ -231,7 +231,26 @@ router.post('/reject', async (req: Request, res: Response) => {
 });
 
 // ── /api/admin/vouchers — Clean API (GET / GET /pending / GET /verified / GET /expired) ──
-subRouter.get('/vouchers/pending', async (_req: any, res: any) => {
+subRouter.get('/', async (_req: any, res: any) => {
+  try {
+    const supabase = getSupabase();
+    const localDb = db;
+    let rows: any[] = [];
+    if (localDb) {
+      rows = localDb.prepare(`SELECT * FROM subscription_payment_requests ORDER BY created_at DESC LIMIT 200`).all() as any[];
+    } else if (supabase) {
+      const { data, error } = await supabase.from('subscription_payment_requests').select('*, tenant:tenants(name), plans(name)').order('created_at', { ascending: false }).limit(200);
+      if (error) throw error;
+      rows = data || [];
+    }
+    res.json({ requests: rows });
+  } catch (e: any) {
+    console.error('[AdminVouchers] GET / error:', e);
+    res.status(500).json({ error: 'Erreur lors du chargement des demandes.' });
+  }
+});
+
+subRouter.get('/pending', async (_req: any, res: any) => {
   try {
     const supabase = getSupabase();
     const localDb = db;
@@ -250,7 +269,7 @@ subRouter.get('/vouchers/pending', async (_req: any, res: any) => {
   }
 });
 
-subRouter.get('/vouchers/verified', async (_req: any, res: any) => {
+subRouter.get('/verified', async (_req: any, res: any) => {
   try {
     const supabase = getSupabase();
     const localDb = db;
@@ -269,7 +288,7 @@ subRouter.get('/vouchers/verified', async (_req: any, res: any) => {
   }
 });
 
-subRouter.get('/vouchers/expired', async (_req: any, res: any) => {
+subRouter.get('/expired', async (_req: any, res: any) => {
   try {
     const supabase = getSupabase();
     const localDb = db;
@@ -288,7 +307,7 @@ subRouter.get('/vouchers/expired', async (_req: any, res: any) => {
   }
 });
 
-subRouter.get('/vouchers/rejected', async (_req: any, res: any) => {
+subRouter.get('/rejected', async (_req: any, res: any) => {
   try {
     const supabase = getSupabase();
     const localDb = db;
@@ -308,7 +327,7 @@ subRouter.get('/vouchers/rejected', async (_req: any, res: any) => {
 });
 
 // POST /api/admin/vouchers/verify
-subRouter.post('/vouchers/verify', async (req: Request, res: Response) => {
+subRouter.post('/verify', async (req: Request, res: Response) => {
   const id = Number(req.body?.requestId);
   if (!id) return res.status(400).json({ error: 'requestId requis' });
   try {
@@ -343,7 +362,7 @@ subRouter.post('/vouchers/verify', async (req: Request, res: Response) => {
 });
 
 // POST /api/admin/vouchers/reject
-subRouter.post('/vouchers/reject', async (req: Request, res: Response) => {
+subRouter.post('/reject', async (req: Request, res: Response) => {
   const id = Number(req.body?.requestId);
   const reason = String(req.body?.reason || '');
   if (!id) return res.status(400).json({ error: 'requestId requis' });

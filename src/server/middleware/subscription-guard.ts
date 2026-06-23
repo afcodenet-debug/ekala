@@ -99,6 +99,60 @@ async function checkSubscriptionStatus(tenantId: number): Promise<SubscriptionGu
     subscriptionId: null, planId: null,
   };
 
+  // Try SQLite first (local dev mode)
+  try {
+    const Database = require('better-sqlite3');
+    const path = require('path');
+    const dbPath = path.resolve(process.cwd(), 'data', 'database.db');
+    const db = new Database(dbPath);
+    
+    const sub = db.prepare(`
+      SELECT ts.*, p.name as plan_name, p.code as plan_code
+      FROM tenant_subscriptions ts
+      LEFT JOIN plans p ON p.id = ts.plan_id
+      WHERE ts.tenant_id = ?
+      ORDER BY ts.created_at DESC
+      LIMIT 1
+    `).get(tenantId);
+    
+    if (sub && sub.status === 'active') {
+      const now = Date.now();
+      const periodEnd = sub.current_period_end ? new Date(sub.current_period_end).getTime() : null;
+      const trialEnd = sub.trial_end ? new Date(sub.trial_end).getTime() : null;
+      const endDate = trialEnd || periodEnd;
+      const daysUntilRenewal = endDate ? Math.ceil((endDate - now) / 86_400_000) : null;
+      const isExpired = endDate ? endDate < now : false;
+      
+      db.close();
+      return {
+        ...fallback,
+        state: isExpired ? 'expired' : 'active',
+        planName: sub.plan_name || sub.plan_code,
+        daysUntilRenewal,
+        isExpired,
+        isGracePeriod: false,
+        graceDaysRemaining: null,
+        subscriptionId: sub.id,
+        planId: sub.plan_id,
+      };
+    }
+    
+    if (sub && sub.status !== 'active') {
+      db.close();
+      return {
+        ...fallback,
+        state: sub.status as any,
+        planName: sub.plan_name || sub.plan_code,
+        subscriptionId: sub.id,
+        planId: sub.plan_id,
+      };
+    }
+    
+    db.close();
+  } catch (err) {
+    // SQLite not available, continue to Supabase
+  }
+
   if (!supabase) return fallback; // local dev → allow all
 
   try {

@@ -177,10 +177,6 @@ CREATE INDEX IF NOT EXISTS idx_platform_permissions_category ON platform_permiss
 CREATE INDEX IF NOT EXISTS idx_platform_role_permissions_role ON platform_role_permissions(role_id);
 CREATE INDEX IF NOT EXISTS idx_platform_role_permissions_permission ON platform_role_permissions(permission_id);
 
--- Étape 9: Log de migration
-INSERT OR IGNORE INTO billing_audit_logs (tenant_id, user_id, action, entity_type, entity_id, metadata, created_at)
-VALUES (NULL, NULL, 'migration_037_applied', 'system', 0, '{"migration": "037_add_platform_roles", "roles_added": 4}', datetime('now'));
-
 -- =============================================================================
 -- FIN MIGRATION 037
 -- =============================================================================

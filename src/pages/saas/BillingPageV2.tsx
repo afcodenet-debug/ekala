@@ -5,7 +5,7 @@ import {
   CreditCard, CheckCircle2, AlertTriangle, RefreshCw,
    Users, LayoutGrid, Package,
   ArrowLeft, Copy, Check,
-  Loader2
+  Loader2, Clock
 } from 'lucide-react';
 import { useAuthStore } from '../../stores/useAuthStore';
 import { api } from '../../lib/api-client';
@@ -14,12 +14,14 @@ const API_BASE = (window as any).VITE_API_BASE_URL || 'https://ekala-api.onrende
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-type BillingState = 
-  | 'SUSPENDED' 
-  | 'PLAN_SELECTED' 
-  | 'VOUCHER_GENERATED' 
-  | 'ADMIN_VERIFICATION' 
-  | 'ACTIVE';
+  type BillingState = 
+    | 'SUSPENDED' 
+    | 'PLAN_SELECTED' 
+    | 'VOUCHER_GENERATED' 
+    | 'ADMIN_VERIFICATION' 
+    | 'ACTIVE'
+    | 'TRIAL'
+    | 'GRACE_PERIOD';
 
 interface Plan {
   id: number;
@@ -432,6 +434,7 @@ const BillingPageV2 = () => {
   const [actionLoading, setActionLoading] = useState(false);
   const [copied, setCopied] = useState(false);
   const [timeRemaining, setTimeRemaining] = useState<string>('');
+  const [tenant, setTenant] = useState<any>(null);
 
   // ─── Effects ───────────────────────────────────────────────────────────────
 
@@ -445,15 +448,32 @@ const BillingPageV2 = () => {
     fetch(`${API_BASE}/tenants/${tenantId}`)
       .then(r => r.json() as Promise<any>)
       .then(data => {
-        const tenant = data?.tenant ?? data;
-        const subscription = tenant?.subscriptions?.[0];
+        const tenantData = data?.tenant ?? data;
+        setTenant(tenantData);
+        const subscription = tenantData?.subscriptions?.[0];
         
-        // Determine initial state
-        if (subscription?.status === 'active' || subscription?.status === 'trialing') {
+        // Determine initial state based on subscription and tenant status
+        if (subscription?.status === 'active') {
           setBillingState('ACTIVE');
-        } else if (tenant?.status === 'suspended') {
+        } else if (subscription?.status === 'trialing' || subscription?.status === 'trial') {
+          setBillingState('TRIAL');
+        } else if (subscription?.status === 'past_due') {
+          // Check if still in grace period (7 days after expiration)
+          const now = new Date();
+          const periodEnd = subscription.current_period_end ? new Date(subscription.current_period_end) : null;
+          const graceEnd = periodEnd ? new Date(periodEnd.getTime() + 7 * 24 * 60 * 60 * 1000) : null;
+          
+          if (graceEnd && now < graceEnd) {
+            setBillingState('GRACE_PERIOD');
+          } else {
+            setBillingState('SUSPENDED');
+          }
+        } else if (tenantData?.status === 'suspended' || subscription?.status === 'suspended') {
+          setBillingState('SUSPENDED');
+        } else if (subscription?.status === 'cancelled') {
           setBillingState('SUSPENDED');
         } else {
+          // No subscription or unknown state
           setBillingState('SUSPENDED');
         }
       })
@@ -550,12 +570,12 @@ const BillingPageV2 = () => {
   const checkVoucherStatus = useCallback(async () => {
     if (!voucher?.voucher_code) return;
     try {
-      const data = await api.get(`/vouchers/status/${voucher.voucher_code}`);
-      if (data.status === 'verified') {
+      const data = await api.get<any>(`/vouchers/status/${voucher.voucher_code}`);
+      if ((data as any).status === 'verified') {
         setBillingState('ACTIVE');
         // Reload tenant data
         window.location.reload();
-      } else if (data.status === 'rejected' || data.status === 'expired') {
+      } else if ((data as any).status === 'rejected' || (data as any).status === 'expired') {
         setBillingState('SUSPENDED');
         setVoucher(null);
       }
@@ -807,6 +827,108 @@ const BillingPageV2 = () => {
     </>
   );
 
+  const renderTrialState = () => {
+    const subscription = (tenant as any)?.subscriptions?.[0];
+    const daysLeft = subscription?.current_period_end 
+      ? Math.ceil((new Date(subscription.current_period_end).getTime() - Date.now()) / 86400000)
+      : 0;
+
+    return (
+      <>
+        <div className="vf-card">
+          <div className="vf-card-strip vf-strip-pending" />
+          <div className="vf-card-inner">
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 20 }}>
+              <Clock size={28} color="#3b82f6" />
+              <div>
+                <div style={{ fontSize: 11, color: '#6a6a80', textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 4, fontWeight: 700 }}>
+                  Période d'essai
+                </div>
+                <h2 style={{ fontSize: 22, fontWeight: 700, color: '#e8e8f2', margin: 0 }}>
+                  {subscription?.plans?.name || 'Essai gratuit'}
+                </h2>
+              </div>
+            </div>
+
+            <div style={{ padding: '14px 16px', background: 'rgba(59,130,246,0.08)', border: '1px solid rgba(59,130,246,0.2)', borderRadius: 12, marginBottom: 16 }}>
+              <div style={{ fontSize: 13, color: '#3b82f6', fontWeight: 700, marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+                ℹ️ Période d'essai en cours
+              </div>
+              <div style={{ fontSize: 13, color: '#a0a0b8', lineHeight: 1.6 }}>
+                Il vous reste <strong style={{ color: '#e8e8f2' }}>{daysLeft} jours</strong> d'essai gratuit.
+                Profitez de toutes les fonctionnalités pendant cette période.
+              </div>
+            </div>
+
+            <div style={{ textAlign: 'center', marginTop: 20 }}>
+              <button
+                onClick={() => navigate('/pricing')}
+                className="vf-btn vf-btn-primary"
+              >
+                <CreditCard size={18} />
+                Choisir un forfait
+              </button>
+            </div>
+          </div>
+        </div>
+      </>
+    );
+  };
+
+  const renderGracePeriodState = () => {
+    const subscription = (tenant as any)?.subscriptions?.[0];
+    const periodEnd = subscription?.current_period_end 
+      ? new Date(subscription.current_period_end)
+      : null;
+    const graceEnd = periodEnd 
+      ? new Date(periodEnd.getTime() + 7 * 24 * 60 * 60 * 1000)
+      : null;
+    const daysLeft = graceEnd 
+      ? Math.max(0, Math.ceil((graceEnd.getTime() - Date.now()) / 86400000))
+      : 0;
+
+    return (
+      <>
+        <div className="vf-card">
+          <div className="vf-card-strip vf-strip-pending" />
+          <div className="vf-card-inner">
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 20 }}>
+              <AlertTriangle size={28} color="#f59e0b" />
+              <div>
+                <div style={{ fontSize: 11, color: '#6a6a80', textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 4, fontWeight: 700 }}>
+                  Période de grâce
+                </div>
+                <h2 style={{ fontSize: 22, fontWeight: 700, color: '#e8e8f2', margin: 0 }}>
+                  Accès lecture seule
+                </h2>
+              </div>
+            </div>
+
+            <div style={{ padding: '14px 16px', background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.2)', borderRadius: 12, marginBottom: 16 }}>
+              <div style={{ fontSize: 13, color: '#f59e0b', fontWeight: 700, marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+                ⚠️ Accès limité
+              </div>
+              <div style={{ fontSize: 13, color: '#a0a0b8', lineHeight: 1.6 }}>
+                Votre abonnement a expiré. Vous bénéficiez d'une période de grâce de <strong style={{ color: '#e8e8f2' }}>{daysLeft} jours</strong>.
+                Seule la consultation est autorisée. Renouvelez votre abonnement pour retrouver l'accès complet.
+              </div>
+            </div>
+
+            <div style={{ textAlign: 'center', marginTop: 20 }}>
+              <button
+                onClick={() => navigate('/pricing')}
+                className="vf-btn vf-btn-primary"
+              >
+                <CreditCard size={18} />
+                Renouveler mon abonnement
+              </button>
+            </div>
+          </div>
+        </div>
+      </>
+    );
+  };
+
   const renderActiveState = () => (
     <>
       <div className="vf-card">
@@ -886,6 +1008,8 @@ const BillingPageV2 = () => {
         {billingState === 'VOUCHER_GENERATED' && renderVoucherGenerated()}
         {billingState === 'ADMIN_VERIFICATION' && renderAdminVerification()}
         {billingState === 'ACTIVE' && renderActiveState()}
+        {billingState === 'TRIAL' && renderTrialState()}
+        {billingState === 'GRACE_PERIOD' && renderGracePeriodState()}
       </div>
     </div>
   );

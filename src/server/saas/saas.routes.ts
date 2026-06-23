@@ -10,6 +10,7 @@ import {
 } from './repositories/supabase/saas-supabase.repository';
 import { SaaSError } from './types/saas.types';
 import { db } from './repositories/supabase/saas-supabase.repository';
+import { requireJwtAuth } from '../middleware/jwt-auth';
 
 // =============================================================================
 // Provider: minimal version (only Plan + Tenant for the MVP).
@@ -116,7 +117,8 @@ export function createSaaSRouter(): Router {
   });
 
   // GET /api/tenants/:id — get a tenant by ID enriched with subscription + plan + payments
-  router.get('/tenants/:id', async (req, res) => {
+  // SECURITY: Requires authentication and tenant isolation
+  router.get('/tenants/:id', requireJwtAuth, async (req, res) => {
     try {
       const id = Number(req.params.id);
       const { createClient } = await import('@supabase/supabase-js');
@@ -128,6 +130,12 @@ export function createSaaSRouter(): Router {
         auth: { persistSession: false },
         db: { schema: 'public' },
       });
+
+      // SECURITY: Verify tenant isolation - user can only access their own tenant
+      const requestingTenantId = (req as any).user?.tenant_id;
+      if (requestingTenantId !== id) {
+        return res.status(403).json({ error: 'FORBIDDEN', message: 'Accès non autorisé à ce tenant' });
+      }
 
       const { data: tenant, error: tErr } = await supabase
         .from('tenants')

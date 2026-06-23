@@ -41,6 +41,8 @@ import AdminVouchersPage from './pages/admin/AdminVouchersPage';
 import PlatformLayout from './pages/platform/PlatformLayout';
 import PlatformDashboard from './pages/platform/PlatformDashboard';
 import TenantsPage from './pages/platform/TenantsPage';
+import TenantDetailsPage from './pages/platform/TenantDetailsPage';
+import TenantEditPage from './pages/platform/TenantEditPage';
 import SubscriptionsPage from './pages/platform/SubscriptionsPage';
 import VouchersPage from './pages/platform/VouchersPage';
 import AuditLogsPage from './pages/platform/AuditLogsPage';
@@ -292,6 +294,8 @@ function App() {
             <Route path="/platform" element={<PlatformLayout />}>
               <Route index element={<PlatformDashboard />} />
               <Route path="tenants" element={<TenantsPage />} />
+              <Route path="tenants/:id" element={<TenantDetailsPage />} />
+              <Route path="tenants/:id/edit" element={<TenantEditPage />} />
               <Route path="subscriptions" element={<SubscriptionsPage />} />
               <Route path="sync" element={<SyncCenterPage />} />
               <Route path="vouchers" element={<VouchersPage />} />

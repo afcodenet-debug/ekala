@@ -84,9 +84,8 @@ router.get('/auth/me', requirePlatformAuth, async (req: any, res: Response) => {
   try {
     const payload = req.platformUser;
 
-    const user = (await platformAuthService.getPlatformUsers()).find(
-      (u: import('./platform-auth.service').PlatformUser) => u.id === payload.sub
-    );
+    // Récupérer directement l'utilisateur par ID au lieu de charger tous les users
+    const user = await platformAuthService.getPlatformUserById(payload.sub);
 
     if (!user) {
       return res.status(404).json({ error: 'USER_NOT_FOUND', message: 'Utilisateur introuvable' });

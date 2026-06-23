@@ -570,11 +570,16 @@ export class GenericSyncService {
     } else {
       upsertPayload = safeUpdate;
     }
+    
+    // ⭐ DEBUG: Log the payload before sending to Supabase
+    console.log(`[SUPABASE PUSH] ${def.entity} #${recordId} payload:`, JSON.stringify(upsertPayload, null, 2));
+    
     const shouldInsert = def.entity === 'inventory_movement' && !effectiveRemoteId;
 
     if (shouldInsert) {
       const { data: insertData, error: insertError } = await this.supabase.from(remoteTable).insert(upsertPayload).select('id').single();
       if (insertError) throw insertError;
+      console.log(`[SUPABASE RESPONSE] ${def.entity} #${recordId} insert success:`, insertData?.id);
       if (!payload.remote_id && insertData?.id) {
         this.db.prepare(`UPDATE ${localTable} SET remote_id = ? WHERE id = ?`).run(insertData.id, recordId);
       }
@@ -582,7 +587,9 @@ export class GenericSyncService {
     }
 
     // Upsert
+    console.log(`[SUPABASE UPLOAD] ${def.entity} #${recordId} upsert to ${remoteTable} with id=${upsertPayload.id || 'AUTO'}`);
     const { data, error } = await this.supabase.from(remoteTable).upsert(upsertPayload).select('id').single();
+    console.log(`[SUPABASE RESPONSE] ${def.entity} #${recordId}:`, JSON.stringify({ data, error }, null, 2));
     if (error) {
       console.error(`[${def.entity.toUpperCase()} UPSERT ERROR]`, {
         errorCode: error.code,

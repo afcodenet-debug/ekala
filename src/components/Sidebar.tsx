@@ -10,6 +10,7 @@ import { useNotificationStore } from '../stores/useNotificationStore';
 import { useUIStore } from '../stores/useUIStore';
 import { NotificationBadge } from './NotificationBadge';
 import { SettingsSelector } from './SettingsSelector';
+import { SubscriptionStatus } from './SubscriptionStatus';
 
 import {
   Bell,
@@ -49,12 +50,13 @@ const MENU = [
   { path: '/users',      labelKey: 'sidebar.systemAccess', icon: Settings,        roles: ['owner', 'admin'] },
   { path: '/settings',   labelKey: 'sidebar.settings',     icon: Settings,        roles: ['owner', 'admin'] },
   { path: '/admin/vouchers', labelKey: 'sidebar.voucherValidation', icon: CreditCard, roles: ['owner', 'admin'] },
+  { path: '/billing', labelKey: 'sidebar.billing', icon: CreditCard, roles: ['owner', 'admin'] },
 ];
 
 const SECTIONS = [
   { tKey: 'sidebar.operations', paths: ['/', '/pos', '/orders', '/tables'] },
   { tKey: 'sidebar.inventory',  paths: ['/sales', '/products', '/categories', '/analytics'] },
-  { tKey: 'sidebar.pilotage',   paths: ['/staff', '/reports', '/expenses', '/users', '/settings', '/admin/vouchers'] },
+  { tKey: 'sidebar.pilotage',   paths: ['/staff', '/reports', '/expenses', '/users', '/settings', '/admin/vouchers', '/billing'] },
 ];
 
 type SidebarProps = { onClose?: () => void };
@@ -88,6 +90,8 @@ const Sidebar = ({ onClose }: SidebarProps) => {
 
   return (
     <>
+      {/* Subscription Status */}
+      <SubscriptionStatus />
       {/* ── Styles ─────────────────────────────────────────────── */}
       <style>{`
         /* ── Sidebar root ──────────────────────────────────────── */
@@ -495,15 +499,35 @@ const Sidebar = ({ onClose }: SidebarProps) => {
               </span>
             </div>
 
-            {/* Plan Details & Countdown */}
+            {/* Plan Badge - Clickable to billing */}
             {user?.plan_name && (
-              <div style={{ marginTop: 6, padding: '6px 10px', background: 'rgba(255,255,255,0.03)', borderRadius: 8, border: '1px solid rgba(255,255,255,0.05)' }}>
-                <div className="sb-status-label" style={{ color: colors.text1, letterSpacing: '0.02em', display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, textTransform: 'none' }}>
-                  <ShieldCheck size={12} color={colors.accent.gold} /> {user.plan_name}
+              <div
+                onClick={() => navigate('/billing')}
+                style={{
+                  marginTop: 8,
+                  padding: '8px 12px',
+                  background: 'linear-gradient(135deg, rgba(212,175,55,0.12), rgba(146,64,14,0.12))',
+                  borderRadius: 8,
+                  border: '1px solid rgba(212,175,55,0.35)',
+                  cursor: 'pointer',
+                  transition: 'all 0.2s',
+                }}
+                onMouseOver={e => {
+                  e.currentTarget.style.background = 'linear-gradient(135deg, rgba(212,175,55,0.18), rgba(146,64,14,0.18))';
+                  e.currentTarget.style.transform = 'translateY(-1px)';
+                }}
+                onMouseOut={e => {
+                  e.currentTarget.style.background = 'linear-gradient(135deg, rgba(212,175,55,0.12), rgba(146,64,14,0.12))';
+                  e.currentTarget.style.transform = 'translateY(0)';
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, fontWeight: 700, color: colors.accent.gold }}>
+                  <ShieldCheck size={14} />
+                  <span>{user.plan_name}</span>
                 </div>
-                
+
                 {user.expires_at && (
-                  <div style={{ fontSize: 10, color: colors.text3, fontWeight: 600, marginTop: 2, paddingLeft: 18 }}>
+                  <div style={{ fontSize: 10, color: colors.text3, fontWeight: 600, marginTop: 3, paddingLeft: 20 }}>
                     {(() => {
                       const days = Math.ceil((new Date(user.expires_at).getTime() - Date.now()) / 86400000);
                       if (days <= 0) return 'Expiré';
@@ -544,6 +568,44 @@ const Sidebar = ({ onClose }: SidebarProps) => {
                 >
                   <Zap size={12} fill="#fff" />
                   {user.status === 'trial' ? 'Passer au Plan Pro' : 'Réactiver mon compte'}
+                </button>
+              </div>
+            )}
+
+            {/* Quick access to plans for active users */}
+            {user?.status === 'active' && user?.plan_name && (
+              <div style={{ marginTop: 10 }}>
+                <button
+                  onClick={() => navigate('/billing')}
+                  style={{
+                    width: '100%',
+                    fontSize: 10,
+                    fontWeight: 800,
+                    color: colors.accent.gold,
+                    background: 'rgba(212,175,55,0.08)',
+                    border: '1px solid rgba(212,175,55,0.25)',
+                    borderRadius: 8,
+                    padding: '8px 12px',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: 6,
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.06em',
+                    transition: 'all 0.2s',
+                  }}
+                  onMouseOver={e => {
+                    e.currentTarget.style.background = 'rgba(212,175,55,0.14)';
+                    e.currentTarget.style.transform = 'translateY(-1px)';
+                  }}
+                  onMouseOut={e => {
+                    e.currentTarget.style.background = 'rgba(212,175,55,0.08)';
+                    e.currentTarget.style.transform = 'translateY(0)';
+                  }}
+                >
+                  <CreditCard size={12} />
+                  Gérer mon abonnement
                 </button>
               </div>
             )}

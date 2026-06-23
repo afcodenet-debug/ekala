@@ -17,8 +17,8 @@ CREATE TABLE IF NOT EXISTS platform_audit_logs (
   ip_address TEXT,
   user_agent TEXT,
   success BOOLEAN DEFAULT TRUE,
-  created_at TEXT DEFAULT (datetime('now')),
-  FOREIGN KEY (admin_id) REFERENCES users(id)
+  created_at TEXT DEFAULT (datetime('now'))
+  -- Pas de FK sur admin_id: table d'audit système, admin peut être supprimé
 );
 
 CREATE INDEX IF NOT EXISTS idx_platform_audit_admin ON platform_audit_logs(admin_id);
@@ -26,5 +26,6 @@ CREATE INDEX IF NOT EXISTS idx_platform_audit_action ON platform_audit_logs(acti
 CREATE INDEX IF NOT EXISTS idx_platform_audit_entity ON platform_audit_logs(entity_type, entity_id);
 CREATE INDEX IF NOT EXISTS idx_platform_audit_created ON platform_audit_logs(created_at);
 
-INSERT OR IGNORE INTO billing_audit_logs (tenant_id, user_id, action, entity_type, entity_id, metadata, created_at)
-VALUES (NULL, NULL, 'migration_040_applied', 'system', 0, '{"migration": "040_create_platform_audit_logs"}', datetime('now'));
+-- Log de migration désactivé volontairement pour éviter la contrainte FK
+-- avec admin_id=0 qui n'existe pas dans users
+-- Le log sera fait via l'API platform_audit_logs dans platform-auth.routes.ts

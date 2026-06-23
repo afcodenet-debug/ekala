@@ -58,33 +58,32 @@ export function applyMigration(filename: string, sqlPath: string): void {
 
   try {
     db.transaction(() => {
-      db.exec(sql);
-      db.prepare('INSERT OR REPLACE INTO _migrations (filename) VALUES (?)').run(filename);
+      db.exec(sql);                                                              // ligne 61 — exécution SQL (peut rollback)
+      db.prepare('INSERT OR REPLACE INTO _migrations (filename) VALUES (?)').run(filename);  // ligne 62 — marquage UNIQUEMENT si succès
     })();
-    console.log(`[Migrations] ✓ Applied: ${filename}`);
+    console.log(`[MIGRATION] SUCCESS ${filename}`);
   } catch (err: any) {
     const message = String(err?.message || err);
+
+    // Known-harmless errors that occur when re-running idempotent migrations
+    // on an already-applied schema: duplicate column/table/index.
     const isDuplicateColumnError = /duplicate column name:/i.test(message);
     const isDuplicateTableError = /table .* already exists/i.test(message);
     const isDuplicateIndexError = /index .* already exists/i.test(message);
-    const isMissingTableError = /no such table:/i.test(message);
-    const isMissingColumnError = /no such column:/i.test(message);
 
     if (isDuplicateColumnError || isDuplicateTableError || isDuplicateIndexError) {
-      console.warn(`[Migrations] Skipping duplicate schema element for ${filename}:`, message);
-      db.prepare('INSERT OR REPLACE INTO _migrations (filename) VALUES (?)').run(filename);
+      console.warn(`[MIGRATION] SKIP (duplicate) ${filename} — ${message}`);
+      // Do NOT mark as applied — it may have been a partial re-run.
+      // The next attempt will either succeed or hit a real error.
       return;
     }
 
-    // For fresh databases, missing table/column errors are OK (tables will be created by ensureCoreQrMenuTables)
-    if (isMissingTableError || isMissingColumnError) {
-      console.warn(`[Migrations] Skipping missing column/table error in ${filename} (schema may be handled elsewhere):`, message);
-      db.prepare('INSERT OR REPLACE INTO _migrations (filename) VALUES (?)').run(filename);
-      return;
-    }
-
-    console.error(`[Migrations] ✗ Failed to apply ${filename}:`, message);
-    throw err;
+    // Errors that indicate the migration has been partially applied (e.g. a later
+    // INSERT references a table that was created earlier in the same file).
+    // Because we use a transaction, the entire migration is rolled back —
+    // we MUST NOT mark it as applied.
+    console.error(`[MIGRATION] FAILED ${filename} — ${message}`);
+    console.error(`[MIGRATION] The migration was rolled back. It will be retried on next start.`);
   }
 }
 

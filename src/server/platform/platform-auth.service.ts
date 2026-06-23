@@ -265,6 +265,18 @@ export class PlatformAuthService {
     return rows.map(mapUserRow);
   }
 
+  async getPlatformUserById(userId: number): Promise<PlatformUser | null> {
+    if (!db) return null;
+    const row = db.prepare(
+      `SELECT id, email, full_name, role, is_platform_user, is_active, created_at, updated_at
+       FROM users
+       WHERE id = ? AND is_platform_user = 1
+       LIMIT 1`
+    ).get(userId) as any;
+    if (!row) return null;
+    return mapUserRow(row);
+  }
+
   async createPlatformUser(data: {
     email: string;
     password: string;

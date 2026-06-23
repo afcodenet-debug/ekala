@@ -33,6 +33,7 @@ import notificationsRoutes from './routes/notifications';
 import notificationPreferencesRoutes from './routes/notification_preferences';
 import scheduledReportsLogRoutes from './routes/scheduled_reports_log';
 import billingRoutes from './routes/billing.routes';
+import subscriptionRoutes from './routes/subscription.routes';
 import { db, initializeDatabase } from './db/database';
 import { startSupabasePullWorker, getPullSyncStatus } from './services/supabase-pull-sync.service';
 import { startSupabaseRealtimePull, getSupabaseRealtimeStatus } from './services/supabase-realtime-sync.service';
@@ -305,6 +306,7 @@ app.use('/api', async (req, res, next) => {
     req.path === '/health' ||
     req.path === '/sync/status' ||
     req.path.startsWith('/saas') ||
+    req.path.startsWith('/subscription') ||
     isPaymentOrVoucherFlow ||
     req.path.startsWith('/plans') ||
     (req.path.startsWith('/tenants') && ['GET','HEAD','OPTIONS'].includes(req.method))
@@ -400,6 +402,7 @@ app.use('/api/notifications', notificationsRoutes);
 app.use('/api/notification_preferences', notificationPreferencesRoutes);
 app.use('/api/scheduled_reports_log', scheduledReportsLogRoutes);
 app.use('/api/billing', billingRoutes);
+app.use('/api/subscription', subscriptionRoutes);
 app.use('/api/admin/subscriptions', adminSubscriptionsRouter);
 app.use('/api/admin/vouchers', adminVouchersRouter);
 

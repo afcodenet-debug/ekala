@@ -56,7 +56,7 @@ export async function bootstrapPlatform(): Promise<void> {
     let existingAdmin: any = null;
     try {
       existingAdmin = db.prepare(
-        "SELECT id, email, role, is_platform_user FROM users WHERE is_platform_user = 1 LIMIT 1"
+        "SELECT id, email, role, is_platform_user, is_active, status FROM users WHERE is_platform_user = 1 LIMIT 1"
       ).get() as any;
     } catch (e) {
       console.log('[PlatformBootstrap] Table users pas encore prête, attente...');
@@ -64,8 +64,23 @@ export async function bootstrapPlatform(): Promise<void> {
 
     if (existingAdmin) {
       console.log(`[PlatformBootstrap] Super admin déjà existant: ${existingAdmin.email}`);
+      console.log(`[PlatformBootstrap]    Role: ${existingAdmin.role}`);
+      console.log(`[PlatformBootstrap]    Active: ${existingAdmin.is_active}`);
+      console.log(`[PlatformBootstrap]    Status: ${existingAdmin.status}`);
       
       const adminEmail = process.env.PLATFORM_ADMIN_EMAIL || DEFAULT_ADMIN_EMAIL;
+      
+      // Vérifier que le super admin est actif
+      if (existingAdmin.is_active !== 1 || existingAdmin.status !== 'active') {
+        console.log('[PlatformBootstrap] Réactivation du super admin...');
+        try {
+          db.prepare("UPDATE users SET is_active = 1, status = 'active', updated_at = ? WHERE id = ?")
+            .run(new Date().toISOString(), existingAdmin.id);
+          console.log('[PlatformBootstrap] ✅ Super admin réactivé');
+        } catch (e) {
+          console.error('[PlatformBootstrap] Impossible de réactiver le super admin:', e);
+        }
+      }
       
       if (existingAdmin.email !== adminEmail) {
         try {

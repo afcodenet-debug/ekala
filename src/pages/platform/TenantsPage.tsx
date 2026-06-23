@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-  Search, Ban, CheckCircle, Eye, ChevronLeft, ChevronRight, Building2
+  Search, Ban, CheckCircle, Eye, ChevronLeft, ChevronRight, Building2,
+  MoreVertical, Users, FileText, Trash2, Edit, Mail
 } from 'lucide-react';
 import { api } from '../../lib/api-client';
 
@@ -20,6 +21,7 @@ interface Tenant {
   subscription_status: string | null;
   subscription_ends_at: string | null;
   users_count: number;
+  sync_status?: string;
 }
 
 const styles = `
@@ -227,6 +229,61 @@ const styles = `
     opacity: 0.4;
     cursor: not-allowed;
   }
+  .dropdown-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    padding: 10px 14px;
+    background: transparent;
+    border: none;
+    color: #a0a0b8;
+    font-size: 13px;
+    cursor: pointer;
+    transition: all 140ms;
+    text-align: left;
+  }
+  .dropdown-item:hover {
+    background: rgba(255,255,255,0.06);
+    color: #e8e8f2;
+  }
+  .dropdown-item.success:hover {
+    background: rgba(34,197,94,0.1);
+    color: #22c55e;
+  }
+  .dropdown-item.warning:hover {
+    background: rgba(245,158,11,0.1);
+    color: #f59e0b;
+  }
+  .dropdown-item.danger:hover {
+    background: rgba(239,68,68,0.1);
+    color: #ef4444;
+  }
+  .sync-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 8px;
+    border-radius: 6px;
+    font-size: 11px;
+    font-weight: 600;
+  }
+  .sync-badge.syncing {
+    background: rgba(59,130,246,0.15);
+    color: #3b82f6;
+  }
+  .sync-badge.error {
+    background: rgba(239,68,68,0.15);
+    color: #ef4444;
+  }
+  .sync-badge.success {
+    background: rgba(34,197,94,0.15);
+    color: #22c55e;
+  }
+  .sync-badge.idle {
+    background: rgba(107,114,128,0.15);
+    color: #9ca3af;
+  }
   .loading-spinner {
     width: 40px;
     height: 40px;
@@ -255,6 +312,7 @@ const TenantsPage = () => {
   const [total, setTotal] = useState(0);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
+  const [openMenuId, setOpenMenuId] = useState<number | null>(null);
 
   useEffect(() => {
     loadTenants();
@@ -290,16 +348,39 @@ const TenantsPage = () => {
     loadTenants();
   };
 
+  const toggleMenu = (tenantId: number) => {
+    setOpenMenuId(openMenuId === tenantId ? null : tenantId);
+  };
+
+  const handleEdit = (tenantId: number) => {
+    navigate(`/platform/tenants/${tenantId}/edit`);
+  };
+
+  const handleViewUsers = (tenantId: number) => {
+    navigate(`/platform/tenants/${tenantId}?tab=users`);
+  };
+
+  const handleViewLogs = (tenantId: number) => {
+    navigate(`/platform/audit-logs?tenant_id=${tenantId}`);
+  };
+
+  const handleSendEmail = (tenantId: number) => {
+    const tenant = tenants.find(t => t.id === tenantId);
+    if (tenant?.owner_email) {
+      window.open(`mailto:${tenant.owner_email}`, '_blank');
+    }
+  };
+
   const handleSuspend = async (tenantId: number) => {
     const reason = prompt('Raison de la suspension:');
     if (!reason) return;
 
     try {
-      const data = await api.platform.suspendTenant(tenantId, reason);
-      if (data.success) {
+      const data = await api.platform.suspendTenant(tenantId, reason) as any;
+      if (data?.success) {
         loadTenants();
       } else {
-        alert(data.message || 'Erreur');
+        alert(data?.message || 'Erreur');
       }
     } catch (error: any) {
       console.error('Failed to suspend tenant:', error);
@@ -311,15 +392,30 @@ const TenantsPage = () => {
     if (!confirm('Réactiver ce tenant ?')) return;
 
     try {
-      const data = await api.platform.activateTenant(tenantId);
-      if (data.success) {
+      const data = await api.platform.activateTenant(tenantId) as any;
+      if (data?.success) {
         loadTenants();
       } else {
-        alert(data.message || 'Erreur');
+        alert(data?.message || 'Erreur');
       }
     } catch (error: any) {
       console.error('Failed to activate tenant:', error);
       alert(error.message || 'Erreur lors de la réactivation');
+    }
+  };
+
+  const handleDelete = async (tenantId: number) => {
+    if (!confirm('ATTENTION: Cette action est irréversible.\n\nÊtes-vous absolument certain ?')) {
+      return;
+    }
+
+    try {
+      // TODO: Implémenter deleteTenant dans l'API backend
+      alert('Fonctionnalité de suppression à implémenter dans le backend');
+      setOpenMenuId(null);
+    } catch (error: any) {
+      console.error('Failed to delete tenant:', error);
+      alert(error.message || 'Erreur lors de la suppression');
     }
   };
 
@@ -431,7 +527,14 @@ const TenantsPage = () => {
                   <td>{tenant.users_count}</td>
                   <td>{new Date(tenant.created_at).toLocaleDateString('fr-FR')}</td>
                   <td>
-                    <div style={{ display: 'flex', gap: 6 }}>
+                    <span className={`sync-badge ${tenant.sync_status || 'idle'}`}>
+                      {tenant.sync_status === 'syncing' ? '⏳ Sync...' : 
+                       tenant.sync_status === 'error' ? '❌ Erreur' : 
+                       tenant.sync_status === 'success' ? '✓ Sync' : '—'}
+                    </span>
+                  </td>
+                  <td>
+                    <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
                       <button
                         className="action-btn"
                         onClick={() => navigate(`/platform/tenants/${tenant.id}`)}
@@ -439,23 +542,97 @@ const TenantsPage = () => {
                       >
                         <Eye size={14} />
                       </button>
-                      {tenant.status === 'suspended' ? (
+                      <div style={{ position: 'relative' }}>
                         <button
-                          className="action-btn success"
-                          onClick={() => handleActivate(tenant.id)}
-                          title="Réactiver"
+                          className="action-btn"
+                          onClick={() => toggleMenu(tenant.id)}
+                          title="Plus d'actions"
                         >
-                          <CheckCircle size={14} />
+                          <MoreVertical size={14} />
                         </button>
-                      ) : (
-                        <button
-                          className="action-btn danger"
-                          onClick={() => handleSuspend(tenant.id)}
-                          title="Suspendre"
-                        >
-                          <Ban size={14} />
-                        </button>
-                      )}
+                        {openMenuId === tenant.id && (
+                          <>
+                            <div
+                              style={{
+                                position: 'fixed',
+                                top: 0,
+                                left: 0,
+                                right: 0,
+                                bottom: 0,
+                                zIndex: 999
+                              }}
+                              onClick={() => setOpenMenuId(null)}
+                            />
+                            <div style={{
+                              position: 'absolute',
+                              right: 0,
+                              top: '100%',
+                              marginTop: 4,
+                              background: '#1a1a2e',
+                              border: '1px solid #2d2d44',
+                              borderRadius: 8,
+                              minWidth: 200,
+                              boxShadow: '0 4px 12px rgba(0,0,0,0.3)',
+                              zIndex: 1000
+                            }}>
+                              <button
+                                className="dropdown-item"
+                                onClick={() => { handleEdit(tenant.id); setOpenMenuId(null); }}
+                              >
+                                <Edit size={14} />
+                                <span>Éditer</span>
+                              </button>
+                              <button
+                                className="dropdown-item"
+                                onClick={() => { handleViewUsers(tenant.id); setOpenMenuId(null); }}
+                              >
+                                <Users size={14} />
+                                <span>Utilisateurs</span>
+                              </button>
+                              <button
+                                className="dropdown-item"
+                                onClick={() => { handleViewLogs(tenant.id); setOpenMenuId(null); }}
+                              >
+                                <FileText size={14} />
+                                <span>Logs d'audit</span>
+                              </button>
+                              <button
+                                className="dropdown-item"
+                                onClick={() => { handleSendEmail(tenant.id); setOpenMenuId(null); }}
+                              >
+                                <Mail size={14} />
+                                <span>Envoyer un email</span>
+                              </button>
+                              <div style={{ height: 1, background: '#2d2d44', margin: '4px 0' }} />
+                              {tenant.status === 'suspended' ? (
+                                <button
+                                  className="dropdown-item success"
+                                  onClick={() => { handleActivate(tenant.id); setOpenMenuId(null); }}
+                                >
+                                  <CheckCircle size={14} />
+                                  <span>Réactiver</span>
+                                </button>
+                              ) : (
+                                <button
+                                  className="dropdown-item warning"
+                                  onClick={() => { handleSuspend(tenant.id); setOpenMenuId(null); }}
+                                >
+                                  <Ban size={14} />
+                                  <span>Suspendre</span>
+                                </button>
+                              )}
+                              <div style={{ height: 1, background: '#2d2d44', margin: '4px 0' }} />
+                              <button
+                                className="dropdown-item danger"
+                                onClick={() => { handleDelete(tenant.id); setOpenMenuId(null); }}
+                              >
+                                <Trash2 size={14} />
+                                <span>Supprimer</span>
+                              </button>
+                            </div>
+                          </>
+                        )}
+                      </div>
                     </div>
                   </td>
                 </tr>
