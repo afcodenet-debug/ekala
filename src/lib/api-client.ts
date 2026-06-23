@@ -37,7 +37,7 @@ const API_BASE: string = (() => {
 
   if (p.env?.NODE_ENV === 'development') return '/api';
 
-  return 'https://ekala-api.onrender.com/api';
+  return 'http://localhost:3001/api';
 })();
 
 // ── JWT Token Management ──────────────────────────────────────────────────────

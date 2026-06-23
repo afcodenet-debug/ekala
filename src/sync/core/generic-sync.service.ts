@@ -292,13 +292,24 @@ export class GenericSyncService {
     
     const items = this.db.prepare(`
       SELECT * FROM sync_outbox
-      WHERE entity = ? AND status = 'pending' AND (entity = 'tenant' OR CAST(tenant_id AS INTEGER) = ?)
+      WHERE entity = ? AND status = 'pending' AND (tenant_id IS NULL OR CAST(tenant_id AS INTEGER) = ?)
       ORDER BY created_at ASC
       LIMIT 50
     `).all(entity, tenantIdNum) as any[];
 
     console.log('[DEBUG] Outbox rows found=', items.length);
     console.log('[DEBUG] Outbox rows=', JSON.stringify(items, null, 2));
+    
+    // Log detail pour diagnostic
+    if (items.length === 0) {
+      const byStatus = this.db.prepare(`
+        SELECT status, tenant_id, COUNT(*) as count
+        FROM sync_outbox
+        WHERE entity = ?
+        GROUP BY status, tenant_id
+      `).all(entity) as any[];
+      console.log('[DIAG] Outbox status distribution:', JSON.stringify(byStatus, null, 2));
+    }
 
     let successCount = 0;
 
