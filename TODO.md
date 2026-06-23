@@ -1,3 +1,3 @@
-- [ ] Inspect src/components/Sidebar.tsx imports and identify missing icon imports
-- [ ] Update src/components/Sidebar.tsx to import all icons referenced in MENU/JSX (fix LayoutDashboard ReferenceError first)
-- [ ] Run dev/build and verify no further ReferenceError crashes
+- [x] Inspect src/components/Sidebar.tsx imports and identify missing icon imports
+- [x] Update src/components/Sidebar.tsx to import all icons referenced in MENU/JSX (fix LayoutDashboard ReferenceError first)
+- [x] Run dev/build and verify no further ReferenceError crashes

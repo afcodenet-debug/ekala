@@ -925,11 +925,7 @@ function ensureAdvancedTables(): void {
         console.log(`[Database] Backfilling ${pending.length} ${ent.name} (inserts) into sync_outbox`);
         for (const record of pending) {
           const tid = record.tenant_id || record.business_id;
-          if (!tid || tid === '1' || tid === 1) { 
-            // On ignore le tenant 1 par défaut si l'utilisateur est sur le 6, 
-            // pour éviter de pousser des données de test/migration
-            continue; 
-          }
+          if (!tid) continue;
           insertOutbox.run(crypto.randomUUID(), ent.name, 'insert', String(record.id), JSON.stringify(record), tid);
 
           // Handle children

@@ -1,12 +1,14 @@
 // =============================================================================
 // Super Admin Middleware
+// Architecture RBAC Production-Hardened - IAM Grade
 // =============================================================================
 // Vérifie que l'utilisateur est un super admin de la plateforme
 // Bloque tout accès aux routes tenant pour les super admins
 // =============================================================================
 
 import { Request, Response, NextFunction } from 'express';
-import { db } from '../db/database';
+import { policyEngine } from '../platform/policy-engine';
+import { securityLayer } from '../platform/security-layer';
 
 // Types
 interface SuperAdminUser {
@@ -43,8 +45,30 @@ export function requireSuperAdmin(req: Request, res: Response, next: NextFunctio
       return;
     }
 
-    // 2. Vérifier is_super_admin flag
-    if (!user.is_super_admin) {
+    // 2. Security Layer: Vérifier le statut et les kill switches (SYNCHRONE)
+    const securityCheck = securityLayer.check({
+      user_id: user.sub || user.id,
+      type: 'platform',
+      role_id: user.role_id,
+      role_name: user.role_name || user.role,
+      tenant_id: null,
+      is_platform_user: true,
+      version: user.version || 1
+    });
+
+    if (!securityCheck.allowed) {
+      res.status(403).json({
+        error: 'FORBIDDEN',
+        message: securityCheck.reason || 'Accès refusé — vérification de sécurité échouée',
+        code: securityCheck.code
+      });
+      return;
+    }
+
+    // 3. Policy Engine: Vérifier le rôle super_admin (PURE FUNCTION - SYNCHRONE)
+    const hasRole = policyEngine.hasRole(user, 'super_admin');
+    
+    if (!hasRole) {
       res.status(403).json({ 
         error: 'FORBIDDEN', 
         message: 'Accès refusé — droits Super Admin requis' 
@@ -52,7 +76,7 @@ export function requireSuperAdmin(req: Request, res: Response, next: NextFunctio
       return;
     }
 
-    // 3. Vérifier que l'utilisateur n'appartient pas à un tenant
+    // 4. Vérifier que l'utilisateur n'appartient pas à un tenant
     // (super_admin ne doit pas avoir de tenant_id)
     if (user.tenant_id) {
       res.status(403).json({ 
@@ -62,21 +86,12 @@ export function requireSuperAdmin(req: Request, res: Response, next: NextFunctio
       return;
     }
 
-    // 4. Vérifier que le rôle est bien super_admin (ou owner pour les utilisateurs plateforme)
-    if (user.role !== 'super_admin' && user.role !== 'owner') {
-      res.status(403).json({
-        error: 'FORBIDDEN',
-        message: 'Rôle invalide — Super Admin requis'
-      });
-      return;
-    }
-
     // 5. Attacher les informations à la requête
     req.superAdmin = {
-      id: user.id,
+      id: user.sub || user.id,
       email: user.email,
-      full_name: user.full_name,
-      role: user.role,
+      full_name: user.full_name || '',
+      role: user.role_name || user.role,
       is_super_admin: true,
       tenant_id: user.tenant_id || null,
     };
@@ -92,6 +107,7 @@ export function requireSuperAdmin(req: Request, res: Response, next: NextFunctio
 
 // =============================================================================
 // requireSuperAdminOrOwner — Super Admin OU Owner (pour cas hybrides)
+// Architecture RBAC Production-Hardened
 // =============================================================================
 
 export function requireSuperAdminOrOwner(req: Request, res: Response, next: NextFunction): void {
@@ -103,13 +119,35 @@ export function requireSuperAdminOrOwner(req: Request, res: Response, next: Next
       return;
     }
 
-    // Super Admin
-    if (user.is_super_admin && user.role === 'super_admin') {
+    // Security Layer: Vérifier le statut (SYNCHRONE)
+    const securityCheck = securityLayer.check({
+      user_id: user.sub || user.id,
+      type: user.type || 'platform',
+      role_id: user.role_id,
+      role_name: user.role_name || user.role,
+      tenant_id: user.tenant_id,
+      is_platform_user: user.is_platform_user,
+      version: user.version || 1
+    });
+
+    if (!securityCheck.allowed) {
+      res.status(403).json({
+        error: 'FORBIDDEN',
+        message: securityCheck.reason || 'Accès refusé — vérification de sécurité échouée',
+        code: securityCheck.code
+      });
+      return;
+    }
+
+    // Super Admin (via Policy Engine - PURE FUNCTION)
+    const isSuperAdmin = policyEngine.hasRole(user, 'super_admin');
+    
+    if (isSuperAdmin) {
       req.superAdmin = {
-        id: user.id,
+        id: user.sub || user.id,
         email: user.email,
-        full_name: user.full_name,
-        role: user.role,
+        full_name: user.full_name || '',
+        role: user.role_name || user.role,
         is_super_admin: true,
         tenant_id: user.tenant_id || null,
       };
@@ -119,7 +157,7 @@ export function requireSuperAdminOrOwner(req: Request, res: Response, next: Next
     }
 
     // Owner (tenant-specific)
-    if (user.role === 'owner') {
+    if (user.role === 'owner' || user.role_name === 'owner') {
       req.isSuperAdmin = false;
       next();
       return;
@@ -137,6 +175,7 @@ export function requireSuperAdminOrOwner(req: Request, res: Response, next: Next
 
 // =============================================================================
 // requirePlatformAccess — Vérifie accès plateforme (Super Admin ou Owner)
+// Architecture RBAC Production-Hardened
 // =============================================================================
 
 export function requirePlatformAccess(req: Request, res: Response, next: NextFunction): void {
@@ -148,13 +187,35 @@ export function requirePlatformAccess(req: Request, res: Response, next: NextFun
       return;
     }
 
-    // Super Admin
-    if (user.is_super_admin && user.role === 'super_admin') {
+    // Security Layer: Vérifier le statut (SYNCHRONE)
+    const securityCheck = securityLayer.check({
+      user_id: user.sub || user.id,
+      type: user.type || 'platform',
+      role_id: user.role_id,
+      role_name: user.role_name || user.role,
+      tenant_id: user.tenant_id,
+      is_platform_user: user.is_platform_user,
+      version: user.version || 1
+    });
+
+    if (!securityCheck.allowed) {
+      res.status(403).json({
+        error: 'FORBIDDEN',
+        message: securityCheck.reason || 'Accès refusé — vérification de sécurité échouée',
+        code: securityCheck.code
+      });
+      return;
+    }
+
+    // Super Admin (via Policy Engine - PURE FUNCTION)
+    const isSuperAdmin = policyEngine.hasRole(user, 'super_admin');
+    
+    if (isSuperAdmin) {
       req.superAdmin = {
-        id: user.id,
+        id: user.sub || user.id,
         email: user.email,
-        full_name: user.full_name,
-        role: user.role,
+        full_name: user.full_name || '',
+        role: user.role_name || user.role,
         is_super_admin: true,
         tenant_id: user.tenant_id || null,
       };
@@ -184,15 +245,10 @@ export function requirePlatformAccess(req: Request, res: Response, next: NextFun
 // Helper: Vérifier si un utilisateur est super admin
 // =============================================================================
 
-export async function isSuperAdmin(userId: number): Promise<boolean> {
+export function isSuperAdmin(user: any): boolean {
   try {
-    const result = await db('users')
-      .where('id', userId)
-      .where('is_super_admin', 1)
-      .whereIn('role', ['super_admin', 'owner'])
-      .first();
-
-    return !!result;
+    // Policy Engine - PURE FUNCTION (synchrone)
+    return policyEngine.hasRole(user, 'super_admin');
   } catch (error) {
     console.error('[isSuperAdmin] Error:', error);
     return false;
@@ -203,21 +259,10 @@ export async function isSuperAdmin(userId: number): Promise<boolean> {
 // Helper: Obtenir les permissions d'un super admin
 // =============================================================================
 
-export async function getSuperAdminPermissions(userId: number): Promise<string[]> {
+export function getSuperAdminPermissions(): string[] {
   try {
-    const result = await db('platform_admins')
-      .where('user_id', userId)
-      .first();
-
-    if (!result) {
-      return ['*']; // Par défaut, tous les droits
-    }
-
-    try {
-      return JSON.parse(result.permissions);
-    } catch {
-      return ['*'];
-    }
+    // Super admin a toutes les permissions
+    return ['*'];
   } catch (error) {
     console.error('[getSuperAdminPermissions] Error:', error);
     return ['*'];
@@ -228,17 +273,11 @@ export async function getSuperAdminPermissions(userId: number): Promise<string[]
 // Helper: Vérifier une permission spécifique
 // =============================================================================
 
-export async function hasPermission(userId: number, permission: string): Promise<boolean> {
+export function hasPermission(user: any, permission: string): boolean {
   try {
-    const permissions = await getSuperAdminPermissions(userId);
-    
-    // Wildcard = tous les droits
-    if (permissions.includes('*')) {
-      return true;
-    }
-
-    // Vérifier permission spécifique
-    return permissions.includes(permission);
+    // Policy Engine - PURE FUNCTION (synchrone)
+    const result = policyEngine.authorize(user, permission);
+    return result.allowed;
   } catch (error) {
     console.error('[hasPermission] Error:', error);
     return false;
@@ -247,6 +286,7 @@ export async function hasPermission(userId: number, permission: string): Promise
 
 // =============================================================================
 // requirePermission — Middleware pour vérifier une permission spécifique
+// Architecture: Security Layer → Policy Engine → Allow/Deny
 // =============================================================================
 
 export function requirePermission(permission: string) {
@@ -259,19 +299,14 @@ export function requirePermission(permission: string) {
         return;
       }
 
-      // Super Admin a tous les droits (inclut les owners plateforme)
-      if (user.is_super_admin && (user.role === 'super_admin' || user.role === 'owner')) {
-        next();
-        return;
-      }
-
-      // Vérifier permission spécifique
-      const hasPerm = await hasPermission(user.id, permission);
+      // Policy Engine - PURE FUNCTION (synchrone)
+      const result = policyEngine.authorize(user, permission);
       
-      if (!hasPerm) {
+      if (!result.allowed) {
         res.status(403).json({ 
           error: 'FORBIDDEN', 
-          message: `Permission requise: ${permission}` 
+          message: result.reason || `Permission requise: ${permission}`,
+          code: result.code
         });
         return;
       }

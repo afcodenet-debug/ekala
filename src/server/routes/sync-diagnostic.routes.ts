@@ -143,11 +143,11 @@ router.get('/sync/stats', requirePlatformAuth, async (req: Request, res: Respons
       .count('id as count')
       .first();
 
-    // Jobs par table
-    const byTable = await db('sync_outbox')
-      .select('table_name')
+    // Jobs par entité (entity au lieu de table_name)
+    const byEntity = await db('sync_outbox')
+      .select('entity')
       .count('id as count')
-      .groupBy('table_name');
+      .groupBy('entity');
 
     // Taux de succès
     const totalProcessed = (parseInt((completed as any)?.count as string || '0') + 
@@ -169,9 +169,9 @@ router.get('/sync/stats', requirePlatformAuth, async (req: Request, res: Respons
           last_hour: parseInt((lastHour as any)?.count as string || '0'),
           last_day: parseInt((lastDay as any)?.count as string || '0'),
         },
-        by_table: (byTable as any[]).map((t: any) => ({
-          table: t.table_name,
-          count: parseInt(t.count as string || '0'),
+        by_entity: (byEntity as any[]).map((e: any) => ({
+          entity: e.entity,
+          count: parseInt(e.count as string || '0'),
         })),
         success_rate: `${successRate}%`,
         total_processed: totalProcessed,
@@ -186,29 +186,29 @@ router.get('/sync/stats', requirePlatformAuth, async (req: Request, res: Respons
 // GET /platform/sync/tables — Liste des tables synchronisées
 router.get('/sync/tables', requirePlatformAuth, async (req: Request, res: Response) => {
   try {
-    // Récupérer les tables uniques de l'outbox
-    const tables = await db('sync_outbox')
-      .select('table_name')
+    // Récupérer les entités uniques de l'outbox
+    const entities = await db('sync_outbox')
+      .select('entity')
       .distinct()
-      .orderBy('table_name');
+      .orderBy('entity');
 
-    // Pour chaque table, calculer les stats
-    const tableStats = await Promise.all(
-      (tables as any[]).map(async (t: any) => {
+    // Pour chaque entité, calculer les stats
+    const entityStats = await Promise.all(
+      (entities as any[]).map(async (e: any) => {
         const pending = await db('sync_outbox')
-          .where('table_name', t.table_name)
+          .where('entity', e.entity)
           .where('status', 'pending')
           .count('id as count')
           .first();
-        
+      
         const failed = await db('sync_outbox')
-          .where('table_name', t.table_name)
+          .where('entity', e.entity)
           .where('status', 'failed')
           .count('id as count')
           .first();
 
         return {
-          table: t.table_name,
+          entity: e.entity,
           pending: parseInt((pending as any)?.count as string || '0'),
           failed: parseInt((failed as any)?.count as string || '0'),
         };
@@ -217,7 +217,7 @@ router.get('/sync/tables', requirePlatformAuth, async (req: Request, res: Respon
 
     res.json({
       success: true,
-      tables: tableStats,
+      entities: entityStats,
     });
   } catch (error) {
     console.error('[SyncDiagnostic] Error fetching tables:', error);

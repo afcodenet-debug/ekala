@@ -300,12 +300,13 @@ export class LegacySQLiteProductAdapter implements IProductRepository {
         };
 
       db.prepare(`
-        INSERT INTO sync_outbox (id, entity, operation, record_id, payload, tenant_id)
-        VALUES (?, 'product', 'insert', ?, ?, ?)
+        INSERT INTO sync_outbox (id, entity, operation, record_id, payload, version, tenant_id)
+        VALUES (?, 'product', 'insert', ?, ?, ?, ?)
       `).run(
         crypto.randomUUID(),
         String(row.id),
         JSON.stringify(outboxPayload),
+        1,  // version
         row.business_id || businessId
       );
     } catch (err) {
@@ -369,12 +370,13 @@ export class LegacySQLiteProductAdapter implements IProductRepository {
       };
 
       db.prepare(`
-        INSERT INTO sync_outbox (id, entity, operation, record_id, payload, tenant_id)
-        VALUES (?, 'product', 'update', ?, ?, ?)
+        INSERT INTO sync_outbox (id, entity, operation, record_id, payload, version, tenant_id)
+        VALUES (?, 'product', 'update', ?, ?, ?, ?)
       `).run(
         crypto.randomUUID(),
         String(id),
         JSON.stringify(outboxPayload),
+        1,  // version
         row.business_id || businessId
       );
     } catch (err) {
@@ -424,12 +426,13 @@ export class LegacySQLiteProductAdapter implements IProductRepository {
           updated_at: now,
         };
         db.prepare(`
-          INSERT INTO sync_outbox (id, entity, operation, record_id, payload, tenant_id)
-          VALUES (?, 'product', 'delete', ?, ?, ?)
+          INSERT INTO sync_outbox (id, entity, operation, record_id, payload, version, tenant_id)
+          VALUES (?, 'product', 'delete', ?, ?, ?, ?)
         `).run(
           crypto.randomUUID(),
           String(id),
           JSON.stringify(payload),
+          1,  // version
           productRow.tenant_id || businessId
         );
       }

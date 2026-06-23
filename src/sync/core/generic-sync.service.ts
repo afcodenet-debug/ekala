@@ -260,12 +260,45 @@ export class GenericSyncService {
 
     // IMPORTANT: Use CAST to handle both TEXT ("6.0") and INTEGER (6) tenant_id values
     const tenantIdNum = parseInt(tenantId, 10);
+    console.log('[DEBUG] pushByEntity entity=', entity);
+    console.log('[DEBUG] pushByEntity tenant=', tenantIdNum);
+    
+    // DIAGNOSTIC: Count all products in outbox before filtering
+    if (entity === 'product') {
+      const totalInOutbox = this.db.prepare(`
+        SELECT COUNT(*) AS total FROM sync_outbox WHERE entity='product'
+      `).get() as any;
+      const pendingInOutbox = this.db.prepare(`
+        SELECT COUNT(*) AS pending FROM sync_outbox WHERE entity='product' AND status='pending'
+      `).get() as any;
+      const pendingForTenant = this.db.prepare(`
+        SELECT COUNT(*) AS pending_for_tenant FROM sync_outbox 
+        WHERE entity='product' AND status='pending' AND CAST(tenant_id AS INTEGER)=?
+      `).get(tenantIdNum) as any;
+      
+      console.log('[DIAG] Total products in sync_outbox:', totalInOutbox?.total || 0);
+      console.log('[DIAG] Pending products in sync_outbox:', pendingInOutbox?.pending || 0);
+      console.log('[DIAG] Pending products for tenant', tenantIdNum, ':', pendingForTenant?.pending_for_tenant || 0);
+      
+      // Show tenant_id distribution
+      const byTenant = this.db.prepare(`
+        SELECT tenant_id, status, COUNT(*) as count 
+        FROM sync_outbox 
+        WHERE entity='product' 
+        GROUP BY tenant_id, status
+      `).all() as any[];
+      console.log('[DIAG] Products by tenant_id and status:', JSON.stringify(byTenant, null, 2));
+    }
+    
     const items = this.db.prepare(`
       SELECT * FROM sync_outbox
       WHERE entity = ? AND status = 'pending' AND (entity = 'tenant' OR CAST(tenant_id AS INTEGER) = ?)
       ORDER BY created_at ASC
       LIMIT 50
     `).all(entity, tenantIdNum) as any[];
+
+    console.log('[DEBUG] Outbox rows found=', items.length);
+    console.log('[DEBUG] Outbox rows=', JSON.stringify(items, null, 2));
 
     let successCount = 0;
 
@@ -360,10 +393,16 @@ export class GenericSyncService {
     }
 
     // IMPORTANT:
-    // products.id in Supabase is a bigserial (auto-increment). Local "id"/remote_id
-    // mapping may not match Supabase PK, so never send `id` for products.
-    if (def.entity === 'product' && safeUpdate.id !== undefined) {
-      delete safeUpdate.id;
+    // If remote_id is not a valid integer (e.g. 'migrated_from_1_1_...'), 
+    // do NOT send `id` to Supabase as it expects a bigint PK.
+    // Let Supabase auto-generate the id via upsert without explicit id.
+    if (safeUpdate.id !== undefined) {
+      const idStr = String(safeUpdate.id);
+      // Only keep id if it's a valid integer string
+      if (!/^\d+$/.test(idStr)) {
+        delete safeUpdate.id;
+        console.log(`[GenericSync] Stripped invalid id for ${def.entity} #${recordId}: "${idStr}"`);
+      }
     }
 
     for (const field of def.allowedFields) {
@@ -510,7 +549,16 @@ export class GenericSyncService {
       else delete safeUpdate.id;
     }
 
-    const upsertPayload = effectiveRemoteId ? { ...safeUpdate, id: String(effectiveRemoteId) } : safeUpdate;
+    // For products with invalid remote_id (non-numeric strings like 'migrated_from_*'),
+    // do NOT send the id to Supabase - let Supabase auto-generate it.
+    // A valid remote_id must be numeric since Supabase uses bigserial.
+    let upsertPayload: Record<string, any>;
+    const isValidRemoteId = effectiveRemoteId && /^\d+$/.test(String(effectiveRemoteId));
+    if (effectiveRemoteId && isValidRemoteId) {
+      upsertPayload = { ...safeUpdate, id: String(effectiveRemoteId) };
+    } else {
+      upsertPayload = safeUpdate;
+    }
     const shouldInsert = def.entity === 'inventory_movement' && !effectiveRemoteId;
 
     if (shouldInsert) {
@@ -549,8 +597,15 @@ export class GenericSyncService {
       throw error;
     }
 
-    if (!payload.remote_id && data?.id) {
-      this.db.prepare(`UPDATE ${localTable} SET remote_id = ? WHERE id = ?`).run(data.id, recordId);
+    // Always update local remote_id after successful Supabase upsert,
+    // even if payload.remote_id already existed (it might be invalid like 'migrated_from_*')
+    if (data?.id) {
+      const currentLocalRemoteId = this.getRemoteId(localTable, recordId);
+      // Only update if the remote_id changed (newly created or different from current)
+      if (currentLocalRemoteId !== data.id) {
+        this.db.prepare(`UPDATE ${localTable} SET remote_id = ? WHERE id = ?`).run(data.id, recordId);
+        console.log(`[GenericSync] Updated ${def.entity} #${recordId} remote_id: ${currentLocalRemoteId || 'NULL'} → ${data.id}`);
+      }
     }
     
     return true;
@@ -1024,6 +1079,49 @@ export class GenericSyncService {
     return { pushed, pulled, errors };
   }
 
+  diagnoseSyncOutbox(tenantId: string): void {
+    console.log('=== SYNC_OUTBOX DIAGNOSTIC ===');
+    console.log('[DIAG] Tenant ID:', tenantId);
+    
+    const allProducts = this.db.prepare(`SELECT COUNT(*) as count FROM sync_outbox WHERE entity='product'`).get() as any;
+    console.log('[DIAG] Total products in sync_outbox:', allProducts?.count || 0);
+    
+    const pendingProducts = this.db.prepare(`SELECT COUNT(*) as count FROM sync_outbox WHERE entity='product' AND status='pending'`).get() as any;
+    console.log('[DIAG] Pending products in sync_outbox:', pendingProducts?.count || 0);
+    
+    const productsByTenant = this.db.prepare(`
+      SELECT tenant_id, COUNT(*) as count 
+      FROM sync_outbox 
+      WHERE entity='product' 
+      GROUP BY tenant_id
+    `).all() as any[];
+    console.log('[DIAG] Products by tenant_id:', productsByTenant);
+    
+    const productsByStatus = this.db.prepare(`
+      SELECT status, COUNT(*) as count 
+      FROM sync_outbox 
+      WHERE entity='product' 
+      GROUP BY status
+    `).all() as any[];
+    console.log('[DIAG] Products by status:', productsByStatus);
+    
+    const nullTenantProducts = this.db.prepare(`
+      SELECT COUNT(*) as count FROM sync_outbox 
+      WHERE entity='product' AND tenant_id IS NULL
+    `).get() as any;
+    console.log('[DIAG] Products with NULL tenant_id:', nullTenantProducts?.count || 0);
+    
+    const sampleProducts = this.db.prepare(`
+      SELECT id, entity, operation, record_id, tenant_id, status 
+      FROM sync_outbox 
+      WHERE entity='product' 
+      LIMIT 10
+    `).all() as any[];
+    console.log('[DIAG] Sample products:', sampleProducts);
+    
+    console.log('=== END DIAGNOSTIC ===');
+  }
+
   backfillOrphans(tenantId: string): number {
     const entities = getEntitiesBySyncOrder();
     let total = 0;
@@ -1041,20 +1139,20 @@ export class GenericSyncService {
           // For tenants: backfill by local id (no tenant_id filter)
           const orphans = this.db.prepare(`
             SELECT * FROM ${def.localTable}
-            WHERE remote_id IS NULL
-            AND id NOT IN (SELECT record_id FROM sync_outbox WHERE entity = ? AND status IN ('pending', 'in_progress'))
+            WHERE (remote_id IS NULL OR CAST(remote_id AS INTEGER) != remote_id)
+            AND id NOT IN (SELECT record_id FROM sync_outbox WHERE entity = ? AND status IN ('pending', 'in_progress', 'failed'))
           `).all(def.entity) as any[];
 
           for (const record of orphans) {
-            this.queueChange(def.entity, 'insert', { ...record, tenant_id: record.id });
+            this.queueChange(def.entity, 'insert', record);
             total++;
           }
         } else if (def.entity === 'setting') {
           const orphans = this.db
             .prepare(`
               SELECT * FROM ${def.localTable}
-              WHERE tenant_id = ? AND remote_id IS NULL
-              AND key NOT IN (SELECT record_id FROM sync_outbox WHERE entity = ? AND status IN ('pending', 'in_progress'))
+              WHERE tenant_id = ? AND (remote_id IS NULL OR CAST(remote_id AS INTEGER) != remote_id)
+              AND key NOT IN (SELECT record_id FROM sync_outbox WHERE entity = ? AND status IN ('pending', 'in_progress', 'failed'))
             `)
             .all(tenantId, def.entity) as any[];
 
@@ -1066,8 +1164,8 @@ export class GenericSyncService {
           const orphans = this.db
             .prepare(`
               SELECT * FROM ${def.localTable}
-              WHERE tenant_id = ? AND remote_id IS NULL
-              AND id NOT IN (SELECT record_id FROM sync_outbox WHERE entity = ? AND status IN ('pending', 'in_progress'))
+              WHERE tenant_id = ? AND (remote_id IS NULL OR CAST(remote_id AS INTEGER) != remote_id)
+              AND id NOT IN (SELECT record_id FROM sync_outbox WHERE entity = ? AND status IN ('pending', 'in_progress', 'failed'))
             `)
             .all(tenantId, def.entity) as any[];
 

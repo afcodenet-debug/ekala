@@ -140,37 +140,44 @@ export class ProductSyncService {
 
   async syncNow(tenantId: string): Promise<{ pushed: number; pulled: number; errors: number }> {
     if (this.isRunning) {
-      console.log('[Sync] Sync already in progress');
+      console.log('[SYNC CORE] Sync already in progress');
       return { pushed: 0, pulled: 0, errors: 0 };
     }
 
     this.isRunning = true;
     let pushed = 0, pulled = 0, errors = 0;
 
+    console.log(`[SYNC CORE] ========== SYNC START tenant=${tenantId} ==========`);
+
     try {
       // Catégories : Pull d'abord (pour avoir les remote_ids), puis Push
       try {
+        console.log(`[SYNC CORE] Phase 1: PULL categories tenant=${tenantId}`);
         pulled += await this.pullByEntityFromSupabase('category', tenantId);
+        console.log(`[SYNC CORE] Phase 2: PUSH categories tenant=${tenantId}`);
         pushed += await this.pushPendingByEntity('category', tenantId);
       } catch (e: any) {
-        console.error('[Sync] Category sync failed (continuing):', e?.message || e);
+        console.error(`[SYNC CORE] Category sync failed:`, e?.message || e);
         errors++;
       }
 
       // Produits : Bidirectional Sync (Push & Pull)
       try {
+        console.log(`[SYNC CORE] Phase 3: PULL products tenant=${tenantId}`);
         pulled += await this.pullByEntityFromSupabase('product', tenantId);
+        console.log(`[SYNC CORE] Phase 4: PUSH products tenant=${tenantId}`);
         pushed += await this.pushPendingByEntity('product', tenantId);
       } catch (e: any) {
-        console.error('[Sync] Product sync failed (continuing):', e?.message || e);
+        console.error(`[SYNC CORE] Product sync failed:`, e?.message || e);
         errors++;
       }
 
     } catch (err: any) {
-      console.error('[Sync] Sync cycle failed:', err);
+      console.error(`[SYNC CORE] Sync cycle failed:`, err);
       errors++;
     } finally {
       this.isRunning = false;
+      console.log(`[SYNC CORE] ========== SYNC END tenant=${tenantId} pushed=${pushed} pulled=${pulled} errors=${errors} ==========`);
     }
 
     return { pushed, pulled, errors };
@@ -182,6 +189,8 @@ export class ProductSyncService {
 
   async pushPendingByEntity(entity: string, tenantId: string): Promise<number> {
     const table = this.ENTITY_TABLE[entity] || `${entity}s`;
+    
+    // [SYNC CORE] DEBUG: Log la requête de sélection
     const items: OutboxItem[] = this.db
       .prepare(
         `SELECT * FROM sync_outbox 
@@ -191,9 +200,12 @@ export class ProductSyncService {
       )
       .all(entity, tenantId) as unknown as OutboxItem[];
 
+    console.log(`[SYNC CORE] SELECT outbox: entity=${entity} tenant=${tenantId} count=${items.length}`);
+
     let successCount = 0;
 
     for (const item of items) {
+      console.log(`[SYNC CORE] Processing: ${entity} ${item.operation} id=${item.record_id} tenant=${tenantId}`);
       this.db.prepare(`UPDATE sync_outbox SET status = 'in_progress' WHERE id = ?`).run(item.id);
 
       try {
@@ -252,25 +264,27 @@ export class ProductSyncService {
           }
         }
 
+        console.log(`[SYNC CORE] SUCCESS: ${entity} ${item.operation} id=${item.record_id} tenant=${tenantId}`);
         this.db.prepare(`UPDATE sync_outbox SET status = 'done' WHERE id = ?`).run(item.id);
         successCount++;
       } catch (err: any) {
         const newRetryCount = (item.retry_count || 0) + 1;
+        console.error(`[SYNC CORE] FAILED: ${entity} ${item.operation} id=${item.record_id} tenant=${tenantId} error=${err?.message ?? String(err)}`);
+        
         this.db.prepare(`
           UPDATE sync_outbox 
           SET status = 'failed', retry_count = ?, last_error = ?
           WHERE id = ?
         `).run(newRetryCount, err?.message ?? String(err), item.id);
 
-        console.error(`[Sync] Push failed for ${entity} ${item.record_id}:`, err?.message ?? err);
-
-        // Après MAX_RETRIES, archiver dans la DLQ (Faille #7 résolue)
+        // Après MAX_RETRIES, archiver dans la DLQ
         if (newRetryCount >= 5) {
           this.dlq.archiveFailedItem(item.id, err?.message ?? String(err), newRetryCount);
         }
       }
     }
 
+    console.log(`[SYNC CORE] PUSH complete: entity=${entity} tenant=${tenantId} pushed=${successCount} errors=${items.length - successCount}`);
     return successCount;
   }
 
@@ -286,22 +300,23 @@ export class ProductSyncService {
       updated_at: new Date().toISOString(),
     };
 
-    // Récupérer le remote_id le plus frais depuis la DB locale (Faille de doublon résolue)
+    // Récupérer le remote_id le plus frais depuis la DB locale
     const currentRemoteId = this.getRemoteId(table, recordId);
     const effectiveRemoteId = payload.remote_id || currentRemoteId;
+
+    // RÈGLE STRICTE: Pas de fallback "find by name"
+    // Si pas de remote_id et c'est un update → SKIP (ne pas synchroniser)
+    if (!effectiveRemoteId && item.operation === 'update') {
+      console.warn(`[SYNC CORE] SKIP update ${entity} #${recordId} tenant=${tenantId}: no remote_id (strict mode)`);
+      return;
+    }
 
     // Supabase utilise des UUID (strings) pour les IDs
     if (effectiveRemoteId) {
       safeUpdate.id = String(effectiveRemoteId);
-    } else if (item.operation === 'update') {
-      // Pour les updates sans remote_id, chercher par natural key
-      const existingRemote = await this.findExistingRemoteRecord(table, payload, tenantId);
-      if (existingRemote) {
-        safeUpdate.id = String(existingRemote.id);
-      } else {
-        console.warn(`[Sync] Cannot push update for ${entity} #${recordId}: no remote_id and no matching remote record`);
-        return;
-      }
+    } else if (item.operation === 'insert') {
+      // Pour les inserts, on laisse Supabase générer l'ID
+      delete safeUpdate.id;
     }
 
     if (entity === 'product') {
@@ -1005,25 +1020,12 @@ export class ProductSyncService {
    * Find existing remote record by natural key (e.g., product name + tenant)
    * Used when pushing updates for records that may not have a remote_id yet
    */
-  private async findExistingRemoteRecord(table: string, payload: any, tenantId: string): Promise<any | null> {
-    if (table === 'products' && payload.name && tenantId) {
-      const { data } = await this.supabase
-        .from('products')
-        .select('id')
-        .eq('name', payload.name)
-        .eq('tenant_id', tenantId)
-        .maybeSingle();
-      return data;
-    }
-    if (table === 'categories' && payload.name && tenantId) {
-      const { data } = await this.supabase
-        .from('categories')
-        .select('id')
-        .eq('name', payload.name)
-        .eq('tenant_id', tenantId)
-        .maybeSingle();
-      return data;
-    }
+  /**
+   * DÉSACTIVÉ: findExistingRemoteRecord supprimé pour éviter les fallbacks fragiles
+   * RÈGLE STRICTE: update ONLY if remote_id exists, otherwise treat as INSERT
+   */
+  private async findExistingRemoteRecord(_table: string, _payload: any, _tenantId: string): Promise<any | null> {
+    console.warn(`[SYNC CORE] findExistingRemoteRecord appelé - ceci ne devrait pas arriver en mode strict`);
     return null;
   }
 

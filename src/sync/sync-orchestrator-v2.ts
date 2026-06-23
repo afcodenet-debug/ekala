@@ -204,6 +204,7 @@ export class SyncOrchestratorV2 {
       try {
         const backfilled = this.genericSync.backfillOrphans(tenantId);
         if (backfilled > 0) console.log(`[SyncV2] Backfilled ${backfilled} orphan records`);
+        this.genericSync.diagnoseSyncOutbox(tenantId);
       } catch (backfillErr: any) {
         console.warn('[SyncV2] Backfill partial failure:', backfillErr?.message);
       }

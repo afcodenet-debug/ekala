@@ -16,6 +16,8 @@ import { SYNC_ENTITIES } from './entity-registry';
  */
 function rebuildSyncOutboxTable(db: Database.Database): void {
   try {
+    console.log('[SQL DEBUG] Rebuilding sync_outbox table...');
+    
     db.exec(`
       CREATE TABLE IF NOT EXISTS sync_outbox_new (
         id TEXT PRIMARY KEY,
@@ -32,24 +34,33 @@ function rebuildSyncOutboxTable(db: Database.Database): void {
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
       )
     `);
+    console.log('[SQL DEBUG] Created sync_outbox_new table');
 
     // Copy data from old table (if it exists)
     try {
+      const oldData = db.prepare('SELECT COUNT(*) as cnt FROM sync_outbox').get() as { cnt: number };
+      console.log(`[SQL DEBUG] Old sync_outbox has ${oldData.cnt} rows`);
+      
       db.exec(`
         INSERT OR IGNORE INTO sync_outbox_new 
-        SELECT id, entity, operation, record_id, payload, version, status, retry_count, last_error, COALESCE(tenant_id, 0), created_at, updated_at
+        SELECT id, entity, operation, record_id, payload, version, status, retry_count, last_error, tenant_id, created_at, updated_at
         FROM sync_outbox
       `);
-    } catch (e) {
+      console.log('[SQL DEBUG] Data copied to sync_outbox_new');
+    } catch (e: any) {
       // Old table might not exist or be empty - that's fine
-      console.warn('[SyncTables] Could not copy data from old sync_outbox (table may be empty):', e);
+      console.warn('[SyncTables] Could not copy data from old sync_outbox (table may be empty):', e?.message);
     }
 
     // Drop old table and rename new one
+    console.log('[SQL DEBUG] Dropping old sync_outbox...');
     db.exec('DROP TABLE IF EXISTS sync_outbox');
+    console.log('[SQL DEBUG] Renaming sync_outbox_new to sync_outbox...');
     db.exec('ALTER TABLE sync_outbox_new RENAME TO sync_outbox');
+    console.log('[SQL DEBUG] sync_outbox table rebuilt successfully');
   } catch (err: any) {
-    console.warn('[SyncTables] Could not rebuild sync_outbox table:', err?.message);
+    console.error('[SyncTables] Could not rebuild sync_outbox table:', err?.message);
+    console.error('[SyncTables] Error stack:', err?.stack);
   }
 }
 
@@ -63,6 +74,7 @@ export function ensureSyncTables(db: Database.Database) {
   try {
     // --- sync_outbox (avec tenant_id) ---
     try {
+      console.log('[SQL DEBUG] Creating sync_outbox table...');
       db.exec(`
         CREATE TABLE IF NOT EXISTS sync_outbox (
           id TEXT PRIMARY KEY,
@@ -79,26 +91,33 @@ export function ensureSyncTables(db: Database.Database) {
           updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
         )
       `);
-    } catch (err) {
-      console.warn('[SyncTables] Could not create sync_outbox table:', err);
+      console.log('[SQL DEBUG] sync_outbox table created/verified');
+    } catch (err: any) {
+      console.error('[SyncTables] Could not create sync_outbox table:', err?.message);
+      console.error('[SyncTables] Error stack:', err?.stack);
     }
 
     // ⭐ Correction: s'assurer que tenant_id existe sur sync_outbox (migration à chaud)
     try {
+      console.log('[SQL DEBUG] Checking sync_outbox columns...');
       const cols = db.prepare("PRAGMA table_info(sync_outbox)").all() as any[];
-      const hasTenantId = cols.some(c => c.name === 'tenant_id');
-      if (!hasTenantId) {
-        try {
-          db.exec("ALTER TABLE sync_outbox ADD COLUMN tenant_id INTEGER");
-          console.log('[SyncTables] Added tenant_id column to sync_outbox');
-        } catch (alterErr: any) {
-          // If ALTER fails, rebuild the table entirely (handles triggers/views dependencies)
-          console.warn('[SyncTables] ALTER TABLE failed, rebuilding sync_outbox:', alterErr?.message);
-          rebuildSyncOutboxTable(db);
-        }
+      const colNames = cols.map((c: any) => c.name);
+      console.log(`[SQL DEBUG] sync_outbox columns: ${colNames.join(', ')}`);
+      
+      const hasTenantId = cols.some((c: any) => c.name === 'tenant_id');
+      const hasVersion = cols.some((c: any) => c.name === 'version');
+      
+      console.log(`[SQL DEBUG] sync_outbox has tenant_id=${hasTenantId}, has version=${hasVersion}`);
+      
+      if (!hasTenantId || !hasVersion) {
+        console.warn('[SyncTables] sync_outbox missing columns, rebuilding...');
+        rebuildSyncOutboxTable(db);
+      } else {
+        console.log('[SQL DEBUG] sync_outbox schema is correct');
       }
     } catch (err: any) {
-      console.warn('[SyncTables] Failed to ensure sync_outbox schema (non-critical):', err?.message);
+      console.error('[SyncTables] Failed to ensure sync_outbox schema:', err?.message);
+      console.error('[SyncTables] Error stack:', err?.stack);
     }
 
     // ⭐ FIX: Create indexes only after ensuring columns exist (wrap in try-catch)

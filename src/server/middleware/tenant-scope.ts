@@ -37,8 +37,19 @@ declare global {
  */
 export function requireTenantScope(req: Request, _res: Response, next: NextFunction) {
   try {
+    const user = (req as any).user;
+    
+    // Les admins plateforme n'ont pas de tenant_id (ils gèrent tous les tenants)
+    // Leur accès est contrôlé par requirePlatformAuth / requirePlatformPermission
+    if (user?.type === 'platform' || user?.is_platform_user) {
+      // Platform admin: pas de scope tenant nécessaire
+      // Leur accès est déjà validé par le middleware platform
+      return next();
+    }
+    
+    // Utilisateur tenant: extraire et vérifier le tenant_id
     const tenantId = getTenantId(req as any);
-    const userId = (req as any).user?.sub;
+    const userId = user?.sub;
     
     req.tenant_id = tenantId;
     req.user_id = userId;

@@ -718,7 +718,7 @@ router.post('/sync/trigger', requirePlatformAuth, async (_req: Request, res: Res
       .where('status', 'pending')
       .update({
         status: 'pending',
-        attempts: 0,
+        retry_count: 0,
         last_error: null,
         updated_at: new Date().toISOString(),
       });

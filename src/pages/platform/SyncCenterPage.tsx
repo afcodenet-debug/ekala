@@ -232,7 +232,7 @@ const SyncCenterPage = () => {
   const loadStats = async () => {
     try {
       const data = await api.platform.getSyncStats();
-      if (data.success) {
+      if (data.success && data.stats?.by_status) {
         setStats(data.stats.by_status);
       }
     } catch (error: any) {
