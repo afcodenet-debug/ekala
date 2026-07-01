@@ -2,6 +2,7 @@ import express from 'express';
 import db from '../db/database';
 import { env } from '../config/env';
 import { createClient } from '@supabase/supabase-js';
+import { dataSource } from '../infrastructure/data-source-manager';
 
 const router = express.Router();
 
@@ -12,9 +13,10 @@ router.get('/', async (req: any, res) => {
     return res.status(401).json({ error: 'TENANT_REQUIRED', message: 'tenant_id requis' });
   }
 
-  if (!db) {
+  // ===== Mode Cloud (Supabase) =====
+  if (dataSource.isCloudMode()) {
     if (!env.SUPABASE_URL || !env.SUPABASE_SERVICE_ROLE_KEY) {
-      console.warn('[Expenses] SQLite disabled and Supabase not configured. Returning empty list for GET /expenses');
+      console.warn('[Expenses] Cloud mode but Supabase not configured. Returning empty list for GET /expenses');
       return res.status(200).json([]);
     }
 
@@ -75,9 +77,10 @@ router.post('/', async (req: any, res) => {
     return res.status(400).json({ error: 'All fields are required' });
   }
 
-  if (!db) {
+  // ===== Mode Cloud (Supabase) =====
+  if (dataSource.isCloudMode()) {
     if (!env.SUPABASE_URL || !env.SUPABASE_SERVICE_ROLE_KEY) {
-      console.warn('[Expenses] SQLite disabled and Supabase not configured. Cannot create expense.');
+      console.warn('[Expenses] Cloud mode but Supabase not configured. Cannot create expense.');
       return res.status(500).json({ error: 'Supabase not configured' });
     }
 
@@ -144,9 +147,10 @@ router.delete('/:id', async (req: any, res) => {
     return res.status(401).json({ error: 'TENANT_REQUIRED', message: 'tenant_id requis' });
   }
 
-  if (!db) {
+  // ===== Mode Cloud (Supabase) =====
+  if (dataSource.isCloudMode()) {
     if (!env.SUPABASE_URL || !env.SUPABASE_SERVICE_ROLE_KEY) {
-      console.warn('[Expenses] SQLite disabled and Supabase not configured. Cannot delete expense.');
+      console.warn('[Expenses] Cloud mode but Supabase not configured. Cannot delete expense.');
       return res.status(500).json({ error: 'Supabase not configured' });
     }
 

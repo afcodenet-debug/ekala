@@ -3,6 +3,7 @@ import crypto from 'crypto';
 import { getProductSyncService, withOutboxTransaction } from '../../sync';
 import { env } from '../config/env';
 import { getCurrentTenantId } from '../db/tenant-context';
+import { dataSource } from '../infrastructure/data-source-manager';
 
 export type TableStatus = 'available' | 'active' | 'reserved' | 'cleaning' | 'out_of_service';
 
@@ -57,7 +58,7 @@ export class TableService {
     const resolvedTenantId = resolveTenantId(tenantId);
 
     // ===== Mode Cloud (Supabase) =====
-    if (env.SUPABASE_URL && env.SUPABASE_SERVICE_ROLE_KEY && !db) {
+    if (dataSource.isCloudMode()) {
       try {
         const { supabaseQuery } = require('../infrastructure/supabase-query');
         let query = supabaseQuery('restaurant_tables')
@@ -133,7 +134,7 @@ export class TableService {
     const resolvedTenantId = resolveTenantId(tenantId);
 
     // ===== Mode Cloud (Supabase) =====
-    if (env.SUPABASE_URL && env.SUPABASE_SERVICE_ROLE_KEY && !db) {
+    if (dataSource.isCloudMode()) {
       try {
         const { supabaseQuery } = require('../infrastructure/supabase-query');
         const { data, error } = await supabaseQuery('restaurant_tables')
@@ -179,8 +180,8 @@ export class TableService {
   static async create(tableData: Omit<Table, 'id' | 'created_at' | 'updated_at' | 'tenant_id'>, tenantId: number): Promise<Table> {
     const resolvedTenantId = resolveTenantId(tenantId);
 
-    // ===== TOUJOURS SQLite d'abord (source de vérité) =====
-    if (db) {
+    // ===== Mode Local (SQLite) =====
+    if (!dataSource.isCloudMode() && db) {
       try {
         const qrToken = crypto.randomUUID().replace(/-/g, '');
         const now = new Date().toISOString();
@@ -234,7 +235,7 @@ export class TableService {
       }
     }
 
-    // ===== Fallback Supabase si SQLite non disponible =====
+    // ===== Mode Cloud (Supabase) =====
     if (!env.SUPABASE_URL || !env.SUPABASE_SERVICE_ROLE_KEY) {
       throw new Error('Supabase not configured');
     }
@@ -294,8 +295,8 @@ export class TableService {
   static async update(id: number, updates: Partial<Table>, tenantId: number): Promise<Table> {
     const resolvedTenantId = resolveTenantId(tenantId);
 
-    // ===== TOUJOURS SQLite d'abord (source de vérité) =====
-    if (db) {
+    // ===== Mode Local (SQLite) =====
+    if (!dataSource.isCloudMode() && db) {
       try {
         return withOutboxTransaction(db, String(resolvedTenantId), () => {
           const existing = db.prepare('SELECT * FROM restaurant_tables WHERE id = ? AND tenant_id = ?').get(id, resolvedTenantId) as Table | undefined;
@@ -366,7 +367,7 @@ export class TableService {
       }
     }
 
-    // ===== Fallback Supabase si SQLite non disponible =====
+    // ===== Mode Cloud (Supabase) =====
     if (!env.SUPABASE_URL || !env.SUPABASE_SERVICE_ROLE_KEY) {
       throw new Error('Supabase not configured');
     }
@@ -450,8 +451,8 @@ export class TableService {
     let deletedFromSqlite = false;
     let deletedFromSupabase = false;
 
-    // 1. Toujours supprimer dans SQLite d'abord (source de vérité)
-    if (db) {
+    // 1. Mode Local (SQLite)
+    if (!dataSource.isCloudMode() && db) {
       try {
         const result = db.prepare('DELETE FROM restaurant_tables WHERE id = ? AND tenant_id = ?').run(id, resolvedTenantId);
         deletedFromSqlite = result.changes > 0;
@@ -471,8 +472,8 @@ export class TableService {
       }
     }
 
-    // 2. Supprimer dans Supabase (si configuré)
-    if (env.SUPABASE_URL && env.SUPABASE_SERVICE_ROLE_KEY) {
+    // 2. Mode Cloud (Supabase)
+    if (dataSource.isCloudMode()) {
       try {
         const { getSupabaseClient } = require('../database/supabase.client');
         const supabase = getSupabaseClient();
@@ -503,8 +504,8 @@ export class TableService {
   static async regenerateQrToken(id: number, tenantId: number): Promise<Table> {
     const resolvedTenantId = resolveTenantId(tenantId);
 
-    // ===== TOUJOURS SQLite d'abord (source de vérité) =====
-    if (db) {
+    // ===== Mode Local (SQLite) =====
+    if (!dataSource.isCloudMode() && db) {
       try {
         return withOutboxTransaction(db, String(resolvedTenantId), () => {
           const table = db.prepare('SELECT * FROM restaurant_tables WHERE id = ? AND tenant_id = ?').get(id, resolvedTenantId) as Table | undefined;
@@ -549,7 +550,7 @@ export class TableService {
       }
     }
 
-    // ===== Fallback Supabase si SQLite non disponible =====
+    // ===== Mode Cloud (Supabase) =====
     if (!env.SUPABASE_URL || !env.SUPABASE_SERVICE_ROLE_KEY) {
       throw new Error('Supabase not configured');
     }

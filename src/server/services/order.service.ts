@@ -2,6 +2,7 @@ import db from '../db/database';
 import { notifyOrderCheckout, loadRawSettings } from '../services/notification.service';
 import { getOrderSyncService, getProductSyncService, withOutboxTransaction } from '../../sync';
 import { getCurrentTenantId } from '../db/tenant-context';
+import { dataSource } from '../infrastructure/data-source-manager';
 
 export interface OrderItem {
   id?: number;
@@ -35,8 +36,8 @@ export class OrderService {
   private static getItemsForOrder(orderId: number, fallbackJson?: string, isRemote: boolean = false): OrderItem[] {
     const tenantId = getCurrentTenantId();
     try {
-      // Cloud mode guard: if db is null, we can only rely on fallbackJson (JSON snapshot in orders.items)
-      if (!db) {
+      // Cloud mode guard: if in cloud mode, we can only rely on fallbackJson (JSON snapshot in orders.items)
+      if (dataSource.isCloudMode()) {
         if (fallbackJson) {
           try {
             return JSON.parse(fallbackJson || '[]') as OrderItem[];
@@ -132,7 +133,7 @@ export class OrderService {
 
   private static resolveEffectiveWaiterId(table_id: number | null, waiter_id: number): number {
     const tenantId = getCurrentTenantId();
-    if (!db || !table_id) return waiter_id || 1;
+    if (dataSource.isCloudMode() || !table_id) return waiter_id || 1;
 
     const table = db.prepare(
       'SELECT assigned_waiter_id FROM restaurant_tables WHERE id = ? AND tenant_id = ?'
@@ -142,7 +143,7 @@ export class OrderService {
   }
 
   private static insertOrderItems(orderId: number, items: OrderItem[]): void {
-    if (!db) return;
+    if (dataSource.isCloudMode()) return;
     const tenantId = getCurrentTenantId();
     const itemStmt = db.prepare(`
       INSERT INTO order_items (
@@ -166,7 +167,7 @@ export class OrderService {
   }
 
   private static replaceOrderItems(orderId: number, items: OrderItem[]): void {
-    if (!db) return;
+    if (dataSource.isCloudMode()) return;
     const tenantId = getCurrentTenantId();
     // Queue deletions for sync
     try {
@@ -192,9 +193,9 @@ export class OrderService {
     const { waiter_id, role, table_id, status } = params;
     const tenantId = getCurrentTenantId();
 
-    // Cloud mode guard: if db is null, we must fall back to Supabase
-    if (!db) {
-      console.log(`[OrderService] SQLite disabled (db is null). Falling back to Supabase for getAll (tenant=${tenantId})`);
+    // ===== Mode Cloud (Supabase) =====
+    if (dataSource.isCloudMode()) {
+      console.log(`[OrderService] Cloud mode. Using Supabase for getAll (tenant=${tenantId})`);
       try {
         const { getSupabaseClient } = require('../database/supabase.client');
         const supabase = getSupabaseClient();
@@ -320,9 +321,9 @@ export class OrderService {
 
   static async getById(id: number): Promise<OrderData | null> {
     const tenantId = getCurrentTenantId();
-    // Cloud mode guard: db might be null (SQLite disabled on Render)
-    if (!db) {
-      console.log(`[OrderService] SQLite disabled (db is null). Falling back to Supabase for getById (id=${id}, tenant=${tenantId})`);
+    // ===== Mode Cloud (Supabase) =====
+    if (dataSource.isCloudMode()) {
+      console.log(`[OrderService] Cloud mode. Using Supabase for getById (id=${id}, tenant=${tenantId})`);
       try {
         const { getSupabaseClient } = require('../database/supabase.client');
         const supabase = getSupabaseClient();
@@ -418,9 +419,9 @@ export class OrderService {
   static async create(orderData: Omit<OrderData, 'id' | 'created_at' | 'updated_at'>): Promise<OrderData> {
     const tenantId = getCurrentTenantId();
 
-    // Cloud mode guard: db might be null (SQLite disabled on Render)
-    if (!db) {
-      console.log(`[OrderService] SQLite disabled (db is null). Falling back to Supabase for create (tenant=${tenantId})`);
+    // ===== Mode Cloud (Supabase) =====
+    if (dataSource.isCloudMode()) {
+      console.log(`[OrderService] Cloud mode. Using Supabase for create (tenant=${tenantId})`);
       try {
         const { getSupabaseClient } = require('../database/supabase.client');
         const supabase = getSupabaseClient();
@@ -585,9 +586,9 @@ export class OrderService {
   static async updateItems(id: number, items: OrderItem[]): Promise<OrderData> {
     const tenantId = getCurrentTenantId();
 
-    // Cloud mode guard: db might be null (SQLite disabled on Render)
-    if (!db) {
-      console.log(`[OrderService] SQLite disabled (db is null). Falling back to Supabase for updateItems (tenant=${tenantId})`);
+    // ===== Mode Cloud (Supabase) =====
+    if (dataSource.isCloudMode()) {
+      console.log(`[OrderService] Cloud mode. Using Supabase for updateItems (tenant=${tenantId})`);
       try {
         const { getSupabaseClient } = require('../database/supabase.client');
         const supabase = getSupabaseClient();
@@ -685,9 +686,9 @@ export class OrderService {
   static async updateStatus(id: number, status: OrderData['status']): Promise<OrderData> {
     const tenantId = getCurrentTenantId();
 
-    // Cloud mode guard: db might be null (SQLite disabled on Render)
-    if (!db) {
-      console.log(`[OrderService] SQLite disabled (db is null). Falling back to Supabase for updateStatus (id=${id}, status=${status}, tenant=${tenantId})`);
+    // ===== Mode Cloud (Supabase) =====
+    if (dataSource.isCloudMode()) {
+      console.log(`[OrderService] Cloud mode. Using Supabase for updateStatus (id=${id}, status=${status}, tenant=${tenantId})`);
       try {
         const { getSupabaseClient } = require('../database/supabase.client');
         const supabase = getSupabaseClient();
@@ -873,9 +874,9 @@ export class OrderService {
   static async deleteOrder(id: number): Promise<void> {
     const tenantId = getCurrentTenantId();
 
-    // Cloud mode guard: db might be null (SQLite disabled on Render)
-    if (!db) {
-      console.log(`[OrderService] SQLite disabled (db is null). Falling back to Supabase for deleteOrder (id=${id}, tenant=${tenantId})`);
+    // ===== Mode Cloud (Supabase) =====
+    if (dataSource.isCloudMode()) {
+      console.log(`[OrderService] Cloud mode. Using Supabase for deleteOrder (id=${id}, tenant=${tenantId})`);
       try {
         const { getSupabaseClient } = require('../database/supabase.client');
         const supabase = getSupabaseClient();

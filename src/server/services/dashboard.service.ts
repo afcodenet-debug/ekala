@@ -2,6 +2,7 @@ import db from '../db/database';
 import { getSupabaseClient } from '../database/supabase.client';
 import { env } from '../config/env';
 import { getCurrentTenantId } from '../db/tenant-context';
+import { dataSource } from '../infrastructure/data-source-manager';
 
 export interface DashboardSummary {
   kpis: {
@@ -22,10 +23,19 @@ export interface DashboardSummary {
 export class DashboardService {
   static async getSummary(): Promise<DashboardSummary> {
     const tenantId = getCurrentTenantId();
-    if (!db) {
+    
+    // ===== Mode Cloud (Supabase) =====
+    if (dataSource.isCloudMode()) {
       return this.getSummarySupabase(tenantId);
     }
-    return this.getSummarySQLite(tenantId);
+    
+    // ===== Mode Local (SQLite) =====
+    if (db) {
+      return this.getSummarySQLite(tenantId);
+    }
+    
+    // Fallback
+    return this.getSummarySupabase(tenantId);
   }
 
   private static async getSummarySQLite(tenantId: number): Promise<DashboardSummary> {
