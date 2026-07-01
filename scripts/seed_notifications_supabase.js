@@ -22,11 +22,11 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
 async function seedNotifications() {
   console.log('🌱 Insertion de notifications de test...\n');
 
-  // UUIDs de test (format valide pour Supabase)
+  // BIGINT user IDs (matches Supabase users.id schema)
   const testUserIds = [
-    '00000000-0000-0000-0000-000000000001',
-    '00000000-0000-0000-0000-000000000002',
-    '00000000-0000-0000-0000-000000000003',
+    1,  // admin
+    31, // waiter
+    16, // tenant user
   ];
 
   const testNotifications = [
@@ -39,7 +39,7 @@ async function seedNotifications() {
       notification_type: 'NEW_QR_ORDER',
       metadata: { table_id: 1, order_id: 123 },
       link: '/orders?highlight=123',
-      user_id: testUserIds[0],
+      user_id: testUserIds[1], // waiter
       role: null,
     },
     {
@@ -61,9 +61,9 @@ async function seedNotifications() {
       message: 'La commande #123 vous a été assignée',
       priority: 'medium',
       notification_type: 'ORDER_ASSIGNED',
-      metadata: { order_id: 123, waiter_id: testUserIds[0] },
+      metadata: { order_id: 123, waiter_id: testUserIds[1] },
       link: '/orders/123',
-      user_id: testUserIds[0],
+      user_id: testUserIds[1], // waiter
       role: null,
     },
     {
@@ -75,7 +75,7 @@ async function seedNotifications() {
       notification_type: 'PAYMENT_RECEIVED',
       metadata: { order_id: 123, amount: 15000 },
       link: '/sales',
-      user_id: testUserIds[1],
+      user_id: testUserIds[1], // waiter
       role: null,
     },
     {

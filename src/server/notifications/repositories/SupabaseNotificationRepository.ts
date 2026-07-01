@@ -22,7 +22,7 @@ export interface SupabaseNotification {
   notification_type?: string;
   metadata?: any;
   link?: string;
-  user_id?: number;
+  user_id?: number;  // BIGINT to match users.id
   role?: string;
   read_at?: string;
   created_at: string;
@@ -46,7 +46,7 @@ export class SupabaseNotificationRepository {
       notification_type: data.category || null,
       metadata: data.payload || {},
       link: null,
-      user_id: data.user_id ? parseInt(data.user_id) : null,
+      user_id: data.user_id ? parseInt(data.user_id) : null,  // BIGINT
       role: null,
       read_at: null,
       created_at: now,

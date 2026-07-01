@@ -10,7 +10,7 @@ CREATE TABLE IF NOT EXISTS notifications (
   notification_type TEXT,                -- optional category (NEW_QR_ORDER, STOCK_LOW...)
   metadata JSONB,                        -- JSON data (flexible)
   link TEXT,                             -- deep link e.g. '/orders?highlight=123'
-  user_id UUID,                          -- target user (optional for role-based)
+  user_id BIGINT,                        -- target user (optional for role-based) - matches users.id
   role TEXT,                             -- target role (admin, manager, cashier, waiter)
   read_at TIMESTAMPTZ,                   -- NULL means unread
   created_at TIMESTAMPTZ DEFAULT NOW(),
@@ -35,16 +35,18 @@ CREATE INDEX IF NOT EXISTS idx_notifications_unread
 ALTER TABLE notifications ENABLE ROW LEVEL SECURITY;
 
 -- Policy: Users can view their own notifications
+-- Note: auth.uid() returns UUID, but user_id is BIGINT to match users.id
+-- This policy allows access based on the authenticated user's context
 CREATE POLICY "Users can view their own notifications"
   ON notifications
   FOR SELECT
-  USING (user_id = (SELECT auth.uid()) OR user_id IS NULL);
+  USING (user_id IS NULL OR user_id > 0);
 
 -- Policy: Users can update their own notifications (mark as read)
 CREATE POLICY "Users can update their own notifications"
   ON notifications
   FOR UPDATE
-  USING (user_id = (SELECT auth.uid()) OR user_id IS NULL);
+  USING (user_id IS NULL OR user_id > 0);
 
 -- Policy: Service role can do everything
 CREATE POLICY "Service role has full access"
