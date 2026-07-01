@@ -5,6 +5,7 @@ import { requirePermission } from '../middleware/auth';
 import { getProductSyncService, getOrderSyncService, getOrchestratorV2 } from '../../sync';
 import { createClient } from '@supabase/supabase-js';
 import { env } from '../config/env';
+import { dataSource } from '../infrastructure/data-source-manager';
 
 const router = express.Router();
 
@@ -100,9 +101,9 @@ router.post('/checkout', requirePermission('PROCESS_PAYMENTS'), async (req: any,
 
   console.log('[Sales] Checkout request:', { order_id: normalizedOrderId, payment_method, user_id, discount, tax, itemsCount: Array.isArray(requestItems) ? requestItems.length : 'none' });
 
-  // Cloud mode guard: db might be null (SQLite disabled)
-  if (!db) {
-    console.log(`[Sales] SQLite disabled (db is null) — falling back to Supabase for checkout (tenant=${tenantId})`);
+  // ===== Mode Cloud (Supabase) =====
+  if (dataSource.isCloudMode()) {
+    console.log(`[Sales] Cloud mode. Using Supabase for checkout (tenant=${tenantId})`);
     try {
       const supabaseUrl = env.SUPABASE_URL || process.env.SUPABASE_URL;
       const supabaseKey = env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -114,6 +115,7 @@ router.post('/checkout', requirePermission('PROCESS_PAYMENTS'), async (req: any,
       const supabase = createClient(supabaseUrl, supabaseKey, { auth: { persistSession: false } });
       
       // 1. Fetch order details from Supabase
+      console.log(`[Sales] Fetching order ${normalizedOrderId} from Supabase...`);
       const { data: supaOrder, error: supaErr } = await supabase
         .from('orders')
         .select('id, status, table_id, waiter_id, items, total')
@@ -123,8 +125,10 @@ router.post('/checkout', requirePermission('PROCESS_PAYMENTS'), async (req: any,
 
       if (supaErr || !supaOrder) {
         console.error(`[Sales] Order ${normalizedOrderId} not found in Supabase for tenant ${tenantId}`, supaErr);
-        return res.status(404).json({ error: 'Order not found in Supabase' });
+        return res.status(404).json({ error: 'Order not found in Supabase', details: supaErr?.message });
       }
+
+      console.log(`[Sales] Order found:`, { id: supaOrder.id, status: supaOrder.status, total: supaOrder.total });
 
       // 2. Generate a unique invoice number (NOT NULL constraint)
       const invoiceNumber = `INV-${String(Date.now()).slice(-6)}${Math.floor(Math.random() * 100)}`;
@@ -134,6 +138,7 @@ router.post('/checkout', requirePermission('PROCESS_PAYMENTS'), async (req: any,
       const total_amount = subtotal - Number(discount) + Number(tax);
 
       // 3. Create the sale record
+      console.log(`[Sales] Creating sale in Supabase...`);
       const { data: saleData, error: saleErr } = await supabase
         .from('sales')
         .insert({
@@ -153,13 +158,21 @@ router.post('/checkout', requirePermission('PROCESS_PAYMENTS'), async (req: any,
 
       if (saleErr) {
         console.error('[Sales] Supabase sale insert failed:', saleErr);
-        throw saleErr;
+        return res.status(500).json({ 
+          error: 'Failed to create sale in Supabase', 
+          details: saleErr.message,
+          code: saleErr.code,
+          hint: saleErr.hint
+        });
       }
 
       console.log(`[Sales] Sale ${saleData.id} created successfully in Supabase`);
 
       // 4. Insert sale items
-      const items = Array.isArray(supaOrder.items) ? supaOrder.items : [];
+      const rawItems = typeof supaOrder.items === 'string' ? JSON.parse(supaOrder.items) : (supaOrder.items || []);
+      const items = Array.isArray(rawItems) ? rawItems : [];
+      console.log(`[Sales] Processing ${items.length} sale items...`);
+      
       if (items.length > 0) {
         const saleItems = items.map((it: any) => ({
           sale_id: saleData.id,
@@ -171,11 +184,27 @@ router.post('/checkout', requirePermission('PROCESS_PAYMENTS'), async (req: any,
         }));
         
         const { error: itemsErr } = await supabase.from('sale_items').insert(saleItems);
-        if (itemsErr) console.warn('[Sales] Failed to insert sale items in Supabase:', itemsErr);
+        if (itemsErr) {
+          console.error('[Sales] Failed to insert sale items in Supabase:', itemsErr);
+          // Don't fail the whole checkout if items fail
+        } else {
+          console.log(`[Sales] ${saleItems.length} sale items inserted successfully`);
+        }
       }
 
       // 5. Update order status to paid
-      await supabase.from('orders').update({ status: 'paid', updated_at: new Date().toISOString() }).eq('id', normalizedOrderId).eq('tenant_id', tenantId);
+      console.log(`[Sales] Updating order ${normalizedOrderId} status to paid...`);
+      const { error: updateErr } = await supabase
+        .from('orders')
+        .update({ status: 'paid', updated_at: new Date().toISOString() })
+        .eq('id', normalizedOrderId)
+        .eq('tenant_id', tenantId);
+      
+      if (updateErr) {
+        console.error('[Sales] Failed to update order status:', updateErr);
+      } else {
+        console.log(`[Sales] Order ${normalizedOrderId} marked as paid`);
+      }
 
       return res.json({
         saleId: saleData.id,
@@ -187,7 +216,11 @@ router.post('/checkout', requirePermission('PROCESS_PAYMENTS'), async (req: any,
       });
     } catch (err: any) {
       console.error('[Sales] Supabase checkout failed:', err?.message || err);
-      return res.status(500).json({ error: err?.message || 'Failed to checkout via Supabase' });
+      console.error('[Sales] Error stack:', err?.stack);
+      return res.status(500).json({ 
+        error: err?.message || 'Failed to checkout via Supabase',
+        stack: process.env.NODE_ENV === 'development' ? err?.stack : undefined
+      });
     }
   }
 
