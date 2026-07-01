@@ -780,8 +780,27 @@ export class GenericSyncService {
       else query = query.gt('created_at', since).order('created_at', { ascending: true });
     }
 
-    const { data, error } = await query;
-    if (error) {
+    let data: any[] | null = null;
+    let error: any = null;
+
+    const { data: primaryData, error: primaryError } = await query;
+    data = primaryData;
+    error = primaryError;
+
+    if (error && entity !== 'tenant' && hasUpdatedAt && error.message?.toLowerCase().includes('updated_at')) {
+      console.warn(`[GenericSync] updated_at is unavailable for ${entity}; falling back to created_at`, error.message);
+      const fallbackQuery = this.supabase.from(remoteTable)
+        .select('*')
+        .eq('tenant_id', tenantIdForQuery)
+        .gt('created_at', since)
+        .order('created_at', { ascending: true });
+      const { data: fallbackData, error: fallbackError } = await fallbackQuery;
+      if (fallbackError) {
+        console.error(`[GenericSync] Failed to pull ${entity} from Supabase:`, fallbackError.message);
+        return 0;
+      }
+      data = fallbackData;
+    } else if (error) {
       console.error(`[GenericSync] Failed to pull ${entity} from Supabase:`, error.message);
       return 0;
     }

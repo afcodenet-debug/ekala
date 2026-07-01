@@ -1,13 +1,12 @@
-// === Environment loading (local only) ===
-// Render + production builds do NOT have dotenv installed (npm ci --omit=dev).
-// We use require + ts-ignore to avoid TypeScript complaining about the missing module.
-if (process.env.NODE_ENV !== 'production' && !process.env.RENDER_CLOUD_MODE) {
-  try {
-    // @ts-ignore - dotenv may not be installed in production builds
-    require('dotenv/config');
-  } catch {
-    // dotenv not present — this is expected on Render
-  }
+// === Environment loading ===
+// Load .env file in all modes (local, Render, production)
+// This ensures Supabase credentials are always available
+try {
+  // @ts-ignore - dotenv may not be installed in production builds
+  require('dotenv/config');
+} catch {
+  // dotenv not present — this is expected on Render with npm ci --omit=dev
+  // In that case, environment variables must be set in the hosting platform
 }
 
 import express from 'express';
@@ -158,7 +157,7 @@ app.use((req, res, next) => {
     res.setHeader('Access-Control-Allow-Credentials', 'true');
   }
   res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization, x-user-role');
+  res.setHeader('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization, x-user-role, x-runtime-mode');
 
   if (req.method === 'OPTIONS') {
     return res.sendStatus(204);

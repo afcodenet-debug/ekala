@@ -14,6 +14,7 @@
  */
 
 import { env } from '../config/env';
+import { resolveRuntimeMode } from '../../shared/runtime-mode';
 
 export type EnvironmentMode = 'local' | 'cloud';
 
@@ -26,15 +27,49 @@ class DataSourceManager {
 
   /**
    * Détecte automatiquement l'environnement :
+   * - X-Runtime-Mode header (from frontend) → prioritaire
    * - RENDER_CLOUD_MODE=true → cloud (Supabase)
-   * - USE_SUPABASE_PRODUCTS=true → cloud (Supabase)
-   * - Sinon → local (SQLite)
+   * - usage de Supabase explicite via variables d'env → cloud
+   * - origine localhost/127.0.0.1/localhost.* → local (SQLite)
+   * - sinon → cloud par défaut pour les déploiements Vercel/Render
    */
-  private detectMode(): EnvironmentMode {
-    if (env.RENDER_CLOUD_MODE || env.USE_SUPABASE_PRODUCTS) {
+  private detectMode(value?: string | null): EnvironmentMode {
+    // 1. X-Runtime-Mode header is the most authoritative if present
+    if (value === 'local' || value === 'cloud') {
+      return value;
+    }
+
+    // 2. Environment variables override
+    if (env.RENDER_CLOUD_MODE || env.USE_SUPABASE_PRODUCTS || env.USE_SUPABASE_TABLES || env.USE_SUPABASE_ORDERS) {
       return 'cloud';
     }
-    return 'local';
+
+    // 3. URL-based detection (origin, host, referer)
+    if (value) {
+      return resolveRuntimeMode(value);
+    }
+
+    // 4. NODE_ENV fallback
+    if (env.NODE_ENV === 'development') {
+      return 'local';
+    }
+
+    // 5. Default to cloud for production
+    return 'cloud';
+  }
+
+  /**
+   * Résout le mode d'exécution à partir d'une requête Express.
+   * Vérifie d'abord l'en-tête X-Runtime-Mode, puis les en-têtes standard.
+   */
+  resolveFromRequest(req: { headers?: Record<string, any> }): EnvironmentMode {
+    const runtimeHeader = req?.headers?.['x-runtime-mode'];
+    if (runtimeHeader === 'local' || runtimeHeader === 'cloud') {
+      return runtimeHeader;
+    }
+
+    const host = req?.headers?.host || req?.headers?.origin || req?.headers?.referer;
+    return this.detectMode(host ? String(host) : null);
   }
 
   /** Retourne le mode actuel */
@@ -43,21 +78,21 @@ class DataSourceManager {
   }
 
   /** Vrai si on est en mode cloud (Supabase) */
-  isCloudMode(): boolean {
-    return this._mode === 'cloud';
+  isCloudMode(value?: string | null): boolean {
+    return this.detectMode(value) === 'cloud';
   }
 
   /** Vrai si on est en mode local (SQLite) */
-  isLocalMode(): boolean {
-    return this._mode === 'local';
+  isLocalMode(value?: string | null): boolean {
+    return this.detectMode(value) === 'local';
   }
 
   /**
    * Vérifie si une table spécifique doit utiliser Supabase.
    * Permet un contrôle granulaire par table.
    */
-  isTableCloud(tableName: string): boolean {
-    if (this.isCloudMode()) return true;
+  isTableCloud(tableName: string, value?: string | null): boolean {
+    if (this.isCloudMode(value)) return true;
     
     // Tables spécifiques qui peuvent être en mode Supabase même en local
     const tableOverrides: Record<string, boolean> = {

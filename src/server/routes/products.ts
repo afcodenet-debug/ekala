@@ -3,6 +3,7 @@ import path from 'path';
 import db from '../db/database';
 import { requireRole } from '../middleware/auth';
 import fs from 'fs';
+import crypto from 'crypto';
 import { getProductSyncService, getOrchestratorV2 } from '../../sync';
 import { AnalyticsService } from '../services/analytics.service';
 import { notifyStockAdjustment, notifyNewProduct, loadRawSettings } from '../services/notification.service';
@@ -79,11 +80,11 @@ router.get('/analytics', async (_req, res) => {
   }
 });
 
-// Get product by ID (with Supabase compat in cloud)
+  // Get product by ID (with Supabase compat in cloud)
 router.get('/:id', async (req: any, res) => {
   try {
     const { id } = req.params;
-    const isSupabaseMode = dataSource.isTableCloud('products');
+    const isSupabaseMode = dataSource.resolveFromRequest(req) === 'cloud';
     const tenantId = req.tenant_id;
   if (!tenantId) {
     return res.status(401).json({ error: 'TENANT_REQUIRED', message: 'tenant_id requis' });
@@ -154,8 +155,8 @@ router.post('/', requireRole(['admin', 'manager']), async (req: any, res) => {
   
   return runWithRequestId(requestId, async () => {
     logTrace('ENTER products.ts:POST /');
-    const isSupabaseMode = dataSource.isTableCloud('products');
-    logTrace('CHOICE', { isSupabaseMode, tenantId: req.tenant_id, mode: dataSource.mode });
+    const isSupabaseMode = dataSource.resolveFromRequest(req) === 'cloud';
+    logTrace('CHOICE', { isSupabaseMode, tenantId: req.tenant_id, mode: dataSource.resolveFromRequest(req) });
     const tenantId = parseInt(String(req.tenant_id), 10);
     if (!tenantId || isNaN(tenantId)) {
       console.log(JSON.stringify({
@@ -353,7 +354,7 @@ router.post('/', requireRole(['admin', 'manager']), async (req: any, res) => {
 
 // Update product
 router.patch('/:id', requireRole(['admin', 'manager']), async (req: any, res) => {
-  const isSupabaseMode = dataSource.isTableCloud('products');
+  const isSupabaseMode = dataSource.resolveFromRequest(req) === 'cloud';
   const tenantId = parseInt(String(req.tenant_id), 10);
   if (!tenantId || isNaN(tenantId)) {
     return res.status(401).json({ error: 'TENANT_REQUIRED', message: 'tenant_id requis' });
@@ -481,7 +482,7 @@ if (result.changes > 0) {
 
 // Delete product
 router.delete('/:id', requireRole(['admin', 'manager']), async (req: any, res) => {
-  const isSupabaseMode = dataSource.isTableCloud('products');
+  const isSupabaseMode = dataSource.resolveFromRequest(req) === 'cloud';
   const tenantId = parseInt(String(req.tenant_id), 10);
   if (!tenantId || isNaN(tenantId)) {
     return res.status(401).json({ error: 'TENANT_REQUIRED', message: 'tenant_id requis' });
@@ -533,7 +534,7 @@ router.get('/low-stock', async (req: any, res) => {
     return res.status(401).json({ error: 'TENANT_REQUIRED', message: 'tenant_id requis' });
   }
   try {
-    const isSupabaseMode = dataSource.isTableCloud('products');
+    const isSupabaseMode = dataSource.resolveFromRequest(req) === 'cloud';
     if (!db && !isSupabaseMode) {
       console.warn('[Products] SQLite disabled (db is null). Returning [] for low-stock');
       return res.json([]);
@@ -802,7 +803,7 @@ router.get('/', async (req: any, res) => {
     return res.status(401).json({ error: 'TENANT_REQUIRED', message: 'tenant_id requis' });
   }
   try {
-    const isSupabaseMode = dataSource.isTableCloud('products');
+    const isSupabaseMode = dataSource.resolveFromRequest(req) === 'cloud';
     // showArchived: admin/owner only - shows products with is_available=0 or deleted_at NOT NULL
     const showArchived = req.query.showArchived === 'true';
     const userRole = req.user?.role;
@@ -882,17 +883,33 @@ router.get('/', async (req: any, res) => {
 
     if (!hasPagination) {
       // Legacy mode for existing components (POS, Dashboard, etc.)
-      const whereAvailable = showArchived ? '' : 'p.is_available = 1 AND';
-      const products = db.prepare(`
-        SELECT p.id, p.name, p.barcode, p.image_url, p.description, p.buying_price, p.selling_price,
-               p.stock_quantity, p.minimum_stock, p.unit, p.is_available, p.created_at,
-               c.name as category_name
-        FROM products p
-        LEFT JOIN categories c ON p.category_id = c.id
-        WHERE ${whereAvailable} p.tenant_id = ?
-        ORDER BY p.name ASC
-      `).all(tenantId);
-      return res.json(products);
+      try {
+        const whereAvailable = showArchived ? '' : 'p.is_available = 1 AND';
+        const products = db.prepare(`
+          SELECT p.id, p.name, p.barcode, p.image_url, p.description, p.buying_price, p.selling_price,
+                 p.stock_quantity, p.minimum_stock, p.unit, p.is_available, p.created_at,
+                 c.name as category_name
+          FROM products p
+          LEFT JOIN categories c ON p.category_id = c.id
+          WHERE ${whereAvailable} p.tenant_id = ?
+          ORDER BY p.name ASC
+        `).all(tenantId);
+        return res.json(products);
+      } catch (sqlError: any) {
+        console.error('[PRODUCTS] SQLite query error in legacy mode:', {
+          message: sqlError.message,
+          code: sqlError.code,
+          errno: sqlError.errno,
+          sql: sqlError.sql,
+          showArchived,
+          tenantId,
+          stack: sqlError.stack
+        });
+        return res.status(500).json({ 
+          error: 'Failed to fetch products (SQLite)',
+          details: sqlError.message 
+        });
+      }
     }
 
     // Professional paginated mode

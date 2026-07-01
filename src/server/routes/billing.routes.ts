@@ -43,32 +43,46 @@ router.get('/v1/subscription/status/:tenantId', async (req: any, res: any) => {
       return res.status(400).json({ error: 'tenantId requis' });
     }
 
-    // Rediriger vers la logique de /billing/status
     const supabase = getSupabase();
-    if (!supabase) {
-      return res.status(503).json({ error: 'SUPABASE_NOT_CONFIGURED', message: 'Supabase non configuré.' });
-    }
+    const localDb = db;
 
-    const [{ data: tenant }, { data: subscription }] = await Promise.all([
-      supabase.from('tenants').select('status, name, is_provisioned').eq('id', tenantId).maybeSingle(),
-      supabase
-        .from('subscriptions')
-        .select('status, current_period_end, trial_ends_at, plan_id, started_at, last_voucher_code')
-        .eq('tenant_id', tenantId)
-        .order('created_at', { ascending: false })
-        .limit(1)
-        .maybeSingle(),
-    ]);
-
-    // Récupérer le plan après avoir obtenu l'abonnement
+    let tenant: any = null;
+    let subscription: any = null;
     let plan: any = null;
-    if (subscription?.plan_id) {
-      const { data: planData } = await supabase
-        .from('plans')
-        .select('code, name, price_cents, currency, period')
-        .eq('id', subscription.plan_id)
-        .maybeSingle();
-      plan = planData;
+
+    if (supabase) {
+      const [{ data: tData }, { data: sData }] = await Promise.all([
+        supabase.from('tenants').select('status, name, is_provisioned').eq('id', tenantId).maybeSingle(),
+        supabase
+          .from('subscriptions')
+          .select('status, current_period_end, trial_ends_at, plan_id, started_at, last_voucher_code')
+          .eq('tenant_id', tenantId)
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .maybeSingle(),
+      ]);
+      tenant = tData;
+      subscription = sData;
+
+      if (subscription?.plan_id) {
+        const { data: planData } = await supabase
+          .from('plans')
+          .select('code, name, price_cents, currency, period')
+          .eq('id', subscription.plan_id)
+          .maybeSingle();
+        plan = planData;
+      }
+    } else if (localDb) {
+      tenant = localDb.prepare('SELECT status, name, is_provisioned FROM tenants WHERE id = ?').get(tenantId) as any;
+      subscription = localDb.prepare(`
+        SELECT status, current_period_end, trial_ends_at, plan_id, started_at, last_voucher_code 
+        FROM subscriptions 
+        WHERE tenant_id = ? 
+        ORDER BY created_at DESC LIMIT 1
+      `).get(tenantId) as any;
+      if (subscription?.plan_id) {
+        plan = localDb.prepare('SELECT code, name, price_cents, currency, period FROM plans WHERE id = ?').get(subscription.plan_id) as any;
+      }
     }
 
     const tenantStatus = tenant?.status || 'unknown';
@@ -134,30 +148,45 @@ router.get('/status', requireJwtAuth, async (req: any, res: any) => {
     }
 
     const supabase = getSupabase();
-    if (!supabase) {
-      return res.status(503).json({ error: 'SUPABASE_NOT_CONFIGURED', message: 'Supabase non configuré.' });
-    }
+    const localDb = db;
 
-    const [{ data: tenant }, { data: subscription }] = await Promise.all([
-      supabase.from('tenants').select('status, name, is_provisioned').eq('id', tenantId).maybeSingle(),
-      supabase
-        .from('subscriptions')
-        .select('status, current_period_end, trial_ends_at, plan_id, started_at, last_voucher_code')
-        .eq('tenant_id', tenantId)
-        .order('created_at', { ascending: false })
-        .limit(1)
-        .maybeSingle(),
-    ]);
-
-    // Récupérer le plan après avoir obtenu l'abonnement
+    let tenant: any = null;
+    let subscription: any = null;
     let plan: any = null;
-    if (subscription?.plan_id) {
-      const { data: planData } = await supabase
-        .from('plans')
-        .select('code, name, price_cents, currency, period')
-        .eq('id', subscription.plan_id)
-        .maybeSingle();
-      plan = planData;
+
+    if (supabase) {
+      const [{ data: tData }, { data: sData }] = await Promise.all([
+        supabase.from('tenants').select('status, name, is_provisioned').eq('id', tenantId).maybeSingle(),
+        supabase
+          .from('subscriptions')
+          .select('status, current_period_end, trial_ends_at, plan_id, started_at, last_voucher_code')
+          .eq('tenant_id', tenantId)
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .maybeSingle(),
+      ]);
+      tenant = tData;
+      subscription = sData;
+
+      if (subscription?.plan_id) {
+        const { data: planData } = await supabase
+          .from('plans')
+          .select('code, name, price_cents, currency, period')
+          .eq('id', subscription.plan_id)
+          .maybeSingle();
+        plan = planData;
+      }
+    } else if (localDb) {
+      tenant = localDb.prepare('SELECT status, name, is_provisioned FROM tenants WHERE id = ?').get(tenantId) as any;
+      subscription = localDb.prepare(`
+        SELECT status, current_period_end, trial_ends_at, plan_id, started_at, last_voucher_code 
+        FROM subscriptions 
+        WHERE tenant_id = ? 
+        ORDER BY created_at DESC LIMIT 1
+      `).get(tenantId) as any;
+      if (subscription?.plan_id) {
+        plan = localDb.prepare('SELECT code, name, price_cents, currency, period FROM plans WHERE id = ?').get(subscription.plan_id) as any;
+      }
     }
 
     const tenantStatus = tenant?.status || 'unknown';

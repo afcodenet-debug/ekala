@@ -2,6 +2,26 @@ import type { User } from '../stores/useAuthStore';
 import type { Employee } from '../shared/employeesStore';
 import type { RestaurantTable } from '../shared/tablesStore';
 import type { Order } from '../shared/ordersStore';
+import { resolveRuntimeMode, type RuntimeMode } from '../shared/runtime-mode';
+
+/**
+ * Détecte le mode d'exécution actuel (local vs cloud) une seule fois au démarrage.
+ * Utilisé pour :
+ * 1. Déterminer l'URL de base de l'API
+ * 2. Envoyer l'en-tête X-Runtime-Mode à chaque requête
+ */
+const CURRENT_RUNTIME_MODE: RuntimeMode = (() => {
+  try {
+    const currentOrigin = typeof window !== 'undefined' && window.location?.origin ? window.location.origin : '';
+    if (currentOrigin) return resolveRuntimeMode(currentOrigin);
+  } catch {}
+  try {
+    // @ts-ignore
+    const viteEnv = (typeof import.meta !== 'undefined' ? (import.meta as any).env : undefined);
+    if (viteEnv?.DEV === true || viteEnv?.MODE === 'development') return 'local';
+  } catch {}
+  return 'cloud';
+})();
 
 /**
  * Base URL compatible Node/CommonJS (tsc server) et Vite.
@@ -23,12 +43,16 @@ const API_BASE: string = (() => {
     if (explicit) return normalizeBaseUrl(String(explicit));
   } catch {}
 
+  // Mode local → proxy Vite (pas de CORS)
+  if (CURRENT_RUNTIME_MODE === 'local') {
+    return '/api';
+  }
+
+  // Mode cloud → URL explicite depuis l'environnement
   try {
     // @ts-ignore
     const viteEnv = (typeof import.meta !== 'undefined' ? (import.meta as any).env : undefined);
-    if (viteEnv?.DEV === true || viteEnv?.MODE === 'development') {
-      return '/api';
-    }
+    if (viteEnv?.VITE_API_BASE_URL) return normalizeBaseUrl(String(viteEnv.VITE_API_BASE_URL));
   } catch {}
 
   const p = typeof process !== 'undefined' ? process : ({} as any);
@@ -37,7 +61,8 @@ const API_BASE: string = (() => {
 
   if (p.env?.NODE_ENV === 'development') return '/api';
 
-  return 'http://localhost:3001/api';
+  // Fallback production — doit être configuré via VITE_API_BASE_URL
+  return '/api';
 })();
 
 // ── JWT Token Management ──────────────────────────────────────────────────────
@@ -95,6 +120,7 @@ export async function requestPlatform<T>(
   const config: RequestInit = {
     headers: {
       'Content-Type': 'application/json',
+      'X-Runtime-Mode': CURRENT_RUNTIME_MODE,
       ...authHeaders,
       ...options.headers,
     },
@@ -227,6 +253,7 @@ export async function request<T>(
   const config: RequestInit = {
     headers: {
       'Content-Type': 'application/json',
+      'X-Runtime-Mode': CURRENT_RUNTIME_MODE,
       ...authHeaders,
       ...(options.role && { 'X-User-Role': options.role }),
       ...options.headers

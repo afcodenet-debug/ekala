@@ -46,6 +46,10 @@ export class SyncOrchestratorV2 {
   private isSyncing = false;
   private schedulerInterval: NodeJS.Timeout | null = null;
   private isOnline = true;
+  private lastConnectivityCheck = 0;
+  private connectivityCheckInterval = 60000; // Check connectivity every 60s
+  private consecutiveFailures = 0;
+  private maxConsecutiveFailures = 3;
 
   constructor(
     db: Database.Database,
@@ -100,8 +104,12 @@ export class SyncOrchestratorV2 {
   setNetworkStatus(isOnline: boolean) {
     const wasOffline = !this.isOnline;
     this.isOnline = isOnline;
-    if (isOnline && wasOffline) this.triggerSync();
-    else if (!isOnline) this.stopScheduler();
+    if (isOnline && wasOffline) {
+      console.log('[SyncV2] 🌐 Connection restored — triggering sync');
+      this.triggerSync();
+    } else if (!isOnline) {
+      console.log('[SyncV2] 📡 Connection lost — sync paused');
+    }
   }
 
   /* ==================================================================
@@ -111,7 +119,7 @@ export class SyncOrchestratorV2 {
   startScheduler(intervalMs = 30000) {
     if (this.schedulerInterval) return;
     this.schedulerInterval = setInterval(() => {
-      if (this.isOnline) this.triggerSync();
+      this.handleSchedulerTick();
     }, intervalMs);
     console.log(`[SyncV2] Scheduler started (${intervalMs / 1000}s)`);
   }
@@ -123,6 +131,66 @@ export class SyncOrchestratorV2 {
     }
   }
 
+  /**
+   * Handles periodic scheduler tick with connectivity check
+   */
+  private async handleSchedulerTick() {
+    if (!this.isOnline) {
+      console.log('[SyncV2] ⏸️  Offline — skipping sync');
+      return;
+    }
+
+    // Check connectivity periodically
+    const now = Date.now();
+    if (now - this.lastConnectivityCheck > this.connectivityCheckInterval) {
+      const isReachable = await this.checkSupabaseConnectivity();
+      this.lastConnectivityCheck = now;
+
+      if (!isReachable) {
+        this.consecutiveFailures++;
+        console.warn(`[SyncV2] ⚠️  Supabase unreachable (${this.consecutiveFailures}/${this.maxConsecutiveFailures})`);
+        
+        if (this.consecutiveFailures >= this.maxConsecutiveFailures) {
+          console.error('[SyncV2] ❌ Max failures reached — pausing sync temporarily');
+          this.isOnline = false;
+          // Retry after 5 minutes
+          setTimeout(() => {
+            console.log('[SyncV2] 🔄 Retrying connectivity...');
+            this.isOnline = true;
+            this.consecutiveFailures = 0;
+          }, 5 * 60 * 1000);
+        }
+        return;
+      }
+
+      // Reset failure counter on success
+      if (this.consecutiveFailures > 0) {
+        console.log('[SyncV2] ✅ Connectivity restored');
+        this.consecutiveFailures = 0;
+      }
+    }
+
+    // Proceed with sync
+    await this.triggerSync();
+  }
+
+  /**
+   * Checks if Supabase is reachable with a lightweight query
+   */
+  private async checkSupabaseConnectivity(): Promise<boolean> {
+    try {
+      const { data, error } = await this.supabase
+        .from('tenants')
+        .select('id')
+        .limit(1);
+
+      // If we get a response (even empty), Supabase is reachable
+      return !error || error.code !== 'PGRST301'; // PGRST301 = network error
+    } catch (err) {
+      return false;
+    }
+  }
+
   /* ==================================================================
    *  TRIGGER PRINCIPAL
    * ================================================================== */
@@ -130,6 +198,8 @@ export class SyncOrchestratorV2 {
   async triggerSync(): Promise<void> {
     if (this.isSyncing || !this.isOnline) return;
     this.isSyncing = true;
+
+    const startTime = Date.now();
 
     try {
       // Phase 0: Discover ALL remote tenants first (bidirectional discovery)
@@ -163,6 +233,8 @@ export class SyncOrchestratorV2 {
       console.error('[SyncV2] Global sync failed:', err);
     } finally {
       this.isSyncing = false;
+      const duration = Date.now() - startTime;
+      console.log(`[SyncV2] Sync cycle completed in ${duration}ms`);
     }
   }
 

@@ -15,7 +15,6 @@ export class LegacySQLiteProductAdapter implements IProductRepository {
         id,
         tenant_id,
         business_id,
-        branch_id,
         category_id,
         name,
         description,
@@ -144,7 +143,6 @@ export class LegacySQLiteProductAdapter implements IProductRepository {
         SELECT
           id,
           business_id,
-          branch_id,
           category_id,
           name,
           description,

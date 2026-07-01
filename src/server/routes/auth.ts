@@ -3,6 +3,7 @@ import db from '../db/database';
 import { env } from '../config/env';
 import { createClient } from '@supabase/supabase-js';
 import { signJwt } from '../middleware/jwt-auth';
+import { dataSource } from '../infrastructure/data-source-manager';
 
 const router = express.Router();
 
@@ -12,7 +13,8 @@ router.post('/login', async (req, res) => {
   const { pin_code, identity } = req.body;
   console.log(`[Auth] Login attempt received. PIN: ${pin_code}, Identity: ${identity || 'None'}`);
 
-  const useSupabase = env.RENDER_CLOUD_MODE || !db;
+  const runtimeOrigin = req.headers.host || req.headers.origin || req.get('referer') || undefined;
+  const useSupabase = dataSource.isCloudMode(runtimeOrigin) || (!db && !!env.SUPABASE_URL && !!env.SUPABASE_SERVICE_ROLE_KEY);
 
   if (useSupabase && env.SUPABASE_URL && env.SUPABASE_SERVICE_ROLE_KEY) {
     try {

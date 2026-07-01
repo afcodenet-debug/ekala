@@ -1,12 +1,32 @@
 // Notification System V3 - API Routes (Legacy compatibility)
-// Uses the new NotificationRepository
+// Uses the new NotificationRepository with dual-mode support (SQLite/Supabase)
 
 import express from 'express';
 import { NotificationRepository } from '../notifications/repositories/NotificationRepository';
+import { dataSource } from '../infrastructure/data-source-manager';
 import { db } from '../db/database';
 
 const router = express.Router();
-const notificationRepo = new NotificationRepository(db);
+
+/**
+ * Factory lazy pour le repository de notifications.
+ * Utilise l'initialisation paresseuse pour éviter les erreurs
+ * de chargement de Supabase au moment du require() du module.
+ * 
+ * IMPORTANT: Le mode est détecté par requête pour supporter
+ * à la fois le mode local (SQLite) et cloud (Supabase) simultanément.
+ */
+function getNotificationRepo(req: any) {
+  // Use request-aware mode detection (checks X-Runtime-Mode header)
+  const mode = dataSource.resolveFromRequest(req);
+  
+  if (mode === 'cloud') {
+    // Chargement lazy de SupabaseNotificationRepository
+    const { SupabaseNotificationRepository } = require('../notifications/repositories/SupabaseNotificationRepository');
+    return new SupabaseNotificationRepository();
+  }
+  return new NotificationRepository(db);
+}
 
 // GET /api/notifications - Get all notifications
 router.get('/', async (req: any, res) => {
@@ -33,7 +53,8 @@ router.get('/', async (req: any, res) => {
     if (priority) filters.priority = priority as string;
     if (status) filters.status = status as string;
 
-    const result = notificationRepo.findMany(filters);
+    const repo = getNotificationRepo(req);
+    const result = await repo.findMany(filters);
 
     return res.json({
       success: true,
@@ -58,7 +79,8 @@ router.get('/unread-count', async (req: any, res) => {
       return res.status(401).json({ error: 'TENANT_AND_USER_REQUIRED', message: 'tenant_id et user_id requis' });
     }
 
-    const count = notificationRepo.findUnreadCount(tenantId, userId);
+    const repo = getNotificationRepo(req);
+    const count = await repo.findUnreadCount(tenantId, userId);
 
     return res.json({
       success: true,
@@ -81,9 +103,10 @@ router.get('/:id', async (req: any, res) => {
       return res.status(401).json({ error: 'TENANT_REQUIRED', message: 'tenant_id requis' });
     }
 
+    const repo = getNotificationRepo(req);
     const notification = userId
-      ? notificationRepo.findByIdForUser(id, tenantId, userId)
-      : notificationRepo.findById(id, tenantId);
+      ? await repo.findByIdForUser(id, tenantId, userId)
+      : await repo.findById(id, tenantId);
 
     if (!notification) {
       return res.status(404).json({ error: 'Notification not found' });
@@ -117,7 +140,8 @@ router.post('/', async (req: any, res) => {
       });
     }
 
-    const notification = notificationRepo.create({
+    const repo = getNotificationRepo(req);
+    const notification = await repo.create({
       tenant_id: tenantId,
       user_id: userId,
       title,
@@ -151,7 +175,8 @@ router.patch('/:id/read', async (req: any, res) => {
       return res.status(401).json({ error: 'TENANT_AND_USER_REQUIRED', message: 'tenant_id et user_id requis' });
     }
 
-    const success = notificationRepo.markAsRead(id, tenantId, userId);
+    const repo = getNotificationRepo(req);
+    const success = await repo.markAsRead(id, tenantId, userId);
 
     if (!success) {
       return res.status(404).json({ error: 'Notification not found or already read' });
@@ -175,7 +200,8 @@ router.post('/commands/mark-all-as-read', async (req: any, res) => {
       return res.status(401).json({ error: 'TENANT_AND_USER_REQUIRED', message: 'tenant_id et user_id requis' });
     }
 
-    const count = notificationRepo.markAllAsRead(tenantId, userId, category);
+    const repo = getNotificationRepo(req);
+    const count = await repo.markAllAsRead(tenantId, userId, category);
 
     return res.json({
       success: true,
@@ -199,7 +225,8 @@ router.post('/commands/dismiss', async (req: any, res) => {
       return res.status(400).json({ error: 'VALIDATION_ERROR', message: 'notification_id, tenant_id et user_id requis' });
     }
 
-    const success = notificationRepo.dismiss(notification_id, tenantId, userId);
+    const repo = getNotificationRepo(req);
+    const success = await repo.dismiss(notification_id, tenantId, userId);
 
     if (!success) {
       return res.status(404).json({ error: 'Notification not found or already dismissed' });
@@ -223,7 +250,8 @@ router.post('/commands/archive', async (req: any, res) => {
       return res.status(400).json({ error: 'VALIDATION_ERROR', message: 'notification_id, tenant_id et user_id requis' });
     }
 
-    const success = notificationRepo.archive(notification_id, tenantId, userId);
+    const repo = getNotificationRepo(req);
+    const success = await repo.archive(notification_id, tenantId, userId);
 
     if (!success) {
       return res.status(404).json({ error: 'Notification not found or already archived' });
@@ -247,7 +275,8 @@ router.post('/commands/delete', async (req: any, res) => {
       return res.status(400).json({ error: 'VALIDATION_ERROR', message: 'notification_id, tenant_id et user_id requis' });
     }
 
-    const success = notificationRepo.delete(notification_id, tenantId, userId);
+    const repo = getNotificationRepo(req);
+    const success = await repo.delete(notification_id, tenantId, userId);
 
     if (!success) {
       return res.status(404).json({ error: 'Notification not found or already deleted' });

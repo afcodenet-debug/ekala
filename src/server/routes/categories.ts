@@ -15,7 +15,7 @@ router.get('/', async (req, res) => {
     return res.status(401).json({ error: 'TENANT_REQUIRED', message: 'tenant_id requis' });
   }
   try {
-    if (dataSource.isTableCloud('categories')) {
+    if (dataSource.resolveFromRequest(req) === 'cloud') {
       const supabase = createClient(env.SUPABASE_URL!, env.SUPABASE_SERVICE_ROLE_KEY!, {
         auth: { persistSession: false },
       });

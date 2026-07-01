@@ -15,6 +15,7 @@ import { env } from '../config/env';
 import crypto from 'crypto';
 import { signJwt, verifyJwt, requireJwtAuth } from '../middleware/jwt-auth';
 import bcrypt from 'bcryptjs';
+import { dataSource } from '../infrastructure/data-source-manager';
 
 const router = Router();
 
@@ -50,8 +51,14 @@ function authRateLimit(req: Request, res: Response, next: Function) {
 
 // ── Supabase Client ────────────────────────────────────────────────────────────
 
-function getSupabase(): SupabaseClient | null {
+function getSupabase(req?: Request): SupabaseClient | null {
   if (!env.SUPABASE_URL || !env.SUPABASE_SERVICE_ROLE_KEY) return null;
+
+  // Utilise le nouveau resolveFromRequest qui vérifie d'abord l'en-tête X-Runtime-Mode
+  // Envoyé par le frontend, puis les en-têtes standard (host, origin, referer)
+  const mode = req ? dataSource.resolveFromRequest(req) : dataSource.mode;
+  if (mode !== 'cloud') return null;
+
   return createClient(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, {
     auth: { persistSession: false },
     db: { schema: 'public' },
@@ -187,7 +194,7 @@ function getLocalUserByEmail(email: string): any {
   }
 }
 
-function getLocalUserByPin(pinCode: string, identity?: string): any {
+function getLocalUserByPin(_pinCode: string, identity?: string): any {
   try {
     const db = require('../db/database').default;
     if (!db) return null;
@@ -237,7 +244,7 @@ router.post('/login/email', authRateLimit, async (req: Request, res: Response) =
       });
     }
 
-    const supabase = getSupabase();
+    const supabase = getSupabase(req);
 
     // ── Supabase path ──
     if (supabase) {
@@ -359,7 +366,7 @@ router.post('/login/pin', authRateLimit, async (req: Request, res: Response) => 
       });
     }
 
-    const supabase = getSupabase();
+    const supabase = getSupabase(req);
 
     // ── Supabase path ──
     if (supabase) {
@@ -588,7 +595,7 @@ router.post('/login/pin', authRateLimit, async (req: Request, res: Response) => 
 // ── POST /api/auth/setup — Create admin account after SaaS signup ──────────────
 router.post('/setup', authRateLimit, async (req: Request, res: Response) => {
   try {
-    const supabase = getSupabase();
+    const supabase = getSupabase(req);
     if (!supabase) {
       return res.status(503).json({ error: 'SUPABASE_NOT_CONFIGURED' });
     }
@@ -725,8 +732,8 @@ router.post('/refresh', async (req: Request, res: Response) => {
 // ── GET /api/auth/me — Get current user profile from JWT ──────────────────────
 router.get('/me', requireJwtAuth, async (req: any, res: Response) => {
   try {
-    const { sub, tenant_id, role } = req.user;
-    const supabase = getSupabase();
+    const { sub, tenant_id } = req.user;
+    const supabase = getSupabase(req);
 
     if (supabase) {
       const { data: user, error } = await supabase
@@ -836,7 +843,7 @@ router.get('/tenants/:slug', async (req: Request, res: Response) => {
   };
 
   try {
-    const supabase = getSupabase();
+    const supabase = getSupabase(req);
 
     if (supabase) {
       try {
@@ -883,9 +890,9 @@ router.get('/tenants/:slug', async (req: Request, res: Response) => {
 });
 
 // ── GET /api/auth/tenants — List all tenants ──────────────────────────────────
-router.get('/tenants', async (_req: Request, res: Response) => {
+router.get('/tenants', async (req: Request, res: Response) => {
   try {
-    const supabase = getSupabase();
+    const supabase = getSupabase(req);
     if (supabase) {
       try {
         const { data: tenants } = await supabase
