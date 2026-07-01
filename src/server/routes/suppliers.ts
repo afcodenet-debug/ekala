@@ -1,17 +1,35 @@
 import express from 'express';
 import db from '../db/database';
 import { requireRole } from '../middleware/auth';
+import { env } from '../config/env';
+import { supabaseQuery } from '../infrastructure/supabase-query';
 
 const router = express.Router();
 
 // ─── Suppliers ───────────────────────────────────────────────────────────────
 
 // GET /suppliers
-router.get('/', (req: any, res) => {
+router.get('/', async (req: any, res) => {
   const tenantId = req.tenant_id;
   if (!tenantId) {
     return res.status(401).json({ error: 'TENANT_REQUIRED', message: 'tenant_id requis' });
   }
+
+  // ===== Mode Cloud (Supabase) =====
+  if (!db && env.SUPABASE_URL && env.SUPABASE_SERVICE_ROLE_KEY) {
+    try {
+      const { data, error } = await supabaseQuery('suppliers')
+        .select('*')
+        .eq('tenant_id', tenantId)
+        .order('name', { ascending: true });
+      if (error) throw new Error(error.message);
+      return res.json(data || []);
+    } catch (e: any) {
+      return res.status(500).json({ error: e.message });
+    }
+  }
+
+  // ===== Mode Local (SQLite) =====
   try {
     const rows = db.prepare(`
       SELECT * FROM suppliers
@@ -25,12 +43,30 @@ router.get('/', (req: any, res) => {
 });
 
 // GET /suppliers/:id
-router.get('/:id', (req: any, res) => {
+router.get('/:id', async (req: any, res) => {
   const { id } = req.params;
   const tenantId = req.tenant_id;
   if (!tenantId) {
     return res.status(401).json({ error: 'TENANT_REQUIRED', message: 'tenant_id requis' });
   }
+
+  // ===== Mode Cloud (Supabase) =====
+  if (!db && env.SUPABASE_URL && env.SUPABASE_SERVICE_ROLE_KEY) {
+    try {
+      const { data, error } = await supabaseQuery('suppliers')
+        .select('*')
+        .eq('id', id)
+        .eq('tenant_id', tenantId)
+        .single();
+      if (error) throw new Error(error.message);
+      if (!data) return res.status(404).json({ error: 'Supplier not found' });
+      return res.json(data);
+    } catch (e: any) {
+      return res.status(500).json({ error: e.message });
+    }
+  }
+
+  // ===== Mode Local (SQLite) =====
   try {
     const row = db.prepare(`SELECT * FROM suppliers WHERE id = ? AND tenant_id = ?`).get(id, tenantId) as any;
     if (!row) return res.status(404).json({ error: 'Supplier not found' });
@@ -41,7 +77,7 @@ router.get('/:id', (req: any, res) => {
 });
 
 // POST /suppliers
-router.post('/', requireRole(['admin', 'manager']), (req: any, res) => {
+router.post('/', requireRole(['admin', 'manager']), async (req: any, res) => {
   const { name, contact_name, email, phone, address, tax_number, payment_terms } = req.body;
   const tenantId = req.tenant_id;
   if (!tenantId) {
@@ -50,6 +86,30 @@ router.post('/', requireRole(['admin', 'manager']), (req: any, res) => {
 
   if (!name) return res.status(400).json({ error: 'Supplier name is required' });
 
+  // ===== Mode Cloud (Supabase) =====
+  if (!db && env.SUPABASE_URL && env.SUPABASE_SERVICE_ROLE_KEY) {
+    try {
+      const { data, error } = await supabaseQuery('suppliers')
+        .insert([{
+          name,
+          contact_name: contact_name ?? null,
+          email: email ?? null,
+          phone: phone ?? null,
+          address: address ?? null,
+          tax_number: tax_number ?? null,
+          payment_terms: payment_terms ?? 'net_30',
+          tenant_id: tenantId,
+          is_active: true,
+        }])
+        .select();
+      if (error) throw new Error(error.message);
+      return res.status(201).json(data?.[0] || data);
+    } catch (e: any) {
+      return res.status(500).json({ error: e.message });
+    }
+  }
+
+  // ===== Mode Local (SQLite) =====
   try {
     const result = db.prepare(`
       INSERT INTO suppliers (name, contact_name, email, phone, address, tax_number, payment_terms, tenant_id)
@@ -73,7 +133,7 @@ router.post('/', requireRole(['admin', 'manager']), (req: any, res) => {
 });
 
 // PATCH /suppliers/:id
-router.patch('/:id', requireRole(['admin', 'manager']), (req: any, res) => {
+router.patch('/:id', requireRole(['admin', 'manager']), async (req: any, res) => {
   const { id } = req.params;
   const data = req.body;
   const tenantId = req.tenant_id;
@@ -82,6 +142,31 @@ router.patch('/:id', requireRole(['admin', 'manager']), (req: any, res) => {
   }
 
   const allowed = ['name', 'contact_name', 'email', 'phone', 'address', 'tax_number', 'payment_terms', 'is_active'];
+
+  // ===== Mode Cloud (Supabase) =====
+  if (!db && env.SUPABASE_URL && env.SUPABASE_SERVICE_ROLE_KEY) {
+    try {
+      const updates: Record<string, any> = {};
+      for (const key of Object.keys(data)) {
+        if (allowed.includes(key) && data[key] !== undefined) {
+          updates[key] = data[key];
+        }
+      }
+      if (Object.keys(updates).length === 0) return res.status(400).json({ error: 'No valid fields to update' });
+
+      const { data: updated, error } = await supabaseQuery('suppliers')
+        .update(updates)
+        .eq('id', id)
+        .eq('tenant_id', tenantId)
+        .select();
+      if (error) throw new Error(error.message);
+      return res.json(updated?.[0] || updated);
+    } catch (e: any) {
+      return res.status(500).json({ error: e.message });
+    }
+  }
+
+  // ===== Mode Local (SQLite) =====
   const updates: string[] = [];
   const values: any[] = [];
 
@@ -111,12 +196,28 @@ router.patch('/:id', requireRole(['admin', 'manager']), (req: any, res) => {
 });
 
 // DELETE /suppliers/:id  (soft: is_active = 0)
-router.delete('/:id', requireRole(['admin']), (req: any, res) => {
+router.delete('/:id', requireRole(['admin']), async (req: any, res) => {
   const { id } = req.params;
   const tenantId = req.tenant_id;
   if (!tenantId) {
     return res.status(401).json({ error: 'TENANT_REQUIRED', message: 'tenant_id requis' });
   }
+
+  // ===== Mode Cloud (Supabase) =====
+  if (!db && env.SUPABASE_URL && env.SUPABASE_SERVICE_ROLE_KEY) {
+    try {
+      const { error } = await supabaseQuery('suppliers')
+        .update({ is_active: false })
+        .eq('id', id)
+        .eq('tenant_id', tenantId);
+      if (error) throw new Error(error.message);
+      return res.json({ success: true });
+    } catch (e: any) {
+      return res.status(500).json({ error: e.message });
+    }
+  }
+
+  // ===== Mode Local (SQLite) =====
   const { c: activePOs } = db.prepare(
     `SELECT COUNT(*) AS c FROM purchase_orders WHERE supplier_id = ? AND tenant_id = ? AND status NOT IN ('cancelled')`
   ).get(id, tenantId) as { c: number };

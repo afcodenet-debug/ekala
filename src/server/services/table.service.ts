@@ -56,7 +56,32 @@ export class TableService {
   static async getAll(params?: { waiter_id?: number; role?: string }, tenantId?: number): Promise<Table[]> {
     const resolvedTenantId = resolveTenantId(tenantId);
 
-    // TOUJOURS utiliser SQLite (source de vérité)
+    // ===== Mode Cloud (Supabase) =====
+    if (env.SUPABASE_URL && env.SUPABASE_SERVICE_ROLE_KEY && !db) {
+      try {
+        const { supabaseQuery } = require('../infrastructure/supabase-query');
+        let query = supabaseQuery('restaurant_tables')
+          .select('*')
+          .eq('tenant_id', resolvedTenantId)
+          .order('table_number', { ascending: true });
+
+        if (params?.role === 'waiter' && params.waiter_id) {
+          query = query.eq('assigned_waiter_id', params.waiter_id);
+        }
+
+        const { data, error } = await query;
+        if (error) throw new Error(error.message);
+        return (data || []).map((t: any) => ({
+          ...t,
+          status: remoteToLocalStatus(t.status),
+        })) as Table[];
+      } catch (err: any) {
+        console.error('[TableService] Supabase getAll failed:', err?.message || err);
+        throw err;
+      }
+    }
+
+    // ===== Mode Local (SQLite) =====
     try {
       let query = `
         WITH ActiveOrders AS (
@@ -107,7 +132,30 @@ export class TableService {
   static async getById(id: number, tenantId?: number): Promise<Table | null> {
     const resolvedTenantId = resolveTenantId(tenantId);
 
-    // TOUJOURS utiliser SQLite (source de vérité)
+    // ===== Mode Cloud (Supabase) =====
+    if (env.SUPABASE_URL && env.SUPABASE_SERVICE_ROLE_KEY && !db) {
+      try {
+        const { supabaseQuery } = require('../infrastructure/supabase-query');
+        const { data, error } = await supabaseQuery('restaurant_tables')
+          .select('*')
+          .eq('id', id)
+          .eq('tenant_id', resolvedTenantId)
+          .single();
+
+        if (error) throw new Error(error.message);
+        if (!data) return null;
+
+        return {
+          ...data,
+          status: remoteToLocalStatus(data.status),
+        } as Table;
+      } catch (err: any) {
+        console.error('[TableService] Supabase getById failed:', err?.message || err);
+        throw err;
+      }
+    }
+
+    // ===== Mode Local (SQLite) =====
     try {
       const table = db.prepare(`
         SELECT
