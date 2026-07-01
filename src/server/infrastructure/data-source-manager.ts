@@ -63,6 +63,8 @@ class DataSourceManager {
     const tableOverrides: Record<string, boolean> = {
       products: env.USE_SUPABASE_PRODUCTS,
       tables: env.USE_SUPABASE_TABLES,
+      orders: env.USE_SUPABASE_ORDERS,
+      restaurant_tables: env.USE_SUPABASE_TABLES,
     };
     
     return tableOverrides[tableName] === true;
@@ -117,6 +119,7 @@ class DataSourceManager {
     console.log(`   RENDER_CLOUD_MODE: ${env.RENDER_CLOUD_MODE}`);
     console.log(`   USE_SUPABASE_PRODUCTS: ${env.USE_SUPABASE_PRODUCTS}`);
     console.log(`   USE_SUPABASE_TABLES: ${env.USE_SUPABASE_TABLES}`);
+    console.log(`   USE_SUPABASE_ORDERS: ${env.USE_SUPABASE_ORDERS}`);
     console.log('══════════════════════════════════════════════');
   }
 }
