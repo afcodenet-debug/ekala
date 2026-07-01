@@ -34,9 +34,9 @@ export class RBACCacheService {
       
       // Fallback DB (pour l'instant sans Redis)
       const result = await db.prepare(`
-        SELECT pa.role_name, pr.id as role_id
+        SELECT pa.role, pr.id as role_id
         FROM platform_admins pa
-        JOIN platform_roles pr ON pr.role_name = pa.role_name
+        JOIN platform_roles pr ON pr.role_name = pa.role
         WHERE pa.user_id = ?
       `).get(userId) as any;
 

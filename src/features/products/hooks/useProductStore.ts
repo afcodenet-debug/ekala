@@ -80,10 +80,10 @@ export const useProductStore = create<ProductStore>((set, get) => ({
 
   // ── Products ──────────────────────────────────────────────────────────────
 
-  fetchProducts: async () => {
+  fetchProducts: async (showArchived?: boolean) => {
     set({ loading: true });
     try {
-      const products = await api.products.getAll();
+      const products = await api.products.getAll(showArchived ? { showArchived: true } : undefined);
       set({ products: (Array.isArray(products) ? products : []) as Product[] });
     } catch (err) {
       console.error('Failed to fetch products', err);

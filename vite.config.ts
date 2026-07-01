@@ -17,7 +17,52 @@ export default defineConfig({
   build: {
     outDir: 'dist',
     emptyOutDir: true,
-    sourcemap: false
+    sourcemap: false,
+    minify: 'esbuild',
+    target: 'es2020',
+    rollupOptions: {
+      output: {
+        // Code splitting strategy for optimal loading
+        manualChunks: (id) => {
+          // Vendor chunk for React and core libraries
+          if (id.includes('node_modules/react') || id.includes('node_modules/react-dom') || id.includes('node_modules/react-router-dom')) {
+            return 'vendor-react';
+          }
+          // Vendor chunk for state management
+          if (id.includes('node_modules/zustand') || id.includes('node_modules/@tanstack/react-query')) {
+            return 'vendor-state';
+          }
+          // Vendor chunk for UI libraries
+          if (id.includes('node_modules/lucide-react') || id.includes('node_modules/qrcode.react')) {
+            return 'vendor-ui';
+          }
+          // Vendor chunk for forms
+          if (id.includes('node_modules/react-hook-form') || id.includes('node_modules/@hookform/resolvers') || id.includes('node_modules/zod')) {
+            return 'vendor-forms';
+          }
+          // i18n in separate chunk
+          if (id.includes('node_modules/i18next') || id.includes('node_modules/react-i18next')) {
+            return 'vendor-i18n';
+          }
+          return undefined;
+        },
+        // Optimize chunk naming for caching
+        chunkFileNames: (chunkInfo) => {
+          const facadeModuleId = chunkInfo.facadeModuleId ? chunkInfo.facadeModuleId.split('/').pop()?.replace('.tsx', '').replace('.ts', '') : 'chunk';
+          return `assets/js/${facadeModuleId}-[hash].js`;
+        },
+        entryFileNames: 'assets/js/[name]-[hash].js',
+        assetFileNames: (assetInfo) => {
+          const info = assetInfo.name?.split('.');
+          const ext = info?.[info.length - 1];
+          if (ext === 'css') return 'assets/css/[name]-[hash].[ext]';
+          if (['woff', 'woff2', 'ttf', 'eot'].includes(ext || '')) return 'assets/fonts/[name]-[hash].[ext]';
+          return 'assets/[name]-[hash].[ext]';
+        },
+      },
+    },
+    // Increase chunk size warning limit (we have a large app)
+    chunkSizeWarningLimit: 1000,
   },
 
   server: {

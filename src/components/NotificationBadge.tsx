@@ -1,43 +1,27 @@
+// NotificationBadge - Simple badge for sidebar items (e.g., QR orders count)
+// This is different from NotificationBell which is for the notification center
+
 import React from 'react';
-import { useNotificationStore } from '../stores/useNotificationStore';
 
 interface NotificationBadgeProps {
+  count: number;
+  color: string;
   className?: string;
-  onClick?: () => void;
-  count?: number; // optional override (e.g. for merged pending QR + unread)
-  color?: string; // optional background color (for Orders item to be orange)
 }
 
-export const NotificationBadge: React.FC<NotificationBadgeProps> = ({ className = '', onClick, count, color }) => {
-  const { unreadCount } = useNotificationStore();
-  const displayCount = count !== undefined ? count : unreadCount;
-
-  if (displayCount === 0) return null;
-
-  const bgColor = color || '#ef4444';
-  const textColor = color ? '#0f0f0f' : 'white'; // dark text on orange, white on red
+export const NotificationBadge: React.FC<NotificationBadgeProps> = ({
+  count,
+  color,
+  className = '',
+}) => {
+  if (count <= 0) return null;
 
   return (
-    <div
-      onClick={onClick}
-      className={`notification-badge ${className}`}
-      style={{
-        background: bgColor,
-        color: textColor,
-        fontSize: '10px',
-        fontWeight: 700,
-        padding: '1px 6px',
-        borderRadius: '999px',
-        minWidth: '18px',
-        textAlign: 'center',
-        lineHeight: '16px',
-        display: 'inline-flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        cursor: onClick ? 'pointer' : 'default',
-      }}
+    <span
+      className={`inline-flex items-center justify-center min-w-[18px] h-[18px] rounded-full px-1 text-[10px] font-bold leading-none text-white ${className}`}
+      style={{ backgroundColor: color }}
     >
-      {displayCount > 99 ? '99+' : displayCount}
-    </div>
+      {count > 99 ? '99+' : count}
+    </span>
   );
 };

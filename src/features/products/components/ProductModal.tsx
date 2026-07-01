@@ -60,6 +60,7 @@ export const ProductModal: React.FC<ProductModalProps> = ({
     watch,
     formState: { errors, isSubmitting },
     reset,
+    setValue,
   } = useForm<Partial<ProductFormData>>({
     resolver: zodResolver(
       ProductSchema.omit({
@@ -94,6 +95,21 @@ export const ProductModal: React.FC<ProductModalProps> = ({
   const sellingPrice = watch('selling_price') || 0;
   const margin = sellingPrice - buyingPrice;
   const marginPct = sellingPrice > 0 ? (margin / sellingPrice) * 100 : 0;
+  const watchedName = watch('name');
+  const watchedCategoryId = watch('category_id');
+
+  // Auto-generate barcode when name or category changes
+  useEffect(() => {
+    if (!watchedName || !watchedCategoryId) return;
+    
+    const category = categories.find(c => c.id === watchedCategoryId);
+    const categoryPrefix = category ? category.name.substring(0, 3).toUpperCase() : 'PRD';
+    const namePart = watchedName.replace(/[^a-zA-Z0-9]/g, '').toUpperCase().substring(0, 4);
+    const timestamp = Date.now().toString().slice(-4);
+    const generatedBarcode = `${categoryPrefix}-${namePart}-${timestamp}`;
+    
+    setValue('barcode', generatedBarcode, { shouldValidate: false });
+  }, [watchedName, watchedCategoryId, categories, setValue]);
 
   // Image state
   const [imagePreview, setImagePreview] = React.useState<string | null>(product?.image_url || null);
@@ -626,14 +642,21 @@ export const ProductModal: React.FC<ProductModalProps> = ({
                   )}
                 </div>
 
-                {/* Barcode */}
+                {/* Barcode - Auto-generated, read-only */}
                 <div>
-                  <label className="enterprise-label">{t('products.barcode')}</label>
+                  <label className="enterprise-label">{t('products.barcode')} (auto-généré)</label>
                   <input
                     {...register('barcode')}
                     className="enterprise-input"
-                    placeholder="SKU / EAN"
-                    style={{ minHeight: touchTargets.min }}
+                    placeholder="Généré automatiquement"
+                    readOnly
+                    style={{ 
+                      minHeight: touchTargets.min,
+                      background: colors.surface,
+                      color: colors.text3,
+                      cursor: 'not-allowed',
+                      opacity: 0.8,
+                    }}
                   />
                 </div>
 

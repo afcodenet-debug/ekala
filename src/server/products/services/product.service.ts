@@ -10,6 +10,7 @@ import {
 } from '../dtos/product.dto';
 import { ProductEntity } from '../types/product.types';
 import { NotFoundError } from '../../utils/error';
+import { getRequestId, logTrace } from '../../utils/trace-utils';
 
 /**
  * Product Service - Pure business logic.
@@ -23,13 +24,29 @@ export class ProductService {
   constructor(private readonly productRepository: IProductRepository = getProductRepository()) {}
 
   async getProductById(id: string, businessId?: string): Promise<ProductResponseDTO> {
-    const product = await this.productRepository.findById(id, businessId);
+    const requestId = getRequestId();
+    logTrace('ENTER ProductService.getProductById', { id, businessId });
+    try {
+      const product = await this.productRepository.findById(id, businessId);
+      logTrace('EXIT ProductService.getProductById', { found: !!product });
 
-    if (!product) {
-      throw new NotFoundError('Product');
+      if (!product) {
+        throw new NotFoundError('Product');
+      }
+
+      return this.toResponseDTO(product);
+    } catch (error: any) {
+      console.error(JSON.stringify({
+        requestId,
+        file: 'product.service.ts',
+        function: 'getProductById',
+        errorType: error?.constructor?.name,
+        errorCode: error?.code,
+        errorMessage: error?.message,
+        errorStack: error?.stack
+      }));
+      throw error;
     }
-
-    return this.toResponseDTO(product);
   }
 
   async listProducts(businessId: string | undefined, query: ProductListQuery): Promise<{
@@ -39,29 +56,101 @@ export class ProductService {
     limit: number;
     hasMore: boolean;
   }> {
-    const result = await this.productRepository.findAll(businessId, query);
+    const requestId = getRequestId();
+    logTrace('ENTER ProductService.listProducts', { businessId, query });
+    try {
+      const result = await this.productRepository.findAll(businessId, query);
+      logTrace('EXIT ProductService.listProducts', { count: result.data.length, total: result.total });
 
-    return {
-      items: result.data.map((p: ProductEntity) => this.toListItemDTO(p)),
-      total: result.total,
-      page: result.page,
-      limit: result.limit,
-      hasMore: result.hasMore,
-    };
+      return {
+        items: result.data.map((p: ProductEntity) => this.toListItemDTO(p)),
+        total: result.total,
+        page: result.page,
+        limit: result.limit,
+        hasMore: result.hasMore,
+      };
+    } catch (error: any) {
+      console.error(JSON.stringify({
+        requestId,
+        file: 'product.service.ts',
+        function: 'listProducts',
+        errorType: error?.constructor?.name,
+        errorCode: error?.code,
+        errorMessage: error?.message,
+        errorStack: error?.stack
+      }));
+      throw error;
+    }
   }
 
   async createProduct(dto: CreateProductDTO, businessId?: string, userId?: string): Promise<ProductResponseDTO> {
-    const created = await this.productRepository.create(dto, businessId, userId);
-    return this.toResponseDTO(created);
+    const requestId = getRequestId();
+    logTrace('ENTER ProductService.createProduct', { dto: { ...dto, name: dto.name }, businessId, userId });
+    try {
+      const created = await this.productRepository.create(dto, businessId, userId);
+      logTrace('EXIT ProductService.createProduct', { createdId: created.id });
+      return this.toResponseDTO(created);
+    } catch (error: any) {
+      console.error(JSON.stringify({
+        requestId,
+        file: 'product.service.ts',
+        function: 'createProduct',
+        errorType: error?.constructor?.name,
+        errorCode: error?.code,
+        errorMessage: error?.message,
+        errorStack: error?.stack,
+        dto: { ...dto, name: dto.name },
+        businessId,
+        userId
+      }));
+      throw error;
+    }
   }
 
   async updateProduct(id: string, dto: UpdateProductDTO, businessId?: string): Promise<ProductResponseDTO> {
-    const updated = await this.productRepository.update(id, dto, businessId);
-    return this.toResponseDTO(updated);
+    const requestId = getRequestId();
+    logTrace('ENTER ProductService.updateProduct', { id, businessId, dto });
+    try {
+      const updated = await this.productRepository.update(id, dto, businessId);
+      logTrace('EXIT ProductService.updateProduct', { updatedId: updated.id });
+      return this.toResponseDTO(updated);
+    } catch (error: any) {
+      console.error(JSON.stringify({
+        requestId,
+        file: 'product.service.ts',
+        function: 'updateProduct',
+        errorType: error?.constructor?.name,
+        errorCode: error?.code,
+        errorMessage: error?.message,
+        errorStack: error?.stack,
+        id,
+        businessId,
+        dto
+      }));
+      throw error;
+    }
   }
 
   async deleteProduct(id: string, businessId?: string): Promise<void> {
-    await this.productRepository.softDelete(id, businessId);
+    const requestId = getRequestId();
+    logTrace('ENTER ProductService.deleteProduct', { id, businessId });
+    try {
+      await this.productRepository.softDelete(id, businessId);
+      logTrace('EXIT ProductService.deleteProduct', { id });
+    } catch (error: any) {
+      console.error(JSON.stringify({
+        requestId,
+        file: 'product.service.ts',
+        function: 'deleteProduct',
+        errorType: error?.constructor?.name,
+        errorCode: error?.code,
+        errorMessage: error?.message,
+        errorStack: error?.stack,
+        id,
+        businessId
+      }));
+      throw error;
+    }
   }
 
   // === Mapping methods (private) ===

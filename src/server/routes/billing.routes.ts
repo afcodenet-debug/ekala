@@ -33,6 +33,98 @@ function generateVoucherCode(tenantId: number): string {
 
 const router = Router();
 
+// GET /api/v1/subscription/status/:tenantId — Legacy route (compatibilité frontend)
+// Cette route est publique (skip requireJwtAuth dans server.ts)
+// Le middleware de contexte injecte req.tenant_id via verifyJwt si un token est présent
+router.get('/v1/subscription/status/:tenantId', async (req: any, res: any) => {
+  try {
+    const tenantId = Number(req.params.tenantId);
+    if (!tenantId) {
+      return res.status(400).json({ error: 'tenantId requis' });
+    }
+
+    // Rediriger vers la logique de /billing/status
+    const supabase = getSupabase();
+    if (!supabase) {
+      return res.status(503).json({ error: 'SUPABASE_NOT_CONFIGURED', message: 'Supabase non configuré.' });
+    }
+
+    const [{ data: tenant }, { data: subscription }] = await Promise.all([
+      supabase.from('tenants').select('status, name, is_provisioned').eq('id', tenantId).maybeSingle(),
+      supabase
+        .from('subscriptions')
+        .select('status, current_period_end, trial_ends_at, plan_id, started_at, last_voucher_code')
+        .eq('tenant_id', tenantId)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle(),
+    ]);
+
+    // Récupérer le plan après avoir obtenu l'abonnement
+    let plan: any = null;
+    if (subscription?.plan_id) {
+      const { data: planData } = await supabase
+        .from('plans')
+        .select('code, name, price_cents, currency, period')
+        .eq('id', subscription.plan_id)
+        .maybeSingle();
+      plan = planData;
+    }
+
+    const tenantStatus = tenant?.status || 'unknown';
+    const subState = await getSubscriptionStatus(tenantId);
+
+    let expiresAt: string | null = null;
+    if (subscription) {
+      expiresAt = subscription.current_period_end || subscription.trial_ends_at || null;
+    }
+
+    const blockedStates = ['pending', 'expired', 'suspended', 'cancelled', 'no_plan', 'past_due'];
+    const effectiveState = tenantStatus === 'pending' ? 'pending' : subState.state;
+    const canActivateVoucher = blockedStates.includes(effectiveState);
+
+    res.json({
+      tenant_status: tenantStatus,
+      subscription_status: subState.state,
+      plan_code: subState.planName || plan?.code,
+      plan_name: plan?.name || subState.planName,
+      plan_id: subscription?.plan_id || null,
+      price_cents: plan?.price_cents || 0,
+      currency: plan?.currency || 'ZMW',
+      period: plan?.period || 'monthly',
+      expires_at: expiresAt,
+      grace_days_remaining: subState.isGracePeriod ? subState.graceDaysRemaining : 0,
+      is_grace_period: subState.isGracePeriod,
+      can_activate_voucher: canActivateVoucher,
+      subscription_id: subState.subscriptionId,
+      started_at: subscription?.started_at || null,
+      last_voucher_code: subscription?.last_voucher_code || null,
+    });
+  } catch (e: any) {
+    console.error('[Billing] legacy status error:', e);
+    res.status(500).json({ error: 'BILLING_STATUS_FAILED', message: e.message });
+  }
+});
+
+// POST /api/admin/clear-subscription-cache — Vide le cache des abonnements
+router.post('/admin/clear-subscription-cache', requireJwtAuth, async (req: any, res: any) => {
+  try {
+    const tenantId = Number(req.user?.tenant_id);
+    if (!tenantId) {
+      return res.status(401).json({ error: 'UNAUTHORIZED', message: 'Authentification requise.' });
+    }
+
+    // Importer la fonction pour vider le cache
+    const { invalidateSubscriptionCache } = require('../middleware/subscription-guard');
+    invalidateSubscriptionCache(tenantId);
+
+    res.json({ success: true, message: 'Cache d\'abonnement vidé avec succès.' });
+  } catch (e: any) {
+    console.error('[Billing] clear cache error:', e);
+    res.status(500).json({ error: 'CACHE_CLEAR_FAILED', message: e.message });
+  }
+});
+
 // GET /api/billing/status — statut d'abonnement du tenant connecté
 router.get('/status', requireJwtAuth, async (req: any, res: any) => {
   try {
@@ -57,6 +149,17 @@ router.get('/status', requireJwtAuth, async (req: any, res: any) => {
         .maybeSingle(),
     ]);
 
+    // Récupérer le plan après avoir obtenu l'abonnement
+    let plan: any = null;
+    if (subscription?.plan_id) {
+      const { data: planData } = await supabase
+        .from('plans')
+        .select('code, name, price_cents, currency, period')
+        .eq('id', subscription.plan_id)
+        .maybeSingle();
+      plan = planData;
+    }
+
     const tenantStatus = tenant?.status || 'unknown';
     const subState = await getSubscriptionStatus(tenantId);
 
@@ -72,8 +175,12 @@ router.get('/status', requireJwtAuth, async (req: any, res: any) => {
     res.json({
       tenant_status: tenantStatus,
       subscription_status: subState.state,
-      plan_code: subState.planName,
+      plan_code: subState.planName || plan?.code,
+      plan_name: plan?.name || subState.planName,
       plan_id: subscription?.plan_id || null,
+      price_cents: plan?.price_cents || 0,
+      currency: plan?.currency || 'ZMW',
+      period: plan?.period || 'monthly',
       expires_at: expiresAt,
       grace_days_remaining: subState.isGracePeriod ? subState.graceDaysRemaining : 0,
       is_grace_period: subState.isGracePeriod,
@@ -379,6 +486,348 @@ router.post('/payment-sent', requireJwtAuth, async (req: any, res: any) => {
     res.json({ success: true, status: 'payment_sent', voucherCode: row.voucher_code });
   } catch (e: any) {
     console.error('[Billing] payment-sent error:', e);
+    res.status(500).json({ error: e?.message || 'Erreur serveur' });
+  }
+});
+
+// GET /api/billing/plans — Liste des plans disponibles
+router.get('/plans', requireJwtAuth, async (req: any, res: any) => {
+  try {
+    const supabase = getSupabase();
+    const localDb = db;
+
+    if (supabase) {
+      const { data, error } = await supabase
+        .from('plans')
+        .select('*')
+        .eq('is_active', true)
+        .eq('is_public', true)
+        .order('sort_order', { ascending: true });
+
+      if (error) {
+        console.error('[Billing] plans error (supabase):', error);
+        return res.status(500).json({ error: error.message });
+      }
+
+      return res.json({ plans: data || [] });
+    }
+
+    if (localDb) {
+      const plans = localDb.prepare(`
+        SELECT * FROM plans
+        WHERE is_active = 1 AND is_public = 1
+        ORDER BY sort_order ASC
+      `).all() as any[];
+
+      return res.json({ plans });
+    }
+
+    return res.status(503).json({ error: 'SUPABASE_NOT_CONFIGURED' });
+  } catch (e: any) {
+    console.error('[Billing] plans error:', e);
+    res.status(500).json({ error: e?.message || 'Erreur serveur' });
+  }
+});
+
+// POST /api/billing/redeem-voucher — Activer un voucher code
+router.post('/redeem-voucher', requireJwtAuth, async (req: any, res: any) => {
+  try {
+    const tenantId = Number(req.user?.tenant_id);
+    if (!tenantId) {
+      return res.status(401).json({ error: 'UNAUTHORIZED', message: 'Authentification requise.' });
+    }
+
+    const code = String(req.body?.code || '').trim().toUpperCase();
+    if (!code) {
+      return res.status(400).json({ error: 'Code voucher requis' });
+    }
+
+    const supabase = getSupabase();
+    const localDb = db;
+
+    // Chercher le voucher dans les deux tables possibles
+    let voucher: any = null;
+    let voucherTable = '';
+
+    if (localDb) {
+      // Essayer d'abord voucher_requests
+      try {
+        voucher = localDb.prepare(`
+          SELECT * FROM voucher_requests
+          WHERE voucher_code = ? AND tenant_id = ?
+          ORDER BY created_at DESC LIMIT 1
+        `).get(code, tenantId) as any;
+        voucherTable = 'voucher_requests';
+      } catch (e: any) {
+        // Fallback vers subscription_payment_requests
+        if (e?.message?.includes('no such table')) {
+          try {
+            voucher = localDb.prepare(`
+              SELECT * FROM subscription_payment_requests
+              WHERE voucher_code = ? AND tenant_id = ?
+              ORDER BY created_at DESC LIMIT 1
+            `).get(code, tenantId) as any;
+            voucherTable = 'subscription_payment_requests';
+          } catch (e2: any) {
+            if (!e2?.message?.includes('no such table')) {
+              console.error('[Billing] redeem-voucher query error:', e2);
+            }
+          }
+        }
+      }
+    } else if (supabase) {
+      // Essayer d'abord voucher_requests
+      const { data: v1, error: e1 } = await supabase
+        .from('voucher_requests')
+        .select('*, plans(*)')
+        .eq('voucher_code', code)
+        .eq('tenant_id', tenantId)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (v1 && !e1) {
+        voucher = v1;
+        voucherTable = 'voucher_requests';
+      } else {
+        // Fallback vers subscription_payment_requests
+        const { data: v2, error: e2 } = await supabase
+          .from('subscription_payment_requests')
+          .select('*, plans(*)')
+          .eq('voucher_code', code)
+          .eq('tenant_id', tenantId)
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        if (v2 && !e2) {
+          voucher = v2;
+          voucherTable = 'subscription_payment_requests';
+        }
+      }
+    }
+
+    if (!voucher) {
+      return res.status(404).json({ error: 'Code introuvable ou non associé à votre compte.' });
+    }
+
+    // Vérifier le statut du voucher
+    const now = new Date();
+    const expiresAt = voucher.expires_at ? new Date(voucher.expires_at) : null;
+
+    if (expiresAt && expiresAt < now) {
+      // Marquer comme expiré
+      if (localDb) {
+        localDb.prepare(`UPDATE ${voucherTable} SET status = 'expired', updated_at = ? WHERE id = ?`).run(now.toISOString(), voucher.id);
+      } else if (supabase) {
+        await supabase.from(voucherTable).update({ status: 'expired', updated_at: now.toISOString() }).eq('id', voucher.id);
+      }
+      return res.status(400).json({ error: 'CODE_EXPIRED', message: 'Ce code a expiré.' });
+    }
+
+    if (voucher.status !== 'pending' && voucher.status !== 'payment_sent') {
+      return res.status(400).json({
+        error: 'INVALID_STATUS',
+        message: `Statut invalide: ${voucher.status}. Seuls les codes en attente peuvent être activés.`
+      });
+    }
+
+    // Récupérer le plan
+    let plan: any = null;
+    if (voucher.plans) {
+      plan = voucher.plans;
+    } else if (localDb) {
+      plan = localDb.prepare('SELECT * FROM plans WHERE id = ?').get(voucher.plan_id) as any;
+    } else if (supabase) {
+      const { data: p } = await supabase.from('plans').select('*').eq('id', voucher.plan_id).maybeSingle();
+      plan = p;
+    }
+
+    if (!plan) {
+      return res.status(404).json({ error: 'Plan introuvable pour ce voucher.' });
+    }
+
+    // Mettre à jour le voucher: status = activated
+    const nowISO = now.toISOString();
+    if (localDb) {
+      localDb.prepare(`
+        UPDATE ${voucherTable}
+        SET status = 'activated', updated_at = ?, verified_at = ?
+        WHERE id = ?
+      `).run(nowISO, nowISO, voucher.id);
+    } else if (supabase) {
+      await supabase.from(voucherTable).update({
+        status: 'activated',
+        updated_at: nowISO,
+        verified_at: nowISO,
+      }).eq('id', voucher.id);
+    }
+
+    // Créer/mettre à jour l'abonnement
+    const durationDays = Number(plan.duration_days || 30);
+    const startDate = now;
+    const endDate = new Date(now.getTime() + durationDays * 24 * 60 * 60 * 1000);
+
+    if (localDb) {
+      // Vérifier si un abonnement existe déjà
+      const existing = localDb.prepare(`
+        SELECT * FROM subscriptions WHERE tenant_id = ?
+      `).get(tenantId) as any;
+
+      if (existing) {
+        // Étendre l'abonnement existant
+        const currentEnd = existing.end_date ? new Date(existing.end_date) : new Date();
+        const newEnd = new Date(Math.max(currentEnd.getTime(), startDate.getTime()) + durationDays * 24 * 60 * 60 * 1000);
+        localDb.prepare(`
+          UPDATE subscriptions
+          SET plan_id = ?, status = 'active', current_period_start = ?, current_period_end = ?, updated_at = ?
+          WHERE tenant_id = ?
+        `).run(plan.id, startDate.toISOString(), newEnd.toISOString(), nowISO, tenantId);
+      } else {
+        // Créer un nouvel abonnement
+        localDb.prepare(`
+          INSERT INTO subscriptions (tenant_id, plan_id, status, current_period_start, current_period_end, started_at, created_at, updated_at)
+          VALUES (?, ?, 'active', ?, ?, ?, ?, ?)
+        `).run(tenantId, plan.id, startDate.toISOString(), endDate.toISOString(), nowISO, nowISO, nowISO);
+      }
+    } else if (supabase) {
+      // Vérifier si un abonnement existe
+      const { data: existing } = await supabase
+        .from('subscriptions')
+        .select('*')
+        .eq('tenant_id', tenantId)
+        .maybeSingle();
+
+      if (existing) {
+        const currentEnd = existing.current_period_end ? new Date(existing.current_period_end) : new Date();
+        const newEnd = new Date(Math.max(currentEnd.getTime(), startDate.getTime()) + durationDays * 24 * 60 * 60 * 1000);
+        await supabase.from('subscriptions').update({
+          plan_id: plan.id,
+          status: 'active',
+          current_period_start: startDate.toISOString(),
+          current_period_end: newEnd.toISOString(),
+          updated_at: nowISO,
+        }).eq('tenant_id', tenantId);
+      } else {
+        await supabase.from('subscriptions').insert({
+          tenant_id: tenantId,
+          plan_id: plan.id,
+          status: 'active',
+          current_period_start: startDate.toISOString(),
+          current_period_end: endDate.toISOString(),
+          started_at: nowISO,
+          created_at: nowISO,
+          updated_at: nowISO,
+        });
+      }
+    }
+
+    // Mettre à jour le tenant: status = active, is_provisioned = 1
+    if (localDb) {
+      localDb.prepare(`
+        UPDATE tenants SET status = 'active', is_provisioned = 1, updated_at = ? WHERE id = ?
+      `).run(nowISO, tenantId);
+    } else if (supabase) {
+      await supabase.from('tenants').update({
+        status: 'active',
+        is_provisioned: true,
+        updated_at: nowISO,
+      }).eq('id', tenantId);
+    }
+
+    res.json({
+      success: true,
+      message: 'Abonnement activé avec succès !',
+      subscription: {
+        plan_code: plan.code,
+        plan_name: plan.name,
+        status: 'active',
+        start_date: startDate.toISOString(),
+        end_date: endDate.toISOString(),
+        duration_days: durationDays,
+      },
+    });
+  } catch (e: any) {
+    console.error('[Billing] redeem-voucher error:', e);
+    res.status(500).json({ error: e?.message || 'Erreur serveur' });
+  }
+});
+
+// GET /api/billing/voucher-requests — Liste des demandes de voucher du tenant
+router.get('/voucher-requests', requireJwtAuth, async (req: any, res: any) => {
+  try {
+    const tenantId = Number(req.user?.tenant_id);
+    if (!tenantId) {
+      return res.status(401).json({ error: 'UNAUTHORIZED', message: 'Authentification requise.' });
+    }
+
+    const supabase = getSupabase();
+    const localDb = db;
+
+    let voucherRequests: any[] = [];
+    if (localDb) {
+      try {
+        voucherRequests = localDb.prepare(`
+          SELECT vr.*, p.code as plan_code, p.name as plan_name, p.period, p.duration_days
+          FROM voucher_requests vr
+          LEFT JOIN plans p ON vr.plan_id = p.id
+          WHERE vr.tenant_id = ?
+          ORDER BY vr.created_at DESC
+          LIMIT 50
+        `).all(tenantId) as any[];
+      } catch (e: any) {
+        if (!e?.message?.includes('no such table')) {
+          console.error('[Billing] voucher-requests query error:', e);
+        }
+        voucherRequests = [];
+      }
+    } else if (supabase) {
+      const { data } = await supabase
+        .from('voucher_requests')
+        .select('*, plans(code, name, period, duration_days)')
+        .eq('tenant_id', tenantId)
+        .order('created_at', { ascending: false })
+        .limit(50);
+      voucherRequests = data || [];
+    }
+
+    res.json({
+      voucherRequests: voucherRequests.map(vr => ({
+        id: vr.id,
+        voucher_code: vr.voucher_code,
+        status: vr.status,
+        plan_id: vr.plan_id,
+        plan_code: vr.plan_code,
+        plan_name: vr.plan_name,
+        period: vr.period,
+        duration_days: vr.duration_days,
+        requested_at: vr.requested_at,
+        expires_at: vr.expires_at,
+        verified_at: vr.verified_at,
+      }))
+    });
+  } catch (e: any) {
+    console.error('[Billing] voucher-requests error:', e);
+    res.status(500).json({ error: e?.message || 'Erreur serveur' });
+  }
+});
+
+// GET /api/billing/payment-history — Historique des paiements (placeholder)
+router.get('/payment-history', requireJwtAuth, async (req: any, res: any) => {
+  try {
+    const tenantId = Number(req.user?.tenant_id);
+    if (!tenantId) {
+      return res.status(401).json({ error: 'UNAUTHORIZED', message: 'Authentification requise.' });
+    }
+
+    // Pour l'instant, retourner un tableau vide car l'historique de paiement
+    // n'est pas encore implémenté dans le système de voucher
+    // Ce endpoint peut être étendu plus tard pour intégrer un système de paiement
+    res.json({
+      paymentHistory: []
+    });
+  } catch (e: any) {
+    console.error('[Billing] payment-history error:', e);
     res.status(500).json({ error: e?.message || 'Erreur serveur' });
   }
 });

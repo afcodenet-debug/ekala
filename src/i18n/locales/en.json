@@ -137,7 +137,17 @@
     }
   },
   "sidebar": {
-    "voucherValidation": "Payment validation"
+    "voucherValidation": "Payment validation",
+    "trialMode": "TRIAL MODE",
+    "proAccount": "PRO ACCOUNT",
+    "paymentRequired": "PAYMENT REQUIRED",
+    "expired": "EXPIRED",
+    "upgradeToPro": "Upgrade to Pro",
+    "reactivateAccount": "Reactivate my account",
+    "mySubscription": "My Subscription",
+    "notifications": "Notifications",
+    "quitSession": "Quit session",
+    "daysRemaining": "{days} days remaining"
   },
   "subscription": {
     "grace": {
@@ -258,5 +268,8 @@
       "login": "Log in",
       "start": "Get started"
     }
+  },
+  "products": {
+    "showArchived": "Show archived"
   }
 }

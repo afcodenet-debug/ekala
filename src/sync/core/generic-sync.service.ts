@@ -11,6 +11,8 @@ import { SyncPersistedCursor } from './sync-persisted-cursor';
 import { ConflictResolver } from './conflict-resolver';
 import { DeadLetterQueue } from './dead-letter-queue';
 
+import { getRequestId, logTrace } from '../../server/utils/trace-utils';
+
 export interface SyncResult {
   pushed: number;
   pulled: number;
@@ -228,8 +230,13 @@ export class GenericSyncService {
    * ================================================================== */
 
   queueChange(entity: string, operation: 'insert' | 'update' | 'delete', record: any) {
+    const requestId = getRequestId();
+    logTrace('ENTER GenericSyncService.queueChange', { entity, operation, recordId: record.id });
     const def = getEntityDef(entity);
-    if (!def) return;
+    if (!def) {
+      logTrace('EXIT GenericSyncService.queueChange', { reason: 'no entity def' });
+      return;
+    }
 
     const id = this.newId();
     const payload = JSON.stringify(record);
@@ -239,15 +246,65 @@ export class GenericSyncService {
       ? this.normalizeTenantId(record.id)
       : this.normalizeTenantId(record.tenant_id);
 
-    this.db.prepare(`
-      INSERT INTO sync_outbox (id, entity, operation, record_id, payload, version, tenant_id)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-    `).run(id, entity, operation, String(record.id), payload, version, tenantId);
+    try {
+      const stmt = this.db.prepare(`
+        INSERT INTO sync_outbox (id, entity, operation, record_id, payload, version, tenant_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      `);
+      const result = stmt.run(id, entity, operation, String(record.id), payload, version, tenantId);
+      logTrace('EXIT GenericSyncService.queueChange', { result });
+    } catch (err: any) {
+      console.error(JSON.stringify({
+        requestId,
+        file: 'generic-sync.service.ts',
+        function: 'queueChange',
+        errorType: err?.constructor?.name,
+        errorCode: err?.code,
+        errorMessage: err?.message,
+        errorStack: err?.stack,
+        entity,
+        operation,
+        recordId: record.id
+      }));
+      throw err;
+    }
   }
 
   queueChangeInsideTransaction(entity: string, operation: 'insert' | 'update' | 'delete', record: any) {
-    // Same behavior as queueChange: keep it simple.
-    this.queueChange(entity, operation, record);
+    const requestId = getRequestId();
+    logTrace('ENTER GenericSyncService.queueChangeInsideTransaction', { entity, operation, recordId: record.id });
+    
+    const id = this.newId();
+    const payload = JSON.stringify(record);
+    const version = record.version || 1;
+
+    const tenantId = entity === 'tenant'
+      ? this.normalizeTenantId(record.id)
+      : this.normalizeTenantId(record.tenant_id);
+
+    logTrace('ENTER db.prepare INSERT sync_outbox');
+    try {
+      const stmt = this.db.prepare(`
+        INSERT INTO sync_outbox (id, entity, operation, record_id, payload, version, tenant_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      `);
+      const result = stmt.run(id, entity, operation, String(record.id), payload, version, tenantId);
+      logTrace('EXIT db.prepare INSERT sync_outbox', { result });
+    } catch (err: any) {
+      console.error(JSON.stringify({
+        requestId,
+        file: 'generic-sync.service.ts',
+        function: 'queueChangeInsideTransaction',
+        errorType: err?.constructor?.name,
+        errorCode: err?.code,
+        errorMessage: err?.message,
+        errorStack: err?.stack,
+        entity,
+        operation,
+        recordId: record.id
+      }));
+      throw err;
+    }
   }
 
   /* ==================================================================
@@ -255,16 +312,20 @@ export class GenericSyncService {
    * ================================================================== */
 
   async pushByEntity(entity: string, tenantId: string): Promise<number> {
+    const requestId = getRequestId();
+    logTrace('ENTER GenericSyncService.pushByEntity', { entity, tenantId });
     const def = getEntityDef(entity);
-    if (!def) return 0;
+    if (!def) {
+      logTrace('EXIT GenericSyncService.pushByEntity', { reason: 'no entity def' });
+      return 0;
+    }
 
     // IMPORTANT: Use CAST to handle both TEXT ("6.0") and INTEGER (6) tenant_id values
     const tenantIdNum = parseInt(tenantId, 10);
-    console.log('[DEBUG] pushByEntity entity=', entity);
-    console.log('[DEBUG] pushByEntity tenant=', tenantIdNum);
     
     // DIAGNOSTIC: Count all products in outbox before filtering
     if (entity === 'product') {
+      logTrace('ENTER db.prepare SELECT DIAG outbox stats');
       const totalInOutbox = this.db.prepare(`
         SELECT COUNT(*) AS total FROM sync_outbox WHERE entity='product'
       `).get() as any;
@@ -275,59 +336,65 @@ export class GenericSyncService {
         SELECT COUNT(*) AS pending_for_tenant FROM sync_outbox 
         WHERE entity='product' AND status='pending' AND CAST(tenant_id AS INTEGER)=?
       `).get(tenantIdNum) as any;
-      
-      console.log('[DIAG] Total products in sync_outbox:', totalInOutbox?.total || 0);
-      console.log('[DIAG] Pending products in sync_outbox:', pendingInOutbox?.pending || 0);
-      console.log('[DIAG] Pending products for tenant', tenantIdNum, ':', pendingForTenant?.pending_for_tenant || 0);
+      logTrace('EXIT db.prepare SELECT DIAG outbox stats', { 
+        total: totalInOutbox?.total, 
+        pending: pendingInOutbox?.pending,
+        pendingForTenant: pendingForTenant?.pending_for_tenant 
+      });
       
       // Show tenant_id distribution
+      logTrace('ENTER db.prepare SELECT DIAG tenant distribution');
       const byTenant = this.db.prepare(`
         SELECT tenant_id, status, COUNT(*) as count 
         FROM sync_outbox 
         WHERE entity='product' 
         GROUP BY tenant_id, status
       `).all() as any[];
-      console.log('[DIAG] Products by tenant_id and status:', JSON.stringify(byTenant, null, 2));
+      logTrace('EXIT db.prepare SELECT DIAG tenant distribution', { byTenant });
     }
     
+    logTrace('ENTER db.prepare SELECT outbox items');
     const items = this.db.prepare(`
       SELECT * FROM sync_outbox
       WHERE entity = ? AND status = 'pending' AND (tenant_id IS NULL OR CAST(tenant_id AS INTEGER) = ?)
       ORDER BY created_at ASC
       LIMIT 50
     `).all(entity, tenantIdNum) as any[];
-
-    console.log('[DEBUG] Outbox rows found=', items.length);
-    console.log('[DEBUG] Outbox rows=', JSON.stringify(items, null, 2));
+    logTrace('EXIT db.prepare SELECT outbox items', { count: items.length });
     
     // Log detail pour diagnostic
     if (items.length === 0) {
+      logTrace('ENTER db.prepare SELECT DIAG status distribution');
       const byStatus = this.db.prepare(`
         SELECT status, tenant_id, COUNT(*) as count
         FROM sync_outbox
         WHERE entity = ?
         GROUP BY status, tenant_id
       `).all(entity) as any[];
-      console.log('[DIAG] Outbox status distribution:', JSON.stringify(byStatus, null, 2));
+      logTrace('EXIT db.prepare SELECT DIAG status distribution', { byStatus });
     }
 
     let successCount = 0;
 
-    console.log(`[GenericSync] pushByEntity ${def.entity}: processing ${items.length} items`);
+    logTrace(`[GenericSync] pushByEntity ${def.entity}: processing ${items.length} items`);
 
     for (const item of items) {
+      logTrace('ENTER db.prepare UPDATE outbox in_progress');
       this.db.prepare(`UPDATE sync_outbox SET status = 'in_progress' WHERE id = ?`).run(item.id);
+      logTrace('EXIT db.prepare UPDATE outbox in_progress');
 
       try {
         const payload = JSON.parse(item.payload);
         const recordId = Number(item.record_id);
         if (isNaN(recordId)) {
           console.error(`[GenericSync] Invalid record_id for ${def.entity}: ${item.record_id}`);
+          logTrace('ENTER db.prepare UPDATE outbox failed (invalid record_id)');
           this.db.prepare(`UPDATE sync_outbox SET status = 'failed', last_error = 'invalid record_id' WHERE id = ?`).run(item.id);
+          logTrace('EXIT db.prepare UPDATE outbox failed (invalid record_id)');
           continue;
         }
 
-        console.log(`[GenericSync] Processing ${def.entity} #${recordId} (op=${item.operation})`);
+        logTrace(`[GenericSync] Processing ${def.entity} #${recordId} (op=${item.operation})`);
 
         if (item.operation === 'insert' || item.operation === 'update') {
           await this.handleUpsert(def, item, payload, recordId, tenantId);
@@ -343,16 +410,20 @@ export class GenericSyncService {
           await this.handleDelete(def, item, payload, recordId, resolvedRemoteId || remoteId);
         }
 
+        logTrace('ENTER db.prepare UPDATE outbox done');
         this.db.prepare(`UPDATE sync_outbox SET status = 'done' WHERE id = ?`).run(item.id);
+        logTrace('EXIT db.prepare UPDATE outbox done');
         successCount++;
-        console.log(`[GenericSync] ✓ ${def.entity} #${recordId} synced successfully`);
+        logTrace(`[GenericSync] ✓ ${def.entity} #${recordId} synced successfully`);
       } catch (err: any) {
         const errorMsg = err?.message ?? String(err);
         
         // Special handling for duplicate key errors - mark as done since data already exists
         if (errorMsg.includes('duplicate key') || errorMsg.includes('unique constraint')) {
           console.log(`[GenericSync] ✓ ${def.entity} #${item.record_id} synced (duplicate detected in catch)`);
+          logTrace('ENTER db.prepare UPDATE outbox done (duplicate)');
           this.db.prepare(`UPDATE sync_outbox SET status = 'done' WHERE id = ?`).run(item.id);
+          logTrace('EXIT db.prepare UPDATE outbox done (duplicate)');
           successCount++;
           continue;
         }
@@ -360,11 +431,13 @@ export class GenericSyncService {
         console.error(`[GenericSync] ✗ ${def.entity} #${item.record_id} failed:`, errorMsg);
         
         const newRetryCount = (item.retry_count || 0) + 1;
+        logTrace('ENTER db.prepare UPDATE outbox failed');
         this.db.prepare(`
           UPDATE sync_outbox 
           SET status = 'failed', retry_count = ?, last_error = ?
           WHERE id = ?
         `).run(newRetryCount, errorMsg, item.id);
+        logTrace('EXIT db.prepare UPDATE outbox failed');
 
         if (newRetryCount >= 5) {
           this.dlq.archiveFailedItem(item.id, errorMsg, newRetryCount);
@@ -372,6 +445,7 @@ export class GenericSyncService {
       }
     }
 
+    logTrace(`[GenericSync] pushByEntity ${def.entity}: completed ${successCount}/${items.length}`);
     console.log(`[GenericSync] pushByEntity ${def.entity}: completed ${successCount}/${items.length}`);
     return successCount;
   }

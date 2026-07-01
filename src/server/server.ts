@@ -33,6 +33,7 @@ import notificationsRoutes from './routes/notifications';
 import notificationPreferencesRoutes from './routes/notification_preferences';
 import scheduledReportsLogRoutes from './routes/scheduled_reports_log';
 import billingRoutes from './routes/billing.routes';
+import billingDebugRoutes from './routes/billing-debug.routes';
 import subscriptionRoutes from './routes/subscription.routes';
 import { db, initializeDatabase } from './db/database';
 import { startSupabasePullWorker, getPullSyncStatus } from './services/supabase-pull-sync.service';
@@ -42,6 +43,7 @@ import { startScheduledReports } from './services/scheduled-reports.service';
 // to ensure db is ready. The sync engine uses the V2 orchestrator for all tables.
 import { SyncOrchestratorV2 } from '../sync';
 import { env } from './config/env';
+import { dataSource } from './infrastructure/data-source-manager';
 import { createSaaSRouter } from './saas/saas.routes';
 import { createSaaSPaymentRouter } from './saas/saas-payment.routes';
 import { startSubscriptionExpirationCron } from './saas/cron/subscription-expiration.cron';
@@ -261,10 +263,13 @@ app.use('/api', (req, res, next) => {
   // Platform auth (login) is public
   // POST /api/platform/auth/login
   // Platform auth endpoints (plateforme) - gérés par requirePlatformAuth
+  // Legacy subscription status (public, for login page)
+  // GET /api/v1/subscription/status/:tenantId
   if (p.startsWith('/platform') ||
       p === '/plans' || p.startsWith('/plans') ||
       p === '/tenants' || p.startsWith('/tenants/') ||
-      p.startsWith('/payments') || p.startsWith('/webhooks')) {
+      p.startsWith('/payments') || p.startsWith('/webhooks') ||
+      p.startsWith('/v1/subscription/status')) {
     return next();
   }
 
@@ -402,6 +407,21 @@ app.use('/api/notifications', notificationsRoutes);
 app.use('/api/notification_preferences', notificationPreferencesRoutes);
 app.use('/api/scheduled_reports_log', scheduledReportsLogRoutes);
 app.use('/api/billing', billingRoutes);
+
+// Legacy route: /api/v1/subscription/status/:tenantId → /api/billing/v1/subscription/status/:tenantId
+app.get('/api/v1/subscription/status/:tenantId', (req, res) => {
+  // Redirect to the billing route
+  const newPath = `/api/billing/v1/subscription/status/${req.params.tenantId}`;
+  const newUrl = `${req.protocol}://${req.get('host')}${newPath}`;
+  // Proxy the request by forwarding it to the billing route
+  // Or simply use the same handler
+  const billingRouter = require('./routes/billing.routes').default;
+  req.url = `/billing/v1/subscription/status/${req.params.tenantId}`;
+  billingRouter(req, res, () => {
+    res.status(404).json({ error: 'NOT_FOUND' });
+  });
+});
+app.use('/api/billing', billingDebugRoutes);
 app.use('/api/subscription', subscriptionRoutes);
 app.use('/api/admin/subscriptions', adminSubscriptionsRouter);
 app.use('/api/admin/vouchers', adminVouchersRouter);
@@ -476,16 +496,17 @@ app.listen(PORT, async () => {
     console.log('══════════════════════════════════════════════════════════════');
   }
 
-  console.log(
-    `Supabase mode → PRODUCTS=${env.USE_SUPABASE_PRODUCTS}, TABLES=${env.USE_SUPABASE_TABLES}, RENDER_CLOUD_MODE=${env.RENDER_CLOUD_MODE}`
-  );
+  dataSource.logStatus();
   console.log('[RENDER BOOT] endpoints mounted: /health, /test, /api/auth, /api/menu, /api/tables, /api/products, /api/categories, /api/orders, /api/sales, /api/expenses, /api/dashboard, /api/users, /api/settings, /api/logs, /api/inventory, /api/reports, /api/suppliers, /api/purchase-orders, /api/stock-adjustments');
 
   // Lightweight Supabase → SQLite pull worker (QR orders visibility)
-  startSupabasePullWorker();
-
-  // Realtime Supabase → SQLite pull bridge for full bidirectional parity
-  startSupabaseRealtimePull();
+  // Only start if Supabase credentials are available
+  if (env.SUPABASE_URL && env.SUPABASE_SERVICE_ROLE_KEY) {
+    startSupabasePullWorker();
+    startSupabaseRealtimePull();
+  } else {
+    console.log('[Supabase] Credentials not configured — skipping pull workers');
+  }
 
   // Scheduled email reports
   if (!env.RENDER_CLOUD_MODE) {

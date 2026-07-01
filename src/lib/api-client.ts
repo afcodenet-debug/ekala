@@ -79,6 +79,19 @@ export async function requestPlatform<T>(
     authHeaders['Authorization'] = `Bearer ${token}`;
   }
 
+  // Serialize plain object bodies as JSON
+  let resolvedBody: BodyInit | null | undefined;
+  if (
+    options.body &&
+    typeof options.body === 'object' &&
+    !(options.body instanceof FormData) &&
+    !(options.body instanceof URLSearchParams)
+  ) {
+    resolvedBody = JSON.stringify(options.body) as unknown as BodyInit;
+  } else {
+    resolvedBody = options.body as unknown as BodyInit | null | undefined;
+  }
+
   const config: RequestInit = {
     headers: {
       'Content-Type': 'application/json',
@@ -86,6 +99,7 @@ export async function requestPlatform<T>(
       ...options.headers,
     },
     ...options,
+    body: resolvedBody,
   };
 
   const response = await fetch(url, config);
@@ -509,6 +523,10 @@ export const api = {
      logout: () => requestPlatform<{ success: boolean }>('/platform/auth/logout', { method: 'POST' }),
      refresh: (token: string) => requestPlatform<{ success: boolean; token: string }>('/platform/auth/refresh', { method: 'POST', body: { token } }),
      // Tenants
+     createTenant: (data: { name: string; slug?: string; owner_email: string; owner_name?: string; phone?: string; country?: string; city?: string; plan_id?: number }) =>
+       requestPlatform<{ success: boolean; tenant: any }>('/platform/tenants', { method: 'POST', body: data }),
+     createTenantUser: (tenantId: number, data: { email: string; full_name: string; phone?: string; username?: string; password: string; pin_code?: string; role?: string; tenant_role?: string }) =>
+       requestPlatform<{ success: boolean; message: string; userId?: number }>('/platform/tenants/' + tenantId + '/users', { method: 'POST', body: data }),
      getTenants: (params?: { page?: number; limit?: number; search?: string; status?: string }) =>
        requestPlatform<{ success: boolean; tenants: any[]; pagination: any }>('/platform/tenants', { params }),
      getTenant: (id: number) =>

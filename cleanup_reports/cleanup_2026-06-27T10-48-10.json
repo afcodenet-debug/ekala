@@ -1,0 +1,137 @@
+{
+  "scripts": [
+    "/Users/meyinzaji/Codes/reactjs/great_olive/scripts/backfill_products_data.js",
+    "/Users/meyinzaji/Codes/reactjs/great_olive/scripts/check_plans_column.js",
+    "/Users/meyinzaji/Codes/reactjs/great_olive/scripts/cleanup_orphan_outbox.js",
+    "/Users/meyinzaji/Codes/reactjs/great_olive/scripts/cleanup_product_sync.js",
+    "/Users/meyinzaji/Codes/reactjs/great_olive/scripts/cleanup_temp_files.js",
+    "/Users/meyinzaji/Codes/reactjs/great_olive/scripts/diagnose_plans.js",
+    "/Users/meyinzaji/Codes/reactjs/great_olive/scripts/diagnose_plans_simple.js",
+    "/Users/meyinzaji/Codes/reactjs/great_olive/scripts/diagnose_product_creation.js",
+    "/Users/meyinzaji/Codes/reactjs/great_olive/scripts/diagnose_product_sync.js",
+    "/Users/meyinzaji/Codes/reactjs/great_olive/scripts/diagnose_tenant_16.js",
+    "/Users/meyinzaji/Codes/reactjs/great_olive/scripts/fix_empty_product_fields.js",
+    "/Users/meyinzaji/Codes/reactjs/great_olive/scripts/fix_inventory_movements_sync.js",
+    "/Users/meyinzaji/Codes/reactjs/great_olive/scripts/fix_outbox_payloads.js",
+    "/Users/meyinzaji/Codes/reactjs/great_olive/scripts/fix_platform_migrations.js",
+    "/Users/meyinzaji/Codes/reactjs/great_olive/scripts/fix_product_backfill.js",
+    "/Users/meyinzaji/Codes/reactjs/great_olive/scripts/fix_product_sync.js",
+    "/Users/meyinzaji/Codes/reactjs/great_olive/scripts/fix_products_sync_issues.js",
+    "/Users/meyinzaji/Codes/reactjs/great_olive/scripts/fix_sqlite_low_stock_threshold.js",
+    "/Users/meyinzaji/Codes/reactjs/great_olive/scripts/fix_subscription_system.js",
+    "/Users/meyinzaji/Codes/reactjs/great_olive/scripts/fix_user_sync_ids.js",
+    "/Users/meyinzaji/Codes/reactjs/great_olive/scripts/force_requeue_products.js",
+    "/Users/meyinzaji/Codes/reactjs/great_olive/scripts/full_test.js",
+    "/Users/meyinzaji/Codes/reactjs/great_olive/scripts/manual_sync.js",
+    "/Users/meyinzaji/Codes/reactjs/great_olive/scripts/quick_diagnose.js",
+    "/Users/meyinzaji/Codes/reactjs/great_olive/scripts/recover_sync_issues.js",
+    "/Users/meyinzaji/Codes/reactjs/great_olive/scripts/refresh_supabase_schema_cache.js",
+    "/Users/meyinzaji/Codes/reactjs/great_olive/scripts/reinject_orders_outbox.js",
+    "/Users/meyinzaji/Codes/reactjs/great_olive/scripts/reproduce_route_error.js",
+    "/Users/meyinzaji/Codes/reactjs/great_olive/scripts/test_api_directly.js",
+    "/Users/meyinzaji/Codes/reactjs/great_olive/scripts/test_billing_route.js",
+    "/Users/meyinzaji/Codes/reactjs/great_olive/scripts/test_subscription_fix.js",
+    "/Users/meyinzaji/Codes/reactjs/great_olive/scripts/test_with_auth.js",
+    "/Users/meyinzaji/Codes/reactjs/great_olive/scripts/verify_and_fix.js"
+  ],
+  "root": [
+    "/Users/meyinzaji/Codes/reactjs/great_olive/AUDIT_SYNC_INVENTORY_MOVEMENTS_2026_06_19.md",
+    "/Users/meyinzaji/Codes/reactjs/great_olive/AUDIT_VOUCHER_SYSTEM.md",
+    "/Users/meyinzaji/Codes/reactjs/great_olive/FIX_CATEGORIES_UNIQUE_CONSTRAINT.sql",
+    "/Users/meyinzaji/Codes/reactjs/great_olive/FIX_SUPABASE_SALES_TENANT.sql",
+    "/Users/meyinzaji/Codes/reactjs/great_olive/FIX_SUPABASE_TENANT_ID_COLUMNS.sql",
+    "/Users/meyinzaji/Codes/reactjs/great_olive/SUPABASE_ADD_LOW_STOCK_THRESHOLD.sql",
+    "/Users/meyinzaji/Codes/reactjs/great_olive/SUPABASE_PRODUCTS_SYNC_FIX.sql",
+    "/Users/meyinzaji/Codes/reactjs/great_olive/SUPABASE_PURCHASE_STOCK_ITEMS_UPDATED_AT_FIX.sql",
+    "/Users/meyinzaji/Codes/reactjs/great_olive/SUPABASE_RECOVERY_SCRIPT.sql",
+    "/Users/meyinzaji/Codes/reactjs/great_olive/SUPABASE_RUNTIME_MIGRATION.sql",
+    "/Users/meyinzaji/Codes/reactjs/great_olive/diagnose_plans.js",
+    "/Users/meyinzaji/Codes/reactjs/great_olive/diagnose_products.js",
+    "/Users/meyinzaji/Codes/reactjs/great_olive/fix_category_duplicate.sql",
+    "/Users/meyinzaji/Codes/reactjs/great_olive/fix_sqlite_low_stock.sql",
+    "/Users/meyinzaji/Codes/reactjs/great_olive/server.log",
+    "/Users/meyinzaji/Codes/reactjs/great_olive/test_api_products.js",
+    "/Users/meyinzaji/Codes/reactjs/great_olive/test_min_stock_fix.js",
+    "/Users/meyinzaji/Codes/reactjs/great_olive/test_product_sync.js"
+  ],
+  "docs": [
+    "/Users/meyinzaji/Codes/reactjs/great_olive/docs/SUMMARY_TENANT_16_FIXES.md"
+  ],
+  "deleted": 52,
+  "failed": 0,
+  "timestamp": "2026-06-27T10:48:10.572Z",
+  "config": {
+    "tempPatterns": {
+      "scripts": [
+        "diagnose_*.js",
+        "test_*.js",
+        "fix_*.js",
+        "cleanup_*.js",
+        "quick_*.js",
+        "reproduce_*.js",
+        "verify_*.js",
+        "full_*.js",
+        "run_*.js",
+        "analyze_*.js",
+        "audit_*.js",
+        "complete_*.js",
+        "final_*.js",
+        "check_*.js",
+        "refresh_*.js",
+        "force_*.js",
+        "manual_*.js",
+        "recover_*.js",
+        "reinject_*.js",
+        "backfill_*.js",
+        "create_*.js",
+        "seed_*.js",
+        "execute_*.js",
+        "migrate_*.js",
+        "init_*.js"
+      ],
+      "root": [
+        "diagnose_*.js",
+        "test_*.js",
+        "fix_*.sql",
+        "FIX_*.sql",
+        "SUPABASE_*.sql",
+        "AUDIT_*.md",
+        "test_*.json"
+      ],
+      "docs": [
+        "AUDIT_*.md",
+        "DIAGNOSTIC_*.md",
+        "REPORT_*.md",
+        "SUMMARY_*.md",
+        "FIX_*.md"
+      ]
+    },
+    "keepFiles": {
+      "scripts": [
+        "seed_billing_tables.js",
+        "seed_plans.js",
+        "create_plans_table.js",
+        "verify_plans_table.js",
+        "init_plans.js",
+        "check_tables.js",
+        "execute_tenant_migration.js"
+      ],
+      "root": [
+        "schema_all.sql",
+        "db_schema.sql"
+      ]
+    },
+    "tempExtensions": [
+      ".log",
+      ".tmp",
+      ".bak"
+    ],
+    "ignoreDirs": [
+      "node_modules",
+      ".git",
+      "dist",
+      "build",
+      "coverage"
+    ]
+  }
+}

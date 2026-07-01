@@ -271,6 +271,38 @@ export const InventoryFilters: React.FC<InventoryFiltersProps> = React.memo(({
           order: 4,
         }}
       >
+        {/* Show archived toggle */}
+        <label
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px',
+            padding: '8px 0',
+            cursor: 'pointer',
+          }}
+        >
+          <input
+            type="checkbox"
+            checked={filters.showArchived}
+            onChange={(e) => onFilterChange('showArchived', e.target.checked)}
+            style={{
+              width: '18px',
+              height: '18px',
+              cursor: 'pointer',
+              accentColor: colors.accent.blue,
+            }}
+          />
+          <span
+            style={{
+              fontSize: isMobile ? '13px' : '14px',
+              fontWeight: 600,
+              color: colors.text1,
+            }}
+          >
+            {t('products.showArchived')}
+          </span>
+        </label>
+
         {/* Category filter */}
         <label
           style={{

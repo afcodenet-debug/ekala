@@ -1,20 +1,12 @@
 import { db } from '../../../db/database';
 import { IProductRepository } from '../product.repository.interface';
+import { getRequestId, logTrace } from '../../../utils/trace-utils';
 import { ProductEntity } from '../../types/product.types';
 
-function forensicLog(label: string, err: any, sql?: string, params?: any[]) {
-  console.error(`[PRODUCTS REPO FORENSIC ERROR] ${label}`, {
-    message: err?.message,
-    sqliteCode: err?.code || err?.errno || 'N/A',
-    stack: err?.stack?.split('\n').slice(0, 6).join('\n'),
-    sql: sql || 'N/A',
-    params: params || [],
-    dbIsNull: !db
-  });
-}
-
 export class LegacySQLiteProductAdapter implements IProductRepository {
-  async findById(id: string, businessId: string): Promise<ProductEntity | null> {
+  async findById(id: string, tenantId: string): Promise<ProductEntity | null> {
+    const requestId = getRequestId();
+    logTrace('ENTER LegacySQLiteProductAdapter.findById', { id, tenantId });
     // Legacy SQLite may not store business_id; keep parameter for interface compatibility.
     let row: any;
     try {
@@ -50,10 +42,24 @@ export class LegacySQLiteProductAdapter implements IProductRepository {
         AND (deleted_at IS NULL OR deleted_at = '')
       LIMIT 1
     `;
-      row = db.prepare(selectSql).get(id) as any | undefined;
-    } catch (err: any) {
-      forensicLog('findById', err, 'SELECT ... FROM products WHERE id = ?', [id]);
-      throw err;
+      logTrace('ENTER db.prepare SELECT findById');
+      const stmt = db.prepare(selectSql);
+      row = stmt.get(id) as any | undefined;
+      logTrace('EXIT db.prepare SELECT findById', { rowFound: !!row });
+    } catch (error: any) {
+      console.error(JSON.stringify({
+        requestId,
+        file: 'legacy-sqlite-product.adapter.ts',
+        function: 'findById',
+        line: 44,
+        errorType: error?.constructor?.name,
+        errorCode: error?.code,
+        errorMessage: error?.message,
+        errorStack: error?.stack,
+        sql: 'SELECT ... FROM products WHERE id = ?',
+        params: [id]
+      }));
+      throw error;
     }
 
     if (!row) return null;
@@ -62,7 +68,7 @@ export class LegacySQLiteProductAdapter implements IProductRepository {
   }
 
   async findAll(
-    businessId: string,
+    tenantId: string,
     query?: {
       page?: number;
       limit?: number;
@@ -87,9 +93,8 @@ export class LegacySQLiteProductAdapter implements IProductRepository {
     const where: string[] = [`(deleted_at IS NULL OR deleted_at = '')`];
     const params: any[] = [];
 
-    // Support for both naming conventions
-    where.push(`(business_id = ? OR tenant_id = ? OR business_id IS NULL OR tenant_id IS NULL)`);
-    params.push(businessId, businessId);
+    where.push(`tenant_id = ?`);
+    params.push(tenantId);
 
     if (typeof query?.is_available === 'boolean') {
       where.push(`is_available = ?`);
@@ -123,16 +128,19 @@ export class LegacySQLiteProductAdapter implements IProductRepository {
 
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
 
+    const requestId = getRequestId();
+    logTrace('ENTER LegacySQLiteProductAdapter.findAll', { tenantId, query, whereSql, params });
     let countRow: any;
     let rows: any[] = [];
     try {
-      countRow = db
-        .prepare(`SELECT COUNT(1) as total FROM products ${whereSql}`)
-        .get(...params) as any;
+      logTrace('ENTER db.prepare SELECT COUNT findAll');
+      const countStmt = db.prepare(`SELECT COUNT(1) as total FROM products ${whereSql}`);
+      countRow = countStmt.get(...params) as any;
+      logTrace('EXIT db.prepare SELECT COUNT findAll', { total: countRow?.total });
 
-      rows = db
-        .prepare(
-          `
+      logTrace('ENTER db.prepare SELECT findAll');
+      const selectStmt = db.prepare(
+        `
         SELECT
           id,
           business_id,
@@ -162,11 +170,23 @@ export class LegacySQLiteProductAdapter implements IProductRepository {
         LIMIT ?
         OFFSET ?
       `
-        )
-        .all(...params, limit, offset) as any[];
-    } catch (err: any) {
-      forensicLog('findAll / listProducts', err, `SELECT ... FROM products ${whereSql}`, params);
-      throw err;
+        );
+      rows = selectStmt.all(...params, limit, offset) as any[];
+      logTrace('EXIT db.prepare SELECT findAll', { count: rows.length });
+    } catch (error: any) {
+      console.error(JSON.stringify({
+        requestId,
+        file: 'legacy-sqlite-product.adapter.ts',
+        function: 'findAll',
+        line: 119,
+        errorType: error?.constructor?.name,
+        errorCode: error?.code,
+        errorMessage: error?.message,
+        errorStack: error?.stack,
+        sql: `SELECT ... FROM products ${whereSql}`,
+        params
+      }));
+      throw error;
     }
 
     const total = Number(countRow?.total ?? 0);
@@ -180,7 +200,10 @@ export class LegacySQLiteProductAdapter implements IProductRepository {
     };
   }
 
-  async create(dto: any, businessId: string, userId?: string): Promise<ProductEntity> {
+  async create(dto: any, tenantId: string, userId?: string): Promise<ProductEntity> {
+    const requestId = getRequestId();
+    logTrace('ENTER LegacySQLiteProductAdapter.create', { dto: { ...dto, name: dto.name }, tenantId, userId });
+    
     const now = new Date().toISOString();
 
     // Normalize prices for legacy schema (Supabase expects selling_price/buying_price AND also price/cost_price)
@@ -190,8 +213,23 @@ export class LegacySQLiteProductAdapter implements IProductRepository {
     // Generate SKU if missing: tenant.name + product.name + 4 digits => exact 8 chars
     const tenantName = (() => {
       try {
-        return (db.prepare(`SELECT name FROM tenants WHERE id = ? OR business_id = ? LIMIT 1`).get(businessId, businessId) as any)?.name ?? '';
-      } catch {
+        logTrace('ENTER db.prepare SELECT tenant for SKU');
+        const tenant = db.prepare(`SELECT name FROM tenants WHERE id = ? LIMIT 1`).get(tenantId) as any;
+        logTrace('EXIT db.prepare SELECT tenant for SKU', { tenantName: tenant?.name });
+        return tenant?.name ?? '';
+      } catch (error: any) {
+        console.error(JSON.stringify({
+          requestId,
+          file: 'legacy-sqlite-product.adapter.ts',
+          function: 'create',
+          line: 186,
+          errorType: error?.constructor?.name,
+          errorCode: error?.code,
+          errorMessage: error?.message,
+          errorStack: error?.stack,
+          sql: 'SELECT name FROM tenants WHERE id = ? LIMIT 1',
+          params: [tenantId]
+        }));
         return '';
       }
     })();
@@ -200,21 +238,72 @@ export class LegacySQLiteProductAdapter implements IProductRepository {
 
     const random4 = () => Math.floor(Math.random() * 10000).toString().padStart(4, '0');
 
+    // Générer un SKU unique avec timestamp pour éviter les collisions
     const generateSku = () => {
-      const rand4Str = Math.floor(Math.random() * 10000).toString().padStart(4, '0');
       const tPart = tenantName.replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
       const pPart = productName.replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
       const base = (tPart + pPart);
       const prefix = (base || 'XXXX').substring(0, 4).padEnd(4, 'X');
-      return (prefix + rand4Str).substring(0, 8);
+      // Utiliser les 2 derniers chiffres de l'année + 4 chiffres aléatoires
+      const year2 = new Date().getFullYear().toString().slice(-2);
+      const random4 = Math.floor(Math.random() * 10000).toString().padStart(4, '0');
+      return (prefix + year2 + random4).substring(0, 8);
     };
 
     const sku = dto.sku ?? generateSku();
 
+    // Vérifier si le produit existe déjà pour CE tenant (par nom ou SKU)
+    // Multi-tenant: le même nom/SKU peut exister pour un autre tenant
+    logTrace('ENTER db.prepare SELECT check duplicate');
+    let existing: any;
+    try {
+      const existingSql = `
+        SELECT id, name, sku FROM products 
+        WHERE tenant_id = ? 
+          AND (name = ? OR sku = ?)
+          AND (deleted_at IS NULL OR deleted_at = '')
+        LIMIT 1
+      `;
+      existing = db.prepare(existingSql).get(tenantId, productName, sku) as any;
+      logTrace('EXIT db.prepare SELECT check duplicate', { existing: !!existing, foundId: existing?.id, foundName: existing?.name, foundSku: existing?.sku });
+    } catch (error: any) {
+      console.error(JSON.stringify({
+        requestId,
+        file: 'legacy-sqlite-product.adapter.ts',
+        function: 'create',
+        line: 250,
+        errorType: error?.constructor?.name,
+        errorCode: error?.code,
+        errorMessage: error?.message,
+        errorStack: error?.stack,
+        sql: 'SELECT id FROM products WHERE tenant_id = ? AND (name = ? OR sku = ?)',
+        params: [tenantId, productName, sku]
+      }));
+      // Continue malgré l'erreur de vérification
+    }
+
+    if (existing) {
+      const field = existing.name === productName ? 'nom' : 'SKU';
+      console.error(JSON.stringify({
+        requestId,
+        file: 'legacy-sqlite-product.adapter.ts',
+        function: 'create',
+        error: 'DUPLICATE_FOUND',
+        message: `Cette entrée existe déjà dans la base de données (${field}: ${existing.name || existing.sku}). Veuillez actualiser la page et réessayer.`,
+        existingId: existing.id,
+        existingName: existing.name,
+        existingSku: existing.sku,
+        newProductName: productName,
+        newSku: sku,
+        tenantId
+      }));
+      throw new Error(`Cette entrée existe déjà dans la base de données (${field}: ${existing.name || existing.sku}). Veuillez actualiser la page et réessayer.`);
+    }
+
+    logTrace('ENTER db.prepare INSERT products');
     const stmt = db.prepare(
       `
       INSERT INTO products (
-        business_id,
         tenant_id,
         branch_id,
         category_id,
@@ -247,35 +336,72 @@ export class LegacySQLiteProductAdapter implements IProductRepository {
         ?, ?, NULL, ?, ?
       )
     `
-    );
+  );
 
-    stmt.run(
-      businessId,
-      businessId,
-      dto.branch_id ?? null,
-      dto.category_id ?? null,
-      dto.name,
-      dto.description ?? null,
-      sku ?? null,
-      dto.barcode ?? null,
-      sellingPrice,
-      buyingPrice,
-      dto.price ?? sellingPrice,
-      dto.cost_price ?? buyingPrice,
-      dto.stock_quantity ?? 0,
-      dto.low_stock_threshold ?? 5,
-      dto.image_url ?? null,
-      dto.is_available ?? 1,
-      dto.is_featured ?? 0,
-      dto.sort_order ?? 0,
-      dto.metadata ?? null,
-      1,
-      now,
-      now,
-      userId ?? null,
-      userId ?? null
-    );
-    const row = db.prepare(`SELECT * FROM products WHERE rowid = last_insert_rowid()`).get() as any;
+    logTrace('ENTER stmt.run INSERT products');
+    let result: any;
+    try {
+      result = stmt.run(
+        tenantId,
+        dto.branch_id ?? null,
+        dto.category_id ?? null,
+        dto.name,
+        dto.description ?? null,
+        sku ?? null,
+        dto.barcode ?? null,
+        sellingPrice,
+        buyingPrice,
+        dto.price ?? sellingPrice,
+        dto.cost_price ?? buyingPrice,
+        dto.stock_quantity ?? 0,
+        dto.low_stock_threshold ?? 5,
+        dto.image_url ?? null,
+        dto.is_available ?? 1,
+        dto.is_featured ?? 0,
+        dto.sort_order ?? 0,
+        dto.metadata ?? null,
+        1,
+        now,
+        now,
+        userId ?? null,
+        userId ?? null
+      );
+      logTrace('EXIT stmt.run INSERT products', { lastInsertRowid: result?.lastInsertRowid, changes: result?.changes });
+    } catch (error: any) {
+      console.error(JSON.stringify({
+        requestId,
+        file: 'legacy-sqlite-product.adapter.ts',
+        function: 'create',
+        line: 246,
+        errorType: error?.constructor?.name,
+        errorCode: error?.code,
+        errorMessage: error?.message,
+        errorStack: error?.stack,
+        sql: 'INSERT INTO products ...',
+        params: [tenantId, dto.branch_id ?? null, dto.category_id ?? null, dto.name, dto.description ?? null, sku ?? null, dto.barcode ?? null, sellingPrice, buyingPrice, dto.price ?? sellingPrice, dto.cost_price ?? buyingPrice, dto.stock_quantity ?? 0, dto.low_stock_threshold ?? 5, dto.image_url ?? null, dto.is_available ?? 1, dto.is_featured ?? 0, dto.sort_order ?? 0, dto.metadata ?? null, 1, now, now, userId ?? null, userId ?? null]
+      }));
+      throw error;
+    }
+    
+    logTrace('ENTER db.prepare SELECT last_insert_rowid');
+    let row: any;
+    try {
+      row = db.prepare(`SELECT * FROM products WHERE rowid = last_insert_rowid()`).get() as any;
+      logTrace('EXIT db.prepare SELECT last_insert_rowid', { rowFound: !!row });
+    } catch (error: any) {
+      console.error(JSON.stringify({
+        requestId,
+        file: 'legacy-sqlite-product.adapter.ts',
+        function: 'create',
+        line: 275,
+        errorType: error?.constructor?.name,
+        errorCode: error?.code,
+        errorMessage: error?.message,
+        errorStack: error?.stack,
+        sql: 'SELECT * FROM products WHERE rowid = last_insert_rowid()'
+      }));
+      throw error;
+    }
     if (!row) throw new Error('Failed to create product (legacy sqlite)');
 
     // Ensure sku/price/cost_price are populated on the returned row
@@ -284,14 +410,13 @@ export class LegacySQLiteProductAdapter implements IProductRepository {
     if (row.cost_price == null) row.cost_price = buyingPrice;
 
     // Enregistrer immédiatement dans l'outbox pour synchronisation vers Supabase
-    // IMPORTANT: Supabase products a created_by/updated_by => injecter depuis userId (quand disponible)
+    logTrace('ENTER db.prepare INSERT sync_outbox');
     try {
       const crypto = require('crypto');
         const outboxPayload = {
           ...row,
           created_by: userId ?? null,
           updated_by: userId ?? null,
-          // alignement champs Supabase (payload peut être exploité par GenericSync)
           sku: row.sku ?? sku ?? null,
           price: row.price ?? row.selling_price ?? sellingPrice,
           cost_price: row.cost_price ?? row.buying_price ?? buyingPrice,
@@ -299,24 +424,29 @@ export class LegacySQLiteProductAdapter implements IProductRepository {
           buying_price: row.buying_price ?? buyingPrice,
         };
 
-      db.prepare(`
-        INSERT INTO sync_outbox (id, entity, operation, record_id, payload, version, tenant_id)
-        VALUES (?, 'product', 'insert', ?, ?, ?, ?)
-      `).run(
-        crypto.randomUUID(),
-        String(row.id),
-        JSON.stringify(outboxPayload),
-        1,  // version
-        row.business_id || businessId
-      );
-    } catch (err) {
-      console.warn('[LegacyAdapter] Failed to queue sync insert:', err);
+        logTrace('ENTER stmt.run INSERT sync_outbox');
+        const outboxStmt = db.prepare(`
+          INSERT INTO sync_outbox (id, entity, operation, record_id, payload, version, tenant_id)
+          VALUES (?, 'product', 'insert', ?, ?, ?, ?)
+        `);
+        const outboxResult = outboxStmt.run(
+          crypto.randomUUID(),
+          String(row.id),
+          JSON.stringify(outboxPayload),
+          1,
+          row.tenant_id || tenantId
+        );
+        logTrace('EXIT stmt.run INSERT sync_outbox', { result: outboxResult });
+    } catch (err: any) {
+      console.warn(JSON.stringify({ requestId, outboxError: err?.message, stack: err?.stack }));
     }
 
     return this.map(row);
   }
 
-  async update(id: string, dto: any, businessId: string): Promise<ProductEntity> {
+  async update(id: string, dto: any, tenantId: string): Promise<ProductEntity> {
+    const requestId = getRequestId();
+    logTrace('ENTER LegacySQLiteProductAdapter.update', { id, tenantId, dto });
     const now = new Date().toISOString();
 
     const patch: any = {
@@ -343,21 +473,62 @@ export class LegacySQLiteProductAdapter implements IProductRepository {
     const keys = Object.keys(patch).filter(k => patch[k] !== undefined);
     if (keys.length === 0) {
       // fetch current
-      const row = db.prepare(`SELECT * FROM products WHERE id = ? AND (business_id = ? OR tenant_id = ?)`).get(id, businessId, businessId) as any;
+      logTrace('ENTER db.prepare SELECT update (no changes)');
+      const row = db.prepare(`SELECT * FROM products WHERE id = ? AND tenant_id = ?`).get(id, tenantId) as any;
+      logTrace('EXIT db.prepare SELECT update (no changes)', { rowFound: !!row });
       if (!row) throw new Error('Product not found (legacy sqlite)');
       return this.map(row);
     }
 
     const setSql = keys.map(k => `${k} = ?`).join(', ');
-    const params = keys.map(k => patch[k]).concat([id, businessId, businessId]);
+    const params = keys.map(k => patch[k]).concat([id, tenantId]);
 
-    db.prepare(`UPDATE products SET ${setSql} WHERE id = ? AND (business_id = ? OR tenant_id = ?)`).run(...params);
+    logTrace('ENTER db.prepare UPDATE products');
+    try {
+      const updateStmt = db.prepare(`UPDATE products SET ${setSql} WHERE id = ? AND tenant_id = ?`);
+      const updateResult = updateStmt.run(...params);
+      logTrace('EXIT db.prepare UPDATE products', { changes: updateResult?.changes });
+    } catch (error: any) {
+      console.error(JSON.stringify({
+        requestId,
+        file: 'legacy-sqlite-product.adapter.ts',
+        function: 'update',
+        line: 352,
+        errorType: error?.constructor?.name,
+        errorCode: error?.code,
+        errorMessage: error?.message,
+        errorStack: error?.stack,
+        sql: `UPDATE products SET ${setSql} WHERE id = ? AND (business_id = ? OR tenant_id = ?)`,
+        params
+      }));
+      throw error;
+    }
 
-    const row = db.prepare(`SELECT * FROM products WHERE id = ? AND (business_id = ? OR tenant_id = ?)`).get(id, businessId, businessId) as any;
+    logTrace('ENTER db.prepare SELECT after update');
+    let row: any;
+    try {
+      row = db.prepare(`SELECT * FROM products WHERE id = ? AND tenant_id = ?`).get(id, tenantId) as any;
+      logTrace('EXIT db.prepare SELECT after update', { rowFound: !!row });
+    } catch (error: any) {
+      console.error(JSON.stringify({
+        requestId,
+        file: 'legacy-sqlite-product.adapter.ts',
+        function: 'update',
+        line: 354,
+        errorType: error?.constructor?.name,
+        errorCode: error?.code,
+        errorMessage: error?.message,
+        errorStack: error?.stack,
+        sql: 'SELECT * FROM products WHERE id = ? AND tenant_id = ?',
+        params: [id, tenantId]
+      }));
+      throw error;
+    }
     if (!row) throw new Error('Product not found after update (legacy sqlite)');
 
     // Enregistrer immédiatement dans l'outbox pour synchronisation vers Supabase
     // IMPORTANT: created_by/updated_by injection pour Supabase
+    logTrace('ENTER db.prepare INSERT sync_outbox (update)');
     try {
       const crypto = require('crypto');
       const outboxPayload = {
@@ -369,28 +540,51 @@ export class LegacySQLiteProductAdapter implements IProductRepository {
         cost_price: row.cost_price ?? row.buying_price ?? row.cost_price,
       };
 
-      db.prepare(`
+      const outboxStmt = db.prepare(`
         INSERT INTO sync_outbox (id, entity, operation, record_id, payload, version, tenant_id)
         VALUES (?, 'product', 'update', ?, ?, ?, ?)
-      `).run(
+      `);
+      const outboxResult = outboxStmt.run(
         crypto.randomUUID(),
         String(id),
         JSON.stringify(outboxPayload),
         1,  // version
-        row.business_id || businessId
+        row.tenant_id || tenantId
       );
-    } catch (err) {
+      logTrace('EXIT db.prepare INSERT sync_outbox (update)', { result: outboxResult });
+    } catch (err: any) {
       console.warn('[LegacyAdapter] Failed to queue sync update:', err);
     }
 
     return this.map(row);
   }
 
-  async softDelete(id: string, businessId: string): Promise<void> {
+  async softDelete(id: string, tenantId: string): Promise<void> {
+    const requestId = getRequestId();
+    logTrace('ENTER LegacySQLiteProductAdapter.softDelete', { id, tenantId });
     const now = new Date().toISOString();
     
     // 1. Récupérer le remote_id AVANT le soft delete (pour le payload sync)
-    const productRow = db.prepare(`SELECT id, remote_id, tenant_id, business_id FROM products WHERE id = ?`).get(id) as any;
+    logTrace('ENTER db.prepare SELECT softDelete');
+    let productRow: any;
+    try {
+      productRow = db.prepare(`SELECT id, remote_id, tenant_id, business_id FROM products WHERE id = ?`).get(id) as any;
+      logTrace('EXIT db.prepare SELECT softDelete', { productFound: !!productRow });
+    } catch (error: any) {
+      console.error(JSON.stringify({
+        requestId,
+        file: 'legacy-sqlite-product.adapter.ts',
+        function: 'softDelete',
+        line: 391,
+        errorType: error?.constructor?.name,
+        errorCode: error?.code,
+        errorMessage: error?.message,
+        errorStack: error?.stack,
+        sql: 'SELECT id, remote_id, tenant_id, business_id FROM products WHERE id = ?',
+        params: [id]
+      }));
+      throw error;
+    }
 
     if (!productRow) {
       throw new Error(`Product #${id} not found`);
@@ -398,23 +592,41 @@ export class LegacySQLiteProductAdapter implements IProductRepository {
 
     // Vérifier l'appartenance au tenant (comparaison robuste: nombre ou string)
     const rowTenantId = Number(productRow.tenant_id);
-    const checkTenantId = Number(businessId);
+    const checkTenantId = Number(tenantId);
     if (rowTenantId !== checkTenantId) {
-      throw new Error(`Product #${id} does not belong to tenant ${businessId}`);
+      throw new Error(`Product #${id} does not belong to tenant ${tenantId}`);
     }
 
     // 2. Soft delete local (is_available=0 pour cacher dans l'UI immédiatement)
-    const result = db.prepare(`UPDATE products SET deleted_at = ?, is_available = 0, status = 'archived', sync_status = 'pending' WHERE id = ?`).run(
-      now,
-      id
-    );
+    logTrace('ENTER db.prepare UPDATE softDelete');
+    let result: any;
+    try {
+      const deleteStmt = db.prepare(`UPDATE products SET deleted_at = ?, is_available = 0, status = 'archived', sync_status = 'pending' WHERE id = ?`);
+      result = deleteStmt.run(now, id);
+      logTrace('EXIT db.prepare UPDATE softDelete', { changes: result?.changes });
+    } catch (error: any) {
+      console.error(JSON.stringify({
+        requestId,
+        file: 'legacy-sqlite-product.adapter.ts',
+        function: 'softDelete',
+        line: 405,
+        errorType: error?.constructor?.name,
+        errorCode: error?.code,
+        errorMessage: error?.message,
+        errorStack: error?.stack,
+        sql: 'UPDATE products SET deleted_at = ?, is_available = 0, status = \'archived\', sync_status = \'pending\' WHERE id = ?',
+        params: [now, id]
+      }));
+      throw error;
+    }
 
     if (result.changes === 0) {
-      throw new Error(`Product #${id} not found or does not belong to tenant ${businessId}`);
+      throw new Error(`Product #${id} not found or does not belong to tenant ${tenantId}`);
     }
 
     // 3. Enregistrer dans l'outbox avec le remote_id pour le push vers Supabase
     // IMPORTANT: Utiliser 'delete' comme opération, PAS 'update'
+    logTrace('ENTER db.prepare INSERT sync_outbox (delete)');
     try {
       if (productRow) {
         const crypto = require('crypto');
@@ -422,21 +634,23 @@ export class LegacySQLiteProductAdapter implements IProductRepository {
           id: Number(id),
           remote_id: productRow.remote_id || null,
           is_available: 0,
-          tenant_id: productRow.tenant_id || businessId,
+          tenant_id: productRow.tenant_id || tenantId,
           updated_at: now,
         };
-        db.prepare(`
+        const outboxStmt = db.prepare(`
           INSERT INTO sync_outbox (id, entity, operation, record_id, payload, version, tenant_id)
           VALUES (?, 'product', 'delete', ?, ?, ?, ?)
-        `).run(
+        `);
+        const outboxResult = outboxStmt.run(
           crypto.randomUUID(),
           String(id),
           JSON.stringify(payload),
           1,  // version
-          productRow.tenant_id || businessId
+          productRow.tenant_id || tenantId
         );
+        logTrace('EXIT db.prepare INSERT sync_outbox (delete)', { result: outboxResult });
       }
-    } catch (err) {
+    } catch (err: any) {
       console.warn('[LegacyAdapter] Failed to queue sync delete:', err);
     }
   }
@@ -444,7 +658,7 @@ export class LegacySQLiteProductAdapter implements IProductRepository {
   private map(row: any): ProductEntity {
     return {
       id: String(row.id),
-      tenant_id: row.tenant_id ?? row.business_id ?? businessIdFallback(),
+      tenant_id: row.tenant_id ?? row.business_id ?? 'default-tenant',
       branch_id: row.branch_id ?? null,
       category_id: row.category_id ?? null,
       name: row.name,
@@ -467,8 +681,4 @@ export class LegacySQLiteProductAdapter implements IProductRepository {
       deleted_at: row.deleted_at ?? null,
     };
   }
-}
-
-function businessIdFallback(): string {
-  return 'default-business';
 }

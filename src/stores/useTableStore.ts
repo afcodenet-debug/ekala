@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { api } from '../lib/api-client';
+import { useAuthStore } from './useAuthStore';
 
 export type TableStatus = 'available' | 'active' | 'reserved' | 'cleaning' | 'out_of_service';
 
@@ -25,7 +26,7 @@ interface TableStore {
   // Actions
   setUserContext: (userId: number, role: string) => void;
   fetchTables: (silent?: boolean) => Promise<void>;
-  createTable: (tableData: Omit<Table, 'id' | 'created_at' | 'updated_at'>) => Promise<Table | null>;
+  createTable: (tableData: Omit<Table, 'id' | 'created_at' | 'updated_at'>) => Promise<any | null>;
   updateTable: (id: number, updates: Partial<Table>) => Promise<void>;
   deleteTable: (id: number) => Promise<boolean>;
   openTable: (tableId: number, waiterId: number) => Promise<boolean>;
@@ -95,7 +96,9 @@ export const useTableStore = create<TableStore>((set, get) => ({
 
   deleteTable: async (id) => {
     try {
-      await api.tables.delete(id, get().role);
+      // Utiliser useAuthStore comme fallback si get().role est undefined
+      const role = get().role || useAuthStore.getState().user?.role;
+      await api.tables.delete(id, role);
       set({ tables: get().tables.filter(table => table.id !== id) });
       return true;
     } catch (err: any) {

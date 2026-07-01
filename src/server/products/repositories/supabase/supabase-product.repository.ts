@@ -2,6 +2,7 @@ import { createClient } from '@supabase/supabase-js';
 import { env } from '../../../config/env';
 import { IProductRepository } from '../product.repository.interface';
 import { ProductEntity } from '../../types/product.types';
+import { getRequestId, logTrace } from '../../../utils/trace-utils';
 
 export class SupabaseProductRepository implements IProductRepository {
   private supabase = createClient(env.SUPABASE_URL!, env.SUPABASE_SERVICE_ROLE_KEY!, {
@@ -9,6 +10,8 @@ export class SupabaseProductRepository implements IProductRepository {
   });
 
   async findById(id: string, tenantId?: string): Promise<ProductEntity | null> {
+    const requestId = getRequestId();
+    logTrace('ENTER SupabaseProductRepository.findById', { id, tenantId });
     let qb = this.supabase
       .from('products')
       .select('*')
@@ -20,6 +23,7 @@ export class SupabaseProductRepository implements IProductRepository {
     }
 
     const { data, error } = await qb.maybeSingle();
+    logTrace('EXIT SupabaseProductRepository.findById', { found: !!data, error: error?.message });
 
     if (error) throw error;
     return data ? this.map(data) : null;
@@ -44,6 +48,8 @@ export class SupabaseProductRepository implements IProductRepository {
     limit: number;
     hasMore: boolean;
   }> {
+    const requestId = getRequestId();
+    logTrace('ENTER SupabaseProductRepository.findAll', { tenantId, query });
     const page = query?.page ?? 1;
     const limit = query?.limit ?? 50;
     const from = (page - 1) * limit;
@@ -77,6 +83,7 @@ export class SupabaseProductRepository implements IProductRepository {
     qb = qb.range(from, from + limit - 1);
 
     const { data, error, count } = await qb;
+    logTrace('EXIT SupabaseProductRepository.findAll', { count: data?.length, total: count, error: error?.message });
     if (error) throw error;
 
     const total = count ?? 0;
@@ -92,18 +99,42 @@ export class SupabaseProductRepository implements IProductRepository {
   }
 
   async create(dto: any, tenantId?: string, userId?: string): Promise<ProductEntity> {
+    const requestId = getRequestId();
+    logTrace('ENTER SupabaseProductRepository.create', { dto: { ...dto, name: dto.name }, tenantId, userId });
+    
     const payload: any = {
       ...dto,
       ...(tenantId ? { tenant_id: tenantId } : {}),
       ...(userId ? { created_by: userId, updated_by: userId } : {}),
     };
 
-    const { data, error } = await this.supabase.from('products').insert(payload).select('*').single();
+    logTrace('ENTER Supabase INSERT products');
+    let data: any, error: any;
+    try {
+      const result = await this.supabase.from('products').insert(payload).select('*').single();
+      data = result.data;
+      error = result.error;
+      logTrace('EXIT Supabase INSERT products', { data, error: error?.message });
+    } catch (err: any) {
+      console.error(JSON.stringify({
+        requestId,
+        file: 'supabase-product.repository.ts',
+        function: 'create',
+        errorType: err?.constructor?.name,
+        errorCode: err?.code,
+        errorMessage: err?.message,
+        errorStack: err?.stack,
+        payload
+      }));
+      throw err;
+    }
     if (error) throw error;
     return this.map(data);
   }
 
   async update(id: string, dto: any, tenantId?: string): Promise<ProductEntity> {
+    const requestId = getRequestId();
+    logTrace('ENTER SupabaseProductRepository.update', { id, tenantId, dto });
     const payload = { ...dto };
 
     let qb = this.supabase
@@ -116,13 +147,34 @@ export class SupabaseProductRepository implements IProductRepository {
       qb = qb.eq('tenant_id', tenantId);
     }
 
-    const { data, error } = await qb.select('*').single();
-
+    let data: any, error: any;
+    try {
+      const result = await qb.select('*').single();
+      data = result.data;
+      error = result.error;
+      logTrace('EXIT SupabaseProductRepository.update', { data, error: error?.message });
+    } catch (err: any) {
+      console.error(JSON.stringify({
+        requestId,
+        file: 'supabase-product.repository.ts',
+        function: 'update',
+        errorType: err?.constructor?.name,
+        errorCode: err?.code,
+        errorMessage: err?.message,
+        errorStack: err?.stack,
+        id,
+        tenantId,
+        payload
+      }));
+      throw err;
+    }
     if (error) throw error;
     return this.map(data);
   }
 
   async softDelete(id: string, tenantId?: string): Promise<void> {
+    const requestId = getRequestId();
+    logTrace('ENTER SupabaseProductRepository.softDelete', { id, tenantId });
     let qb = this.supabase
       .from('products')
       .delete()
@@ -132,8 +184,25 @@ export class SupabaseProductRepository implements IProductRepository {
       qb = qb.eq('tenant_id', tenantId);
     }
 
-    const { error } = await qb;
-
+    let error: any;
+    try {
+      const result = await qb;
+      error = result.error;
+      logTrace('EXIT SupabaseProductRepository.softDelete', { error: error?.message });
+    } catch (err: any) {
+      console.error(JSON.stringify({
+        requestId,
+        file: 'supabase-product.repository.ts',
+        function: 'softDelete',
+        errorType: err?.constructor?.name,
+        errorCode: err?.code,
+        errorMessage: err?.message,
+        errorStack: err?.stack,
+        id,
+        tenantId
+      }));
+      throw err;
+    }
     if (error) throw error;
   }
 

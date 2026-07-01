@@ -27,3 +27,27 @@ npm run build:vercel
 ```bash
 npm install
 npm run dev:web
+```
+
+## Build Electron Desktop (macOS & Windows)
+
+### Prérequis
+- Node.js installé
+- Pour Windows : builder sur Windows (ou CI GitHub Actions) car electron-builder ne cross-compile pas Windows depuis macOS de façon fiable sans toolchain lourde
+
+### Commandes
+```bash
+# Rebuild better-sqlite3 pour l'Electron local AVANT le build final
+npm run rebuild:sqlite
+
+# Build complet + packaging Electron
+npm run dist
+```
+
+### Résultats
+- **macOS** : `dist/mac/EKALA.app` + `dist/mac/EKALA-*.dmg` et `.zip`
+- **Windows** : `dist/win-unpacked/` + installeur NSIS `.exe` (si buildé sous Windows)
+
+### Détail des scripts
+- `build:electron` construit main + server + renderer pour Electron
+- `dist` appelle `build:electron` puis `electron-builder`

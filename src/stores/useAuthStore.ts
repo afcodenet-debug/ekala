@@ -27,6 +27,7 @@ interface AuthStore {
   isAuthenticated: boolean;
   isServerHealthy: boolean;
   isInitialized: boolean;
+  loginTimestamp: number | null;
 
   // New JWT-based login methods
   loginEmail: (email: string, password: string) => Promise<boolean>;
@@ -49,6 +50,7 @@ export const useAuthStore = create<AuthStore>()(
       isAuthenticated: false,
       isServerHealthy: true,
       isInitialized: false,
+      loginTimestamp: null,
 
       checkServer: async () => {
         try {
@@ -66,7 +68,7 @@ export const useAuthStore = create<AuthStore>()(
           const { token, user } = resp;
 
           setAuthToken(token);
-          set({ user, token, isAuthenticated: true, isInitialized: true });
+          set({ user, token, isAuthenticated: true, isInitialized: true, loginTimestamp: Date.now() });
           
           console.log(`[AuthStore] Email login success: ${user.full_name} (${user.role}) → tenant ${user.tenant_name}`);
           return true;
@@ -83,7 +85,7 @@ export const useAuthStore = create<AuthStore>()(
           const { token, user } = resp;
 
           setAuthToken(token);
-          set({ user, token, isAuthenticated: true, isInitialized: true });
+          set({ user, token, isAuthenticated: true, isInitialized: true, loginTimestamp: Date.now() });
 
           console.log(`[AuthStore] PIN login success: ${user.full_name} (${user.role}) → tenant ${user.tenant_name}`);
           return true;
@@ -102,7 +104,7 @@ export const useAuthStore = create<AuthStore>()(
       logout: () => {
         console.log('[AuthStore] Logging out');
         clearAuthToken();
-        set({ user: null, token: null, isAuthenticated: false });
+        set({ user: null, token: null, isAuthenticated: false, loginTimestamp: null });
       },
 
       setUser: (user) => {
@@ -130,6 +132,7 @@ export const useAuthStore = create<AuthStore>()(
         user: state.user,
         token: state.token,
         isAuthenticated: state.isAuthenticated,
+        loginTimestamp: state.loginTimestamp,
       }),
     }
   )

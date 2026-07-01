@@ -137,7 +137,17 @@
     }
   },
   "sidebar": {
-    "voucherValidation": "Validation paiements"
+    "voucherValidation": "Validation paiements",
+    "trialMode": "MODE ESSAI",
+    "proAccount": "COMPTE PRO",
+    "paymentRequired": "PAIEMENT REQUIS",
+    "expired": "EXPIRÉ",
+    "upgradeToPro": "Passer au Plan Pro",
+    "reactivateAccount": "Réactiver mon compte",
+    "mySubscription": "Mon Abonnement",
+    "notifications": "Notifications",
+    "quitSession": "Quitter la session",
+    "daysRemaining": "{days} jours restants"
   },
   "subscription": {
     "grace": {
@@ -258,5 +268,8 @@
       "login": "Se connecter",
       "start": "Démarrer"
     }
+  },
+  "products": {
+    "showArchived": "Afficher les archivés"
   }
 }

@@ -63,14 +63,47 @@ export const requirePermission = (permission: keyof typeof PERMISSIONS) => {
 // Supports both JWT auth (req.user.role) and mock header auth (x-user-role)
 export const requireRole = (allowedRoles: string[]) => {
   return (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
-    // First try to get role from JWT (set by requireTenantScope)
+    // First try to get role from JWT (set by requireTenantScope or context middleware)
     const jwtRole = req.user?.role;
     
+    // Fallback: decode JWT from Authorization header if req.user not set
+    let decodedJwtRole: string | undefined;
+    if (!jwtRole) {
+      try {
+        const authHeader = req.headers.authorization;
+        if (authHeader && authHeader.startsWith('Bearer ')) {
+          const token = authHeader.slice(7);
+          const { verifyJwt } = require('./jwt-auth');
+          const payload = verifyJwt(token);
+          if (payload?.role) decodedJwtRole = payload.role;
+        }
+      } catch {}
+    }
+
     // Fallback to header (mock auth mode)
     const headerRole = getRoleFromHeaders(req);
-    const roleRaw = jwtRole || headerRole;
+    const roleRaw = jwtRole || decodedJwtRole || headerRole;
+
+    console.log(JSON.stringify({
+      middleware: 'requireRole',
+      file: 'src/server/middleware/auth.ts',
+      line: 64,
+      allowedRoles,
+      actualRole: roleRaw,
+      userId: req.user?.id,
+      tenantId: (req as any).tenant_id,
+      path: req.path,
+      method: req.method
+    }));
 
     if (!roleRaw || !allowedRoles.includes(roleRaw)) {
+      console.log(JSON.stringify({
+        middleware: 'requireRole',
+        file: 'src/server/middleware/auth.ts',
+        line: 73,
+        status: 403,
+        body: { error: 'Insufficient permissions', required: allowedRoles, provided: roleRaw }
+      }));
       return res.status(403).json({
         error: 'Insufficient permissions',
         required: allowedRoles,
@@ -79,6 +112,13 @@ export const requireRole = (allowedRoles: string[]) => {
     }
 
     if (!isValidRole(roleRaw)) {
+      console.log(JSON.stringify({
+        middleware: 'requireRole',
+        file: 'src/server/middleware/auth.ts',
+        line: 81,
+        status: 403,
+        body: { error: 'Insufficient permissions', required: allowedRoles, provided: roleRaw }
+      }));
       return res.status(403).json({
         error: 'Insufficient permissions',
         required: allowedRoles,
@@ -90,6 +130,13 @@ export const requireRole = (allowedRoles: string[]) => {
     if (!req.user) {
       req.user = { id: 1, role: roleRaw };
     }
+
+    console.log(JSON.stringify({
+      middleware: 'requireRole',
+      file: 'src/server/middleware/auth.ts',
+      line: 94,
+      action: 'next'
+    }));
 
     next();
   };

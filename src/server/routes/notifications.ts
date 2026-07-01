@@ -1,140 +1,262 @@
+// Notification System V3 - API Routes (Legacy compatibility)
+// Uses the new NotificationRepository
+
 import express from 'express';
-import { createClient } from '@supabase/supabase-js';
-import { env } from '../config/env';
+import { NotificationRepository } from '../notifications/repositories/NotificationRepository';
+import { db } from '../db/database';
 
 const router = express.Router();
+const notificationRepo = new NotificationRepository(db);
 
 // GET /api/notifications - Get all notifications
 router.get('/', async (req: any, res) => {
-  const { role, unread_only } = req.query;
-  const tenantId = req.tenant_id;
-  if (!tenantId) {
-    return res.status(401).json({ error: 'TENANT_REQUIRED', message: 'tenant_id requis' });
-  }
-
-  // Cloud mode: read from Supabase
-  if (env.RENDER_CLOUD_MODE || env.USE_SUPABASE_TABLES) {
-    if (!env.SUPABASE_URL || !env.SUPABASE_SERVICE_ROLE_KEY) {
-      return res.status(500).json({ error: 'Supabase not configured' });
-    }
-    const supabase = createClient(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false } });
-
-    let query = supabase.from('notifications').select('*').eq('tenant_id', tenantId);
-
-    if (unread_only === 'true') {
-      query = query.is('read_at', null);
-    }
-    if (role) {
-      query = query.eq('role', role as string);
-    }
-
-    const { data, error } = await query.order('created_at', { ascending: false }).limit(100);
-    if (error) return res.status(500).json({ error: error.message });
-    return res.json(data || []);
-  }
-
-  // Local mode
-  const db = require('../db/database').db;
-  if (!db) {
-    return res.status(500).json({ error: 'SQLite not available' });
-  }
-
   try {
-    let queryStr = `
-      SELECT n.*, u.full_name as user_name
-      FROM notifications n
-      LEFT JOIN users u ON n.user_id = u.id
-      WHERE n.tenant_id = ?
-    `;
-    const params: any[] = [tenantId];
+    const { unread_only, category, priority, status, limit, offset } = req.query;
+    const tenantId = req.tenant_id;
+    const userId = req.user_id;
+
+    if (!tenantId) {
+      return res.status(401).json({ error: 'TENANT_REQUIRED', message: 'tenant_id requis' });
+    }
+
+    const filters: any = {
+      tenant_id: tenantId,
+      user_id: userId,
+      limit: limit ? parseInt(limit as string) : 20,
+      offset: offset ? parseInt(offset as string) : 0,
+    };
 
     if (unread_only === 'true') {
-      queryStr += ' AND n.read_at IS NULL';
+      filters.read = false;
     }
-    if (role) {
-      queryStr += ' AND n.role = ?';
-      params.push(role);
-    }
+    if (category) filters.category = category as string;
+    if (priority) filters.priority = priority as string;
+    if (status) filters.status = status as string;
 
-    queryStr += ' ORDER BY n.created_at DESC LIMIT 100';
+    const result = notificationRepo.findMany(filters);
 
-    const notifications = db.prepare(queryStr).all(...params);
-    res.json(notifications);
+    return res.json({
+      success: true,
+      data: result.notifications,
+      total: result.total,
+      limit: filters.limit,
+      offset: filters.offset
+    });
   } catch (error: any) {
-    res.status(500).json({ error: error.message });
+    console.error('[Notifications] Error listing notifications:', error);
+    return res.status(500).json({ error: error.message });
+  }
+});
+
+// GET /api/notifications/unread-count - Get unread count
+router.get('/unread-count', async (req: any, res) => {
+  try {
+    const tenantId = req.tenant_id;
+    const userId = req.user_id;
+
+    if (!tenantId || !userId) {
+      return res.status(401).json({ error: 'TENANT_AND_USER_REQUIRED', message: 'tenant_id et user_id requis' });
+    }
+
+    const count = notificationRepo.findUnreadCount(tenantId, userId);
+
+    return res.json({
+      success: true,
+      data: { count }
+    });
+  } catch (error: any) {
+    console.error('[Notifications] Error getting unread count:', error);
+    return res.status(500).json({ error: error.message });
+  }
+});
+
+// GET /api/notifications/:id - Get single notification
+router.get('/:id', async (req: any, res) => {
+  try {
+    const { id } = req.params;
+    const tenantId = req.tenant_id;
+    const userId = req.user_id;
+
+    if (!tenantId) {
+      return res.status(401).json({ error: 'TENANT_REQUIRED', message: 'tenant_id requis' });
+    }
+
+    const notification = userId
+      ? notificationRepo.findByIdForUser(id, tenantId, userId)
+      : notificationRepo.findById(id, tenantId);
+
+    if (!notification) {
+      return res.status(404).json({ error: 'Notification not found' });
+    }
+
+    return res.json({
+      success: true,
+      data: notification
+    });
+  } catch (error: any) {
+    console.error('[Notifications] Error getting notification:', error);
+    return res.status(500).json({ error: error.message });
   }
 });
 
 // POST /api/notifications - Create notification
 router.post('/', async (req: any, res) => {
-  const { type, title, message, priority, notification_type, metadata, link, user_id, role } = req.body;
-  const tenantId = req.tenant_id;
-  if (!tenantId) {
-    return res.status(401).json({ error: 'TENANT_REQUIRED', message: 'tenant_id requis' });
-  }
-
-  // Cloud mode: write to Supabase
-  if (env.RENDER_CLOUD_MODE || env.USE_SUPABASE_TABLES) {
-    if (!env.SUPABASE_URL || !env.SUPABASE_SERVICE_ROLE_KEY) {
-      return res.status(500).json({ error: 'Supabase not configured' });
-    }
-    const supabase = createClient(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false } });
-
-    const { data, error } = await supabase
-      .from('notifications')
-      .insert({ type, title, message, priority, notification_type, metadata, link, user_id, role, tenant_id: tenantId })
-      .select('*')
-      .single();
-
-    if (error) return res.status(500).json({ error: error.message });
-    return res.status(201).json(data);
-  }
-
-  // Local mode
-  const db = require('../db/database').db;
   try {
-    const result = db.prepare(
-      'INSERT INTO notifications (type, title, message, priority, notification_type, metadata, link, user_id, role, tenant_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
-    ).run(type, title, message, priority || 'medium', notification_type, JSON.stringify(metadata || {}), link, user_id, role, tenantId);
+    const { title, message, body, category, priority, severity, type, ...rest } = req.body;
+    const tenantId = req.tenant_id;
+    const userId = req.user_id;
 
-    res.status(201).json({ id: result.lastInsertRowid });
+    if (!tenantId || !userId) {
+      return res.status(401).json({ error: 'TENANT_AND_USER_REQUIRED', message: 'tenant_id et user_id requis' });
+    }
+
+    if (!title || !message || !category || !priority || !severity || !type) {
+      return res.status(400).json({
+        error: 'VALIDATION_ERROR',
+        message: 'Champs requis: title, message, category, priority, severity, type'
+      });
+    }
+
+    const notification = notificationRepo.create({
+      tenant_id: tenantId,
+      user_id: userId,
+      title,
+      message,
+      body,
+      category,
+      priority,
+      severity,
+      type,
+      ...rest
+    });
+
+    return res.status(201).json({
+      success: true,
+      data: notification
+    });
   } catch (error: any) {
-    res.status(500).json({ error: error.message });
+    console.error('[Notifications] Error creating notification:', error);
+    return res.status(500).json({ error: error.message });
   }
 });
 
 // PATCH /api/notifications/:id/read - Mark as read
 router.patch('/:id/read', async (req: any, res) => {
-  const notificationId = req.params.id;
-  const tenantId = req.tenant_id;
-  if (!tenantId) {
-    return res.status(401).json({ error: 'TENANT_REQUIRED', message: 'tenant_id requis' });
-  }
-
-  // Cloud mode
-  if (env.RENDER_CLOUD_MODE || env.USE_SUPABASE_TABLES) {
-    if (!env.SUPABASE_URL || !env.SUPABASE_SERVICE_ROLE_KEY) {
-      return res.status(500).json({ error: 'Supabase not configured' });
-    }
-    const supabase = createClient(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false } });
-
-    const { error } = await supabase
-      .from('notifications')
-      .update({ read_at: new Date().toISOString() })
-      .eq('id', notificationId)
-      .eq('tenant_id', tenantId);
-
-    if (error) return res.status(500).json({ error: error.message });
-    return res.json({ success: true });
-  }
-
-  // Local mode
-  const db = require('../db/database').db;
   try {
-    db.prepare('UPDATE notifications SET read_at = CURRENT_TIMESTAMP WHERE id = ? AND tenant_id = ?').run(notificationId, tenantId);
-    res.json({ success: true });
+    const { id } = req.params;
+    const tenantId = req.tenant_id;
+    const userId = req.user_id;
+
+    if (!tenantId || !userId) {
+      return res.status(401).json({ error: 'TENANT_AND_USER_REQUIRED', message: 'tenant_id et user_id requis' });
+    }
+
+    const success = notificationRepo.markAsRead(id, tenantId, userId);
+
+    if (!success) {
+      return res.status(404).json({ error: 'Notification not found or already read' });
+    }
+
+    return res.json({ success: true });
   } catch (error: any) {
-    res.status(500).json({ error: error.message });
+    console.error('[Notifications] Error marking as read:', error);
+    return res.status(500).json({ error: error.message });
+  }
+});
+
+// POST /api/notifications/commands/mark-all-as-read
+router.post('/commands/mark-all-as-read', async (req: any, res) => {
+  try {
+    const { category } = req.body;
+    const tenantId = req.tenant_id;
+    const userId = req.user_id;
+
+    if (!tenantId || !userId) {
+      return res.status(401).json({ error: 'TENANT_AND_USER_REQUIRED', message: 'tenant_id et user_id requis' });
+    }
+
+    const count = notificationRepo.markAllAsRead(tenantId, userId, category);
+
+    return res.json({
+      success: true,
+      data: { count },
+      message: `${count} notifications marked as read`
+    });
+  } catch (error: any) {
+    console.error('[Notifications] Error marking all as read:', error);
+    return res.status(500).json({ error: error.message });
+  }
+});
+
+// POST /api/notifications/commands/dismiss
+router.post('/commands/dismiss', async (req: any, res) => {
+  try {
+    const { notification_id } = req.body;
+    const tenantId = req.tenant_id;
+    const userId = req.user_id;
+
+    if (!tenantId || !userId || !notification_id) {
+      return res.status(400).json({ error: 'VALIDATION_ERROR', message: 'notification_id, tenant_id et user_id requis' });
+    }
+
+    const success = notificationRepo.dismiss(notification_id, tenantId, userId);
+
+    if (!success) {
+      return res.status(404).json({ error: 'Notification not found or already dismissed' });
+    }
+
+    return res.json({ success: true });
+  } catch (error: any) {
+    console.error('[Notifications] Error dismissing notification:', error);
+    return res.status(500).json({ error: error.message });
+  }
+});
+
+// POST /api/notifications/commands/archive
+router.post('/commands/archive', async (req: any, res) => {
+  try {
+    const { notification_id } = req.body;
+    const tenantId = req.tenant_id;
+    const userId = req.user_id;
+
+    if (!tenantId || !userId || !notification_id) {
+      return res.status(400).json({ error: 'VALIDATION_ERROR', message: 'notification_id, tenant_id et user_id requis' });
+    }
+
+    const success = notificationRepo.archive(notification_id, tenantId, userId);
+
+    if (!success) {
+      return res.status(404).json({ error: 'Notification not found or already archived' });
+    }
+
+    return res.json({ success: true });
+  } catch (error: any) {
+    console.error('[Notifications] Error archiving notification:', error);
+    return res.status(500).json({ error: error.message });
+  }
+});
+
+// POST /api/notifications/commands/delete
+router.post('/commands/delete', async (req: any, res) => {
+  try {
+    const { notification_id } = req.body;
+    const tenantId = req.tenant_id;
+    const userId = req.user_id;
+
+    if (!tenantId || !userId || !notification_id) {
+      return res.status(400).json({ error: 'VALIDATION_ERROR', message: 'notification_id, tenant_id et user_id requis' });
+    }
+
+    const success = notificationRepo.delete(notification_id, tenantId, userId);
+
+    if (!success) {
+      return res.status(404).json({ error: 'Notification not found or already deleted' });
+    }
+
+    return res.json({ success: true });
+  } catch (error: any) {
+    console.error('[Notifications] Error deleting notification:', error);
+    return res.status(500).json({ error: error.message });
   }
 });
 

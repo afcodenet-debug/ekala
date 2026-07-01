@@ -32,6 +32,8 @@
     "src/sync/electron-integration.ts",
     "src/sync/production-sync-setup.ts",
     "src/sync/test/**/*",
+    "src/server/**/__tests__/**/*",
+    "src/server/**/*.test.ts",
     "src/server/saas/repositories/supabase/saas-supabase-extras.repository.ts"
   ]
 }

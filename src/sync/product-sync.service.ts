@@ -25,6 +25,8 @@ interface OutboxItem {
   updated_at: string;
 }
 
+import { getRequestId, logTrace } from '../server/utils/trace-utils';
+
 export class ProductSyncService {
   private db: Database.Database;
   private supabase: SupabaseClient;
@@ -107,31 +109,73 @@ export class ProductSyncService {
   }
 
   queueChange(entity: string, operation: 'insert' | 'update' | 'delete', record: any) {
+    const requestId = getRequestId();
+    logTrace('ENTER ProductSyncService.queueChange', { entity, operation, recordId: record.id });
     const id = newId();
     const payload = JSON.stringify(record);
     const version = (record as any).version || 1;
     const tIdRaw = (record as any).tenant_id !== undefined ? (record as any).tenant_id : null;
     const tenantId = this.normalizeTenantId(tIdRaw);
 
-    this.db.prepare(`
-      INSERT INTO sync_outbox (id, entity, operation, record_id, payload, version, tenant_id)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-    `).run(id, entity, operation, String(record.id), payload, version, tenantId);
+    try {
+      const stmt = this.db.prepare(`
+        INSERT INTO sync_outbox (id, entity, operation, record_id, payload, version, tenant_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      `);
+      const result = stmt.run(id, entity, operation, String(record.id), payload, version, tenantId);
+      logTrace('EXIT ProductSyncService.queueChange', { result });
+    } catch (err: any) {
+      console.error(JSON.stringify({
+        requestId,
+        file: 'product-sync.service.ts',
+        function: 'queueChange',
+        errorType: err?.constructor?.name,
+        errorCode: err?.code,
+        errorMessage: err?.message,
+        errorStack: err?.stack,
+        entity,
+        operation,
+        recordId: record.id
+      }));
+      throw err;
+    }
 
     console.log(`[Sync] ${entity} ${operation} queued for ${record.id}`);
   }
 
   queueChangeInsideTransaction(entity: string, operation: 'insert' | 'update' | 'delete', record: any) {
+    const requestId = getRequestId();
+    logTrace('ENTER ProductSyncService.queueChangeInsideTransaction', { entity, operation, recordId: record.id });
+    
     const id = newId();
     const payload = JSON.stringify(record);
     const version = (record as any).version || 1;
     const tIdRaw = (record as any).tenant_id !== undefined ? (record as any).tenant_id : null;
     const tenantId = this.normalizeTenantId(tIdRaw);
 
-    this.db.prepare(`
-      INSERT INTO sync_outbox (id, entity, operation, record_id, payload, version, tenant_id)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-    `).run(id, entity, operation, String(record.id), payload, version, tenantId);
+    logTrace('ENTER db.prepare INSERT sync_outbox');
+    try {
+      const stmt = this.db.prepare(`
+        INSERT INTO sync_outbox (id, entity, operation, record_id, payload, version, tenant_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      `);
+      const result = stmt.run(id, entity, operation, String(record.id), payload, version, tenantId);
+      logTrace('EXIT db.prepare INSERT sync_outbox', { result });
+    } catch (err: any) {
+      console.error(JSON.stringify({
+        requestId,
+        file: 'product-sync.service.ts',
+        function: 'queueChangeInsideTransaction',
+        errorType: err?.constructor?.name,
+        errorCode: err?.code,
+        errorMessage: err?.message,
+        errorStack: err?.stack,
+        entity,
+        operation,
+        recordId: record.id
+      }));
+      throw err;
+    }
   }
 
   /* ------------------------------------------------------------------ */

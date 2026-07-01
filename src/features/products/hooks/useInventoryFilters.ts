@@ -9,6 +9,7 @@ export interface InventoryFiltersState {
   categoryId: number | null;
   status: InventoryStatusFilter;
   margin: InventoryMarginFilter;
+  showArchived: boolean;
 }
 
 export interface InventoryFiltersResult {
@@ -24,6 +25,7 @@ const DEFAULT_FILTERS: InventoryFiltersState = {
   categoryId: null,
   status: 'all',
   margin: 'all',
+  showArchived: false,
 };
 
 const isProductVisible = (product: Product, filters: InventoryFiltersState) => {

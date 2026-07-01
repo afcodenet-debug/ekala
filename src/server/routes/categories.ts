@@ -4,6 +4,7 @@ import { requireRole } from '../middleware/auth';
 import { env } from '../config/env';
 import { createClient } from '@supabase/supabase-js';
 import { getProductSyncService, withOutboxTransaction } from '../../sync';
+import { dataSource } from '../infrastructure/data-source-manager';
 
 const router = express.Router();
 
@@ -14,7 +15,7 @@ router.get('/', async (req, res) => {
     return res.status(401).json({ error: 'TENANT_REQUIRED', message: 'tenant_id requis' });
   }
   try {
-    if (env.USE_SUPABASE_PRODUCTS || env.RENDER_CLOUD_MODE) {
+    if (dataSource.isTableCloud('categories')) {
       const supabase = createClient(env.SUPABASE_URL!, env.SUPABASE_SERVICE_ROLE_KEY!, {
         auth: { persistSession: false },
       });

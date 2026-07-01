@@ -295,7 +295,21 @@ router.post('/login/email', authRateLimit, async (req: Request, res: Response) =
         });
       }
 
-      const tenant = user.tenants || {};
+      // Get tenant info - try from join first, then fetch separately
+      let tenant = user.tenants || {};
+      if (!tenant.name && user.tenant_id) {
+        try {
+          const { data: tenantData } = await supabase
+            .from('tenants')
+            .select('name, slug, status')
+            .eq('id', String(user.tenant_id))
+            .maybeSingle();
+          if (tenantData) tenant = tenantData;
+        } catch (e) {
+          console.warn('[Auth] Could not fetch tenant separately:', e);
+        }
+      }
+
       const subscription = await getTenantSubscription(supabase, user.tenant_id);
       console.log(`[Auth] Email login success: ${user.full_name} (${user.role}) → tenant ${tenant.name || user.tenant_id}`);
       return res.json(buildAuthResponse(user, tenant, subscription));
@@ -480,7 +494,21 @@ router.post('/login/pin', authRateLimit, async (req: Request, res: Response) => 
       console.log(`[Auth] Found ${candidates.length} user(s) for tenant filter. Checking PINs...`);
       for (const user of candidates) {
         if (user.pin_code && verifyPin(pin_code, user.pin_code)) {
-          const tenant = user.tenants || {};
+          // Get tenant info - try from join first, then fetch separately
+          let tenant = user.tenants || {};
+          if (!tenant.name && user.tenant_id) {
+            try {
+              const { data: tenantData } = await supabase
+                .from('tenants')
+                .select('name, slug, status')
+                .eq('id', String(user.tenant_id))
+                .maybeSingle();
+              if (tenantData) tenant = tenantData;
+            } catch (e) {
+              console.warn('[Auth] Could not fetch tenant separately:', e);
+            }
+          }
+
           const subscription = await getTenantSubscription(supabase, user.tenant_id);
           console.log(`[Auth] PIN login success: ${user.full_name} (${user.role}) → tenant #${tenant.id || user.tenant_id}`);
           return res.json(buildAuthResponse(user, tenant, subscription));

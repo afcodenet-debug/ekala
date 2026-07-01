@@ -49,6 +49,17 @@ const T = {
     inventory:       d('Inventory',          'Inventaire',               'Inventário'),
     categories:      d('Categories',         'Catégories',               'Categorias'),
     pilotage:        d('Pilotage',           'Pilotage',                 'Gestão'),
+    billing:         d('Billing',            'Facturation',              'Faturamento'),
+    subscription:    d('Subscription',       'Abonnement',               'Assinatura'),
+    trialMode:       d('TRIAL MODE',         'MODE ESSAI',               'MODO TESTE'),
+    proAccount:      d('PRO ACCOUNT',        'COMPTE PRO',               'CONTA PRO'),
+    paymentRequired: d('PAYMENT REQUIRED',   'PAIEMENT REQUIS',          'PAGAMENTO NECESSÁRIO'),
+    expired:         d('EXPIRED',            'EXPIRÉ',                   'EXPIRADO'),
+    upgradeToPro:    d('Upgrade to Pro',     'Passer au Plan Pro',       'Upgrade para Pro'),
+    reactivateAccount: d('Reactivate my account', 'Réactiver mon compte', 'Reativar minha conta'),
+    mySubscription:  d('My Subscription',    'Mon Abonnement',           'Minha Assinatura'),
+    notifications:   d('Notifications',      'Notifications',            'Notificações'),
+    daysRemaining:   d('{days} days remaining', '{days} jours restants', '{days} dias restantes'),
   },
 
   // ── dashboard ───────────────────────────────────────────────────────
@@ -693,6 +704,16 @@ const T = {
     delete:            d('Delete',              'Supprimer',             'Excluir'),
     loading:           d('Loading inventory…',  'Chargement du stock…',  'A carregar inventário…'),
     noItems:           d('No inventory items',  'Aucun article en stock','Nenhum item em stock'),
+  },
+
+  // ── logout modal ─────────────────────────────────────────────────────
+  logout: {
+    confirmMessage: d('Are you sure you want to leave your active session?', 'Êtes-vous sûr de vouloir quitter votre session active ?', 'Tem certeza de que deseja sair da sua sessão ativa?'),
+    loggingOut:     d('Logging out…', 'Déconnexion en cours…', 'Saindo…'),
+    cleaningSession:d('Secure session cleanup', 'Nettoyage sécurisé de votre session', 'Limpeza segura da sessão'),
+    seeYouSoon:     d('See you soon!', 'À bientôt !', 'Até breve!'),
+    sessionClosed:  d('Your session has been closed securely.', 'Votre session a été fermée en toute sécurité.', 'Sua sessão foi encerrada com segurança.'),
+    redirecting:    d('Redirecting to login', 'Redirection vers la connexion', 'Redirecionando para o login'),
   },
 
   // ── users ───────────────────────────────────────────────────────────

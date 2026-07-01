@@ -1,8 +1,9 @@
 import express from 'express';
 import { TableService } from '../services/table.service';
-import { requireAdminOrManager, requireAdmin } from '../middleware/auth';
+import { requireAdminOrManager } from '../middleware/auth';
 import { env } from '../config/env';
 import { createClient } from '@supabase/supabase-js';
+import { db } from '../db/database';
 
 const router = express.Router();
 
@@ -13,56 +14,12 @@ function remoteToLocalStatus(s: string): string {
   return s;
 }
 
-// Get tables (Role-based filtering)
+// Get tables (Role-based filtering) - TOUJOURS depuis SQLite (source de vérité)
 router.get('/', async (req, res) => {
   const { waiter_id, role } = req.query;
   const tenantId = (req as any).tenant_id;
   if (!tenantId) {
     return res.status(401).json({ error: 'TENANT_REQUIRED', message: 'tenant_id requis' });
-  }
-  const isSupabaseMode = env.RENDER_CLOUD_MODE || env.USE_SUPABASE_TABLES;
-
-  if (isSupabaseMode) {
-    if (!env.SUPABASE_URL || !env.SUPABASE_SERVICE_ROLE_KEY) {
-      console.warn('[Tables] Supabase mode enabled but Supabase not configured. Returning empty list for GET /tables');
-      return res.status(200).json([]);
-    }
-
-    try {
-      const supabase = createClient(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, {
-        auth: { persistSession: false }
-      });
-      
-      // Utiliser une jointure pour récupérer le nom du serveur (full_name ou username)
-      let query = supabase
-        .from('restaurant_tables')
-        .select('*, waiter:users(full_name, username)')
-        .eq('tenant_id', tenantId)
-        .order('table_number', { ascending: true });
-
-      if (role === 'waiter' && waiter_id) {
-        query = query.eq('assigned_waiter_id', Number(waiter_id));
-      } else if (waiter_id) {
-        query = query.eq('assigned_waiter_id', Number(waiter_id));
-      }
-
-      const { data, error } = await query;
-      if (error) {
-        console.error('[Tables Supabase] GET error:', error);
-        return res.status(500).json({ error: 'Failed to fetch tables from Supabase' });
-      }
-
-      const normalized = (data || []).map((t: any) => ({
-        ...t,
-        waiter_name: t.waiter?.full_name || t.waiter?.username || null,
-        status: remoteToLocalStatus(t.status),
-      }));
-
-      return res.json(normalized);
-    } catch (error: any) {
-      console.error('[Tables Supabase] GET critical error:', error);
-      return res.status(500).json({ error: 'Failed to fetch tables from Supabase' });
-    }
   }
 
   try {
@@ -78,51 +35,16 @@ router.get('/', async (req, res) => {
   }
 });
 
-// Get tables assigned to a specific waiter (for staff management)
+// Get tables assigned to a specific waiter (for staff management) - TOUJOURS depuis SQLite
 router.get('/waiter/:waiterId', async (req, res) => {
   const { waiterId } = req.params;
   const tenantId = (req as any).tenant_id;
   if (!tenantId) {
     return res.status(401).json({ error: 'TENANT_REQUIRED', message: 'tenant_id requis' });
   }
-  const isSupabaseMode = env.RENDER_CLOUD_MODE || env.USE_SUPABASE_TABLES;
 
   try {
-    if (isSupabaseMode) {
-      if (!env.SUPABASE_URL || !env.SUPABASE_SERVICE_ROLE_KEY) {
-        console.warn('[Tables] Supabase mode enabled but Supabase not configured. Returning empty waiter table list.');
-        return res.json([]);
-      }
-
-      const supabase = createClient(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, {
-        auth: { persistSession: false }
-      });
-      const { data, error } = await supabase
-        .from('restaurant_tables')
-        .select('*')
-        .eq('assigned_waiter_id', Number(waiterId))
-        .eq('tenant_id', tenantId)
-        .order('table_number', { ascending: true });
-
-      if (error) {
-        console.error('[Tables Supabase] GET by waiter error:', error);
-        return res.status(500).json({ error: 'Failed to fetch waiter tables from Supabase' });
-      }
-
-      const normalized = (data || []).map((t: any) => ({ ...t, status: remoteToLocalStatus(t.status) }));
-      return res.json(normalized);
-    }
-
-    const dbMod = await import('../db/database');
-    const localDb = dbMod.db;
-
-    const tables = localDb.prepare(`
-      SELECT t.*
-      FROM restaurant_tables t
-      WHERE t.assigned_waiter_id = ? AND t.tenant_id = ?
-      ORDER BY t.table_number
-    `).all(Number(waiterId), tenantId);
-
+    const tables = await TableService.getAll({ waiter_id: Number(waiterId), role: 'waiter' }, tenantId);
     res.json(tables);
   } catch (error: any) {
     console.error('[Tables] GET by waiter error:', error);
@@ -278,8 +200,8 @@ router.post('/', requireAdminOrManager, async (req, res) => {
   }
 });
 
-// Delete table (Admin only)
-router.delete('/:id', requireAdmin, async (req, res) => {
+// Delete table (Admin/Manager only)
+router.delete('/:id', requireAdminOrManager, async (req, res) => {
   const { id } = req.params;
   const tenantId = (req as any).tenant_id;
   if (!tenantId) {

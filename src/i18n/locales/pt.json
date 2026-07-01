@@ -180,5 +180,21 @@
     "setupSuccess": "Sua conta foi criada com sucesso. Você já pode fazer login.",
     "backToVenue": "Voltar à seleção de estabelecimento",
     "enterpriseManagement": "Gestão Empresarial"
+  },
+  "sidebar": {
+    "voucherValidation": "Validação de pagamentos",
+    "trialMode": "MODO TESTE",
+    "proAccount": "CONTA PRO",
+    "paymentRequired": "PAGAMENTO NECESSÁRIO",
+    "expired": "EXPIRADO",
+    "upgradeToPro": "Upgrade para Pro",
+    "reactivateAccount": "Reativar minha conta",
+    "mySubscription": "Minha Assinatura",
+    "notifications": "Notificações",
+    "quitSession": "Sair da sessão",
+    "daysRemaining": "{days} dias restantes"
+  },
+  "products": {
+    "showArchived": "Mostrar arquivados"
   }
 }

@@ -9,9 +9,9 @@ import { useOrderStore } from '../stores/useOrderStore';
 import { useNotificationStore } from '../stores/useNotificationStore';
 import { useUIStore } from '../stores/useUIStore';
 import { NotificationBadge } from './NotificationBadge';
+import { NotificationBell } from './NotificationBell';
 import { SettingsSelector } from './SettingsSelector';
-import { SubscriptionStatus } from './SubscriptionStatus';
-
+import LogoutModal from './LogoutModal';
 import {
   Bell,
   BarChart3,
@@ -49,14 +49,14 @@ const MENU = [
   { path: '/expenses',   labelKey: 'sidebar.expenses',     icon: DollarSign,      roles: ['owner', 'admin', 'manager', 'cashier'] },
   { path: '/users',      labelKey: 'sidebar.systemAccess', icon: Settings,        roles: ['owner', 'admin'] },
   { path: '/settings',   labelKey: 'sidebar.settings',     icon: Settings,        roles: ['owner', 'admin'] },
-  { path: '/admin/vouchers', labelKey: 'sidebar.voucherValidation', icon: CreditCard, roles: ['owner', 'admin'] },
-  { path: '/billing', labelKey: 'sidebar.billing', icon: CreditCard, roles: ['owner', 'admin'] },
+  { path: '/settings/subscription', labelKey: 'sidebar.subscription', icon: CreditCard, roles: ['owner', 'admin'] },
 ];
 
 const SECTIONS = [
   { tKey: 'sidebar.operations', paths: ['/', '/pos', '/orders', '/tables'] },
   { tKey: 'sidebar.inventory',  paths: ['/sales', '/products', '/categories', '/analytics'] },
-  { tKey: 'sidebar.pilotage',   paths: ['/staff', '/reports', '/expenses', '/users', '/settings', '/admin/vouchers', '/billing'] },
+  { tKey: 'sidebar.pilotage',   paths: ['/staff', '/reports', '/expenses', '/users', '/settings'] },
+  { tKey: 'sidebar.settings',   paths: ['/settings', '/settings/subscription'] },
 ];
 
 type SidebarProps = { onClose?: () => void };
@@ -70,8 +70,14 @@ const Sidebar = ({ onClose }: SidebarProps) => {
   const { pendingQrCount } = useOrderStore();
   const { markAllAsRead, openCenter } = useNotificationStore();
   const { isSidebarCollapsed, setSidebarCollapsed, isSidebarOpen, setSidebarOpen } = useUIStore();
+  const [showLogoutModal, setShowLogoutModal] = useState(false);
 
-  const handleLogout = () => {
+  const handleLogoutClick = () => {
+    setShowLogoutModal(true);
+  };
+
+  const handleLogoutConfirm = () => {
+    setShowLogoutModal(false);
     logout();
     navigate('/login');
   };
@@ -90,8 +96,6 @@ const Sidebar = ({ onClose }: SidebarProps) => {
 
   return (
     <>
-      {/* Subscription Status */}
-      <SubscriptionStatus />
       {/* ── Styles ─────────────────────────────────────────────── */}
       <style>{`
         /* ── Sidebar root ──────────────────────────────────────── */
@@ -445,6 +449,16 @@ const Sidebar = ({ onClose }: SidebarProps) => {
         @supports (height: 100dvh) {
           .sb-aside { height: 100dvh; }
         }
+
+        /* ── Premium Animations ─────────────────────────────────── */
+        @keyframes pulse {
+          0%, 100% { opacity: 1; transform: scale(1); }
+          50% { opacity: 0.7; transform: scale(1.1); }
+        }
+        @keyframes shimmer {
+          0% { left: -100%; }
+          100% { left: 200%; }
+        }
       `}</style>
 
       <aside className={`sb-aside ${isSidebarCollapsed ? 'collapsed' : ''} ${isSidebarOpen ? 'mobile-open' : ''}`}>
@@ -478,102 +492,169 @@ const Sidebar = ({ onClose }: SidebarProps) => {
           <div style={{ minWidth: 0, flex: 1 }}>
             <div className="sb-brand-name">{user?.tenant_name || APP_NAME}</div>
             
-            {/* Subscription Status Badge */}
-            <div className="sb-brand-status" style={{ marginTop: 2 }}>
+            {/* Subscription Status Badge - Premium Design */}
+            <div className="sb-brand-status" style={{ marginTop: 6 }}>
               <div 
                 className="sb-status-dot" 
                 style={{ 
                   background: user?.status === 'trial' ? colors.accent.gold : 
                              user?.status === 'active' ? '#10b981' : colors.accent.red,
-                  boxShadow: `0 0 8px ${user?.status === 'trial' ? colors.accent.gold : 
-                             user?.status === 'active' ? '#10b981' : colors.accent.red}`
+                  boxShadow: `0 0 12px ${user?.status === 'trial' ? colors.accent.gold : 
+                             user?.status === 'active' ? '#10b981' : colors.accent.red}`,
+                  animation: 'pulse 2s ease-in-out infinite'
                 }} 
               />
               <span className="sb-status-label" style={{ 
                 color: user?.status === 'active' ? '#10b981' : user?.status === 'trial' ? colors.accent.gold : colors.accent.red,
-                fontWeight: 900
+                fontWeight: 900,
+                fontSize: '9px'
               }}>
-                {user?.status === 'trial' ? 'MODE ESSAI' : 
-                 user?.status === 'active' ? 'COMPTE PRO' : 
-                 user?.status === 'past_due' ? 'PAIEMENT REQUIS' : 'EXPIRÉ'}
+                {user?.status === 'trial' ? `⚡ ${t('sidebar.trialMode')}` : 
+                 user?.status === 'active' ? `✓ ${t('sidebar.proAccount')}` : 
+                 user?.status === 'past_due' ? `⚠ ${t('sidebar.paymentRequired')}` : `✕ ${t('sidebar.expired')}`}
               </span>
             </div>
 
-            {/* Plan Badge - Clickable to billing */}
+            {/* Plan Badge - Premium Card Design */}
             {user?.plan_name && (
               <div
                 onClick={() => navigate('/billing')}
                 style={{
-                  marginTop: 8,
-                  padding: '8px 12px',
-                  background: 'linear-gradient(135deg, rgba(212,175,55,0.12), rgba(146,64,14,0.12))',
-                  borderRadius: 8,
-                  border: '1px solid rgba(212,175,55,0.35)',
+                  marginTop: 10,
+                  padding: '12px 14px',
+                  background: 'linear-gradient(135deg, rgba(212,175,55,0.15), rgba(146,64,14,0.15))',
+                  borderRadius: 12,
+                  border: '1px solid rgba(212,175,55,0.4)',
                   cursor: 'pointer',
-                  transition: 'all 0.2s',
+                  transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
+                  position: 'relative',
+                  overflow: 'hidden',
+                  boxShadow: '0 4px 12px rgba(212,175,55,0.1)',
                 }}
                 onMouseOver={e => {
-                  e.currentTarget.style.background = 'linear-gradient(135deg, rgba(212,175,55,0.18), rgba(146,64,14,0.18))';
-                  e.currentTarget.style.transform = 'translateY(-1px)';
+                  e.currentTarget.style.background = 'linear-gradient(135deg, rgba(212,175,55,0.22), rgba(146,64,14,0.22))';
+                  e.currentTarget.style.transform = 'translateY(-2px)';
+                  e.currentTarget.style.boxShadow = '0 8px 20px rgba(212,175,55,0.2)';
+                  e.currentTarget.style.borderColor = 'rgba(212,175,55,0.6)';
                 }}
                 onMouseOut={e => {
-                  e.currentTarget.style.background = 'linear-gradient(135deg, rgba(212,175,55,0.12), rgba(146,64,14,0.12))';
+                  e.currentTarget.style.background = 'linear-gradient(135deg, rgba(212,175,55,0.15), rgba(146,64,14,0.15))';
                   e.currentTarget.style.transform = 'translateY(0)';
+                  e.currentTarget.style.boxShadow = '0 4px 12px rgba(212,175,55,0.1)';
+                  e.currentTarget.style.borderColor = 'rgba(212,175,55,0.4)';
                 }}
               >
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, fontWeight: 700, color: colors.accent.gold }}>
-                  <ShieldCheck size={14} />
-                  <span>{user.plan_name}</span>
+                {/* Shimmer effect */}
+                <div style={{
+                  position: 'absolute',
+                  top: 0,
+                  left: '-100%',
+                  width: '100%',
+                  height: '100%',
+                  background: 'linear-gradient(90deg, transparent, rgba(255,255,255,0.1), transparent)',
+                  animation: 'shimmer 3s infinite',
+                }} />
+                
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, fontWeight: 800, color: colors.accent.gold, position: 'relative', zIndex: 1 }}>
+                  <ShieldCheck size={16} strokeWidth={2.5} />
+                  <span style={{ letterSpacing: '0.02em' }}>{user.plan_name}</span>
                 </div>
 
                 {user.expires_at && (
-                  <div style={{ fontSize: 10, color: colors.text3, fontWeight: 600, marginTop: 3, paddingLeft: 20 }}>
+                  <div style={{ fontSize: 11, color: colors.text2, fontWeight: 700, marginTop: 2, paddingLeft: 24, position: 'relative', zIndex: 1 }}>
                     {(() => {
                       const days = Math.ceil((new Date(user.expires_at).getTime() - Date.now()) / 86400000);
-                      if (days <= 0) return 'Expiré';
-                      if (user.status === 'trial') return `${days} jours restants`;
-                      return `Jusqu'au ${new Date(user.expires_at).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', year: '2-digit' })}`;
+                      if (days <= 0) return '✕';
+                      return t('sidebar.daysRemaining', { days });
                     })()}
                   </div>
                 )}
               </div>
             )}
 
-            {/* Action Button */}
-            {(user?.status === 'trial' || user?.status === 'past_due' || user?.status === 'expired') && (
+            {/* Premium Action Card */}
+            {user?.status === 'trial' && (
               <div style={{ marginTop: 10 }}>
                 <button
-                  onClick={handleClose}
+                  onClick={() => navigate('/billing')}
                   style={{
                     width: '100%',
                     fontSize: 10,
                     fontWeight: 800,
                     color: '#fff',
-                    background: user.status === 'trial' ? 'linear-gradient(135deg, #D4AF37, #92400e)' : 'linear-gradient(135deg, #ef4444, #991b1b)',
+                    background: 'linear-gradient(135deg, #D4AF37 0%, #f59e0b 50%, #D4AF37 100%)',
+                    backgroundSize: '200% auto',
                     border: 'none',
-                    borderRadius: 8,
-                    padding: '8px 12px',
+                    borderRadius: 10,
+                    padding: '10px 14px',
                     cursor: 'pointer',
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'center',
                     gap: 6,
                     textTransform: 'uppercase',
-                    letterSpacing: '0.06em',
-                    boxShadow: '0 4px 15px rgba(0,0,0,0.3)',
-                    transition: 'transform 0.2s',
+                    letterSpacing: '0.08em',
+                    boxShadow: '0 6px 20px rgba(212,175,55,0.4)',
+                    transition: 'all 0.3s',
+                    animation: 'shimmer 3s linear infinite',
                   }}
-                  onMouseOver={e => e.currentTarget.style.transform = 'translateY(-1px)'}
-                  onMouseOut={e => e.currentTarget.style.transform = 'translateY(0)'}
+                  onMouseOver={e => {
+                    e.currentTarget.style.transform = 'translateY(-2px)';
+                    e.currentTarget.style.boxShadow = '0 10px 30px rgba(212,175,55,0.5)';
+                  }}
+                  onMouseOut={e => {
+                    e.currentTarget.style.transform = 'translateY(0)';
+                    e.currentTarget.style.boxShadow = '0 6px 20px rgba(212,175,55,0.4)';
+                  }}
                 >
-                  <Zap size={12} fill="#fff" />
-                  {user.status === 'trial' ? 'Passer au Plan Pro' : 'Réactiver mon compte'}
+                  <Zap size={14} fill="#fff" />
+                  <span>{t('sidebar.upgradeToPro')}</span>
                 </button>
               </div>
             )}
 
-            {/* Quick access to plans for active users */}
-            {user?.status === 'active' && user?.plan_name && (
+            {(user?.status === 'past_due' || user?.status === 'expired') && (
+              <div style={{ marginTop: 10 }}>
+                <button
+                  onClick={() => navigate('/billing')}
+                  style={{
+                    width: '100%',
+                    fontSize: 10,
+                    fontWeight: 800,
+                    color: '#fff',
+                    background: 'linear-gradient(135deg, #ef4444 0%, #dc2626 50%, #ef4444 100%)',
+                    backgroundSize: '200% auto',
+                    border: 'none',
+                    borderRadius: 10,
+                    padding: '10px 14px',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: 6,
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.08em',
+                    boxShadow: '0 6px 20px rgba(239,68,68,0.4)',
+                    transition: 'all 0.3s',
+                    animation: 'shimmer 3s linear infinite',
+                  }}
+                  onMouseOver={e => {
+                    e.currentTarget.style.transform = 'translateY(-2px)';
+                    e.currentTarget.style.boxShadow = '0 10px 30px rgba(239,68,68,0.5)';
+                  }}
+                  onMouseOut={e => {
+                    e.currentTarget.style.transform = 'translateY(0)';
+                    e.currentTarget.style.boxShadow = '0 6px 20px rgba(239,68,68,0.4)';
+                  }}
+                >
+                  <CreditCard size={14} />
+                  <span>{t('sidebar.reactivateAccount')}</span>
+                </button>
+              </div>
+            )}
+
+            {/* Manage Subscription - Premium Card */}
+            {user?.status === 'active' && (
               <div style={{ marginTop: 10 }}>
                 <button
                   onClick={() => navigate('/billing')}
@@ -582,30 +663,36 @@ const Sidebar = ({ onClose }: SidebarProps) => {
                     fontSize: 10,
                     fontWeight: 800,
                     color: colors.accent.gold,
-                    background: 'rgba(212,175,55,0.08)',
-                    border: '1px solid rgba(212,175,55,0.25)',
-                    borderRadius: 8,
-                    padding: '8px 12px',
+                    background: 'linear-gradient(135deg, rgba(212,175,55,0.12) 0%, rgba(212,175,55,0.08) 100%)',
+                    border: '1px solid rgba(212,175,55,0.4)',
+                    borderRadius: 10,
+                    padding: '10px 14px',
                     cursor: 'pointer',
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'center',
                     gap: 6,
                     textTransform: 'uppercase',
-                    letterSpacing: '0.06em',
-                    transition: 'all 0.2s',
+                    letterSpacing: '0.08em',
+                    transition: 'all 0.3s',
+                    position: 'relative',
+                    overflow: 'hidden',
                   }}
                   onMouseOver={e => {
-                    e.currentTarget.style.background = 'rgba(212,175,55,0.14)';
-                    e.currentTarget.style.transform = 'translateY(-1px)';
+                    e.currentTarget.style.background = 'linear-gradient(135deg, rgba(212,175,55,0.2) 0%, rgba(212,175,55,0.12) 100%)';
+                    e.currentTarget.style.transform = 'translateY(-2px)';
+                    e.currentTarget.style.borderColor = 'rgba(212,175,55,0.7)';
+                    e.currentTarget.style.boxShadow = '0 8px 24px rgba(212,175,55,0.25)';
                   }}
                   onMouseOut={e => {
-                    e.currentTarget.style.background = 'rgba(212,175,55,0.08)';
+                    e.currentTarget.style.background = 'linear-gradient(135deg, rgba(212,175,55,0.12) 0%, rgba(212,175,55,0.08) 100%)';
                     e.currentTarget.style.transform = 'translateY(0)';
+                    e.currentTarget.style.borderColor = 'rgba(212,175,55,0.4)';
+                    e.currentTarget.style.boxShadow = 'none';
                   }}
                 >
-                  <CreditCard size={12} />
-                  Gérer mon abonnement
+                  <CreditCard size={14} strokeWidth={2.5} />
+                  <span>{t('sidebar.mySubscription')}</span>
                 </button>
               </div>
             )}
@@ -682,25 +769,31 @@ const Sidebar = ({ onClose }: SidebarProps) => {
             </div>
           </div>
 
-          <button
+          <div
             className="sb-notif-btn"
             onClick={() => { openCenter?.(); markAllAsRead?.(); }}
             title="Notifications"
           >
             <div className="sb-notif-inner">
               <Bell size={14} />
-              <span>Notifications</span>
+              <span>{t('sidebar.notifications')}</span>
             </div>
-            <NotificationBadge />
-          </button>
+            <NotificationBell size={14} onClick={() => useNotificationStore.getState().toggleCenter()} />
+          </div>
 
-          <button className="sb-logout-btn" onClick={handleLogout}>
+          <button className="sb-logout-btn" onClick={handleLogoutClick}>
             <LogOut size={14} />
             {t('sidebar.quitSession')}
           </button>
         </div>
 
       </aside>
+
+      {/* Logout Modal with Premium Animation */}
+      <LogoutModal
+        isOpen={showLogoutModal}
+        onClose={() => setShowLogoutModal(false)}
+      />
     </>
   );
 };

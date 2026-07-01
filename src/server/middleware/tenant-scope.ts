@@ -36,14 +36,36 @@ declare global {
  * À utiliser sur toutes les routes qui accèdent à des données multi-tenant.
  */
 export function requireTenantScope(req: Request, _res: Response, next: NextFunction) {
+  const requestId = (req as any).requestId || 'unknown';
   try {
     const user = (req as any).user;
+    
+    console.log(JSON.stringify({
+      middleware: 'requireTenantScope',
+      file: 'src/server/middleware/tenant-scope.ts',
+      line: 38,
+      action: 'enter',
+      requestId,
+      userId: user?.sub,
+      userRole: user?.role,
+      isPlatform: user?.type === 'platform' || user?.is_platform_user,
+      path: req.path,
+      method: req.method
+    }));
     
     // Les admins plateforme n'ont pas de tenant_id (ils gèrent tous les tenants)
     // Leur accès est contrôlé par requirePlatformAuth / requirePlatformPermission
     if (user?.type === 'platform' || user?.is_platform_user) {
       // Platform admin: pas de scope tenant nécessaire
       // Leur accès est déjà validé par le middleware platform
+      console.log(JSON.stringify({
+        middleware: 'requireTenantScope',
+        file: 'src/server/middleware/tenant-scope.ts',
+        line: 47,
+        action: 'next',
+        requestId,
+        reason: 'platform_admin'
+      }));
       return next();
     }
     
@@ -54,12 +76,39 @@ export function requireTenantScope(req: Request, _res: Response, next: NextFunct
     req.tenant_id = tenantId;
     req.user_id = userId;
     
+    console.log(JSON.stringify({
+      middleware: 'requireTenantScope',
+      file: 'src/server/middleware/tenant-scope.ts',
+      line: 59,
+      action: 'tenant_injected',
+      requestId,
+      tenantId,
+      userId
+    }));
+    
     // On utilise AsyncLocalStorage pour rendre le tenant_id disponible partout 
     // sans avoir à le passer manuellement à chaque fonction.
     tenantStorage.run({ tenantId, userId }, () => {
+      console.log(JSON.stringify({
+        middleware: 'requireTenantScope',
+        file: 'src/server/middleware/tenant-scope.ts',
+        line: 60,
+        action: 'next',
+        requestId,
+        tenantId,
+        userId
+      }));
       next();
     });
   } catch (e: any) {
+    console.log(JSON.stringify({
+      middleware: 'requireTenantScope',
+      file: 'src/server/middleware/tenant-scope.ts',
+      line: 63,
+      status: 401,
+      requestId,
+      error: e?.message
+    }));
     return _res.status(401).json({
       error: 'AUTH_REQUIRED',
       message: 'Authentification requise pour accéder à cette ressource.',

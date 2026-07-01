@@ -107,11 +107,11 @@ async function checkSubscriptionStatus(tenantId: number): Promise<SubscriptionGu
     const db = new Database(dbPath);
     
     const sub = db.prepare(`
-      SELECT ts.*, p.name as plan_name, p.code as plan_code
-      FROM tenant_subscriptions ts
-      LEFT JOIN plans p ON p.id = ts.plan_id
-      WHERE ts.tenant_id = ?
-      ORDER BY ts.created_at DESC
+      SELECT s.*, p.name as plan_name, p.code as plan_code
+      FROM subscriptions s
+      LEFT JOIN plans p ON p.id = s.plan_id
+      WHERE s.tenant_id = ?
+      ORDER BY s.created_at DESC
       LIMIT 1
     `).get(tenantId);
     
@@ -145,6 +145,57 @@ async function checkSubscriptionStatus(tenantId: number): Promise<SubscriptionGu
         planName: sub.plan_name || sub.plan_code,
         subscriptionId: sub.id,
         planId: sub.plan_id,
+      };
+    }
+    
+    // No subscription found - check tenant status in SQLite
+    const tenant = db.prepare(`
+      SELECT status, created_at FROM tenants WHERE id = ?
+    `).get(tenantId);
+    
+    if (tenant) {
+      db.close();
+      
+      // If tenant is active, allow access (no subscription = free tier)
+      if (tenant.status === 'active') {
+        return {
+          ...fallback,
+          state: 'active',
+          planName: 'Free',
+          daysUntilRenewal: null,
+          isExpired: false,
+          isGracePeriod: false,
+          graceDaysRemaining: null,
+        };
+      }
+      
+      // If tenant is trial, calculate trial end
+      if (tenant.status === 'trial') {
+        const created = new Date(tenant.created_at).getTime();
+        const trialEnd = created + 7 * 86400000;
+        const now = Date.now();
+        const isExpired = now > trialEnd;
+        
+        return {
+          ...fallback,
+          state: isExpired ? 'expired' : 'trial',
+          planName: 'Essai Gratuit',
+          daysUntilRenewal: Math.ceil((trialEnd - now) / 86400000),
+          isExpired,
+          isGracePeriod: false,
+          graceDaysRemaining: null,
+        };
+      }
+      
+      // Other tenant statuses (past_due, expired, etc.)
+      return {
+        ...fallback,
+        state: tenant.status as any,
+        planName: 'No Plan',
+        daysUntilRenewal: null,
+        isExpired: true,
+        isGracePeriod: false,
+        graceDaysRemaining: null,
       };
     }
     
@@ -187,7 +238,30 @@ async function checkSubscriptionStatus(tenantId: number): Promise<SubscriptionGu
           isExpired
         };
       }
-      return { ...fallback, state: 'no_plan' };
+      
+      // If tenant is active but has no subscription, allow access (free tier)
+      if (tenant?.status === 'active') {
+        return {
+          ...fallback,
+          state: 'active',
+          planName: 'Free',
+          daysUntilRenewal: null,
+          isExpired: false,
+          isGracePeriod: false,
+          graceDaysRemaining: null,
+        };
+      }
+      
+      // Other tenant statuses (suspended, expired, etc.)
+      return { 
+        ...fallback, 
+        state: tenant?.status === 'suspended' ? 'suspended' : 'no_plan',
+        planName: 'No Plan',
+        daysUntilRenewal: null,
+        isExpired: true,
+        isGracePeriod: false,
+        graceDaysRemaining: null,
+      };
     }
 
     const plans = (sub as any)?.plans;
@@ -202,17 +276,21 @@ async function checkSubscriptionStatus(tenantId: number): Promise<SubscriptionGu
 
     let state: SubscriptionState;
 
-    if (sub.status === 'cancelled') {
+    // RÈGLE UNIQUE : Le champ status de la DB est autoritaire.
+    // Si subscriptions.status = 'active', on le respecte même si period_end est dépassé.
+    // Seuls les statuts 'trial' et 'past_due' peuvent être rétrogradés par date.
+    if (sub.status === 'active') {
+      // Active status from DB is authoritative. Don't override to 'suspended'.
+      state = 'active';
+    } else if (sub.status === 'cancelled') {
       state = 'cancelled';
-    } else if (isExpired && (sub.status === 'trial' || (sub.status === 'active' && trialEnd && !periodEnd))) {
+    } else if (sub.status === 'trial' && isExpired) {
       state = 'expired';
-    } else if (isExpired && periodEnd) {
+    } else if (sub.status === 'past_due' && periodEnd) {
       const graceEnd = periodEnd + GRACE_PERIOD_DAYS * 86_400_000;
-      state = now < graceEnd ? 'grace' : 'suspended';
-    } else if (sub.status === 'past_due') {
-      state = 'grace';
-    } else if (sub.status === 'active' || sub.status === 'trial') {
-      state = isExpired ? 'suspended' : sub.status;
+      state = now < graceEnd ? 'grace' : 'expired';
+    } else if (sub.status === 'trial') {
+      state = sub.status;
     } else {
       state = 'no_plan';
     }
@@ -239,6 +317,7 @@ async function checkSubscriptionStatus(tenantId: number): Promise<SubscriptionGu
 export const requireActiveSubscription = async (
   req: AuthenticatedRequest, res: Response, next: NextFunction
 ) => {
+  const requestId = (req as any).requestId || 'unknown';
   // Skip garanti pour les flows de paiement / voucher / billing
   const PAYMENT_FLOW =
     req.path.startsWith('/checkout') ||
@@ -250,36 +329,107 @@ export const requireActiveSubscription = async (
     req.path.startsWith('/plans');
 
   if (PAYMENT_FLOW) {
-    console.log('[SubGuard:SKIP]', { method: req.method, path: req.path, flow: true });
+    console.log(JSON.stringify({
+      middleware: 'requireActiveSubscription',
+      file: 'src/server/middleware/subscription-guard.ts',
+      line: 252,
+      action: 'skip',
+      requestId,
+      method: req.method,
+      path: req.path,
+      reason: 'payment_flow'
+    }));
     return next();
   }
 
   // Lectures publiques tenants
   if (req.path.startsWith('/tenants') && ['GET','HEAD','OPTIONS'].includes(req.method)) {
+    console.log(JSON.stringify({
+      middleware: 'requireActiveSubscription',
+      file: 'src/server/middleware/subscription-guard.ts',
+      line: 258,
+      action: 'skip',
+      requestId,
+      reason: 'public_tenant_read'
+    }));
     return next();
   }
 
   const tenantId = req.user?.tenant_id;
-  if (!tenantId) return res.status(401).json({ error: 'UNAUTHORIZED', message: 'Authentification requise.' });
+  if (!tenantId) {
+    console.log(JSON.stringify({
+      middleware: 'requireActiveSubscription',
+      file: 'src/server/middleware/subscription-guard.ts',
+      line: 263,
+      status: 401,
+      requestId,
+      error: 'NO_TENANT_ID'
+    }));
+    return res.status(401).json({ error: 'UNAUTHORIZED', message: 'Authentification requise.' });
+  }
 
   let result = getCached(tenantId);
   if (!result) { result = await checkSubscriptionStatus(tenantId); setCache(tenantId, result); }
   req.subscription = result;
 
+  // Only log blocked/warning states to reduce noise
+  if (result.state !== 'active' && result.state !== 'trial') {
+    console.log(JSON.stringify({
+      middleware: 'requireActiveSubscription',
+      file: 'src/server/middleware/subscription-guard.ts',
+      line: 269,
+      action: 'subscription_checked',
+      requestId,
+      tenantId,
+      userId: req.user?.sub,
+      state: result.state,
+      planName: result.planName
+    }));
+  }
+
   const BLOCKED_STATES = ['pending', 'expired', 'suspended', 'cancelled', 'no_plan', 'past_due'];
 
   if (BLOCKED_STATES.includes(result.state)) {
-    console.log('[403:SUBSCRIPTION_BLOCKED]', {
-      tenantId, userId: req.user?.sub, state: result.state, method: req.method, path: req.path
-    });
+    console.log(JSON.stringify({
+      middleware: 'requireActiveSubscription',
+      file: 'src/server/middleware/subscription-guard.ts',
+      line: 271,
+      status: 403,
+      requestId,
+      tenantId,
+      userId: req.user?.sub,
+      state: result.state,
+      method: req.method,
+      path: req.path
+    }));
 
     const readOnlyPaths = ['/billing', '/subscription', '/profile', '/vouchers', '/voucher-purchase'];
     const isReadOnly = readOnlyPaths.some(p => req.path.startsWith(p));
 
     if (isReadOnly) {
+      console.log(JSON.stringify({
+        middleware: 'requireActiveSubscription',
+        file: 'src/server/middleware/subscription-guard.ts',
+        line: 280,
+        action: 'next',
+        requestId,
+        reason: 'read_only_path'
+      }));
       return next();
     }
 
+    console.log(JSON.stringify({
+      middleware: 'requireActiveSubscription',
+      file: 'src/server/middleware/subscription-guard.ts',
+      line: 283,
+      status: 403,
+      requestId,
+      body: {
+        error: result.state === 'pending' ? 'SUBSCRIPTION_PENDING' : 'SUBSCRIPTION_REQUIRED',
+        state: result.state,
+        planName: result.planName
+      }
+    }));
     return res.status(403).json({
       error: result.state === 'pending' ? 'SUBSCRIPTION_PENDING' : 'SUBSCRIPTION_REQUIRED',
       message: result.state === 'pending'
@@ -302,6 +452,14 @@ export const requireActiveSubscription = async (
     res.setHeader('X-Subscription-Warning', 'grace_period');
     res.setHeader('X-Subscription-Grace-Days', String(result.graceDaysRemaining || 0));
   }
+  console.log(JSON.stringify({
+    middleware: 'requireActiveSubscription',
+    file: 'src/server/middleware/subscription-guard.ts',
+    line: 305,
+    action: 'next',
+    requestId,
+    state: result.state
+  }));
   return next();
 };
 
