@@ -151,7 +151,84 @@ async function handleCloudCheckout(
       }
     }
 
-    // 5. Update order status to paid
+    // 5. Décrémenter le stock pour chaque produit vendu
+    // CRITIQUE: Cette étape était manquante — le checkout cloud ne mettait pas à jour
+    // products.stock_quantity ni n'insérait inventory_movements.
+    console.log(`[Sales] Updating stock for ${items.length} items...`);
+    const stockErrors: string[] = [];
+    for (const item of items) {
+      const productId = item.product_id || item.productId;
+      const quantity = Number(item.quantity) || 0;
+      if (!productId || quantity <= 0) continue;
+
+      // 5a. Lire le stock actuel
+      const { data: product, error: prodErr } = await supabase
+        .from('products')
+        .select('id, stock_quantity, buying_price')
+        .eq('id', productId)
+        .eq('tenant_id', tenantId)
+        .maybeSingle();
+
+      if (prodErr || !product) {
+        const errMsg = `Product ${productId} not found for stock update`;
+        console.error(`[Sales] ${errMsg}`);
+        stockErrors.push(errMsg);
+        continue;
+      }
+
+      const quantityBefore = Number(product.stock_quantity || 0);
+      const quantityChanged = -quantity;
+      const quantityAfter = Math.max(0, quantityBefore + quantityChanged);
+      const unitCost = Number(product.buying_price || 0);
+      const totalValue = quantity * unitCost;
+
+      // 5b. Mettre à jour le stock du produit
+      const { error: updateStockErr } = await supabase
+        .from('products')
+        .update({ 
+          stock_quantity: quantityAfter,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', productId)
+        .eq('tenant_id', tenantId);
+
+      if (updateStockErr) {
+        const errMsg = `Failed to update stock for product ${productId}: ${updateStockErr.message}`;
+        console.error(`[Sales] ${errMsg}`);
+        stockErrors.push(errMsg);
+      } else {
+        console.log(`[Sales] Product ${productId}: stock ${quantityBefore} → ${quantityAfter} (sold ${quantity})`);
+      }
+
+      // 5c. Créer l'entrée inventory_movements
+      const { error: movErr } = await supabase
+        .from('inventory_movements')
+        .insert({
+          product_id: productId,
+          movement_type: 'sale',
+          quantity_before: quantityBefore,
+          quantity_changed: quantityChanged,
+          quantity_after: quantityAfter,
+          unit_cost: unitCost,
+          total_value: totalValue,
+          reason: `Sale #${saleData.id}`,
+          created_by: user_id,
+          reference_type: 'sale',
+          reference_id: saleData.id,
+          tenant_id: tenantId,
+          created_at: new Date().toISOString()
+        });
+
+      if (movErr) {
+        console.error(`[Sales] Failed to create inventory_movement for product ${productId}:`, movErr);
+      }
+    }
+
+    if (stockErrors.length > 0) {
+      console.warn(`[Sales] ${stockErrors.length} stock update errors occurred`);
+    }
+
+    // 6. Update order status to paid
     console.log(`[Sales] Updating order ${normalizedOrderId} status to paid...`);
     const { error: updateErr } = await supabase
       .from('orders')
