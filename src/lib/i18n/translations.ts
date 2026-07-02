@@ -1037,6 +1037,7 @@ const T = {
         choose: d('Choose', 'Choisir', 'Escolher'),
       },
       periodLabels: {
+        trial: d('trial', 'essai', 'teste'),
         weekly: d('week', 'sem', 'sem'),
         monthly: d('month', 'mois', 'mês'),
         annual: d('year', 'an', 'ano'),
