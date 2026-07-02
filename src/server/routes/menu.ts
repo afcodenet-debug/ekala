@@ -449,6 +449,19 @@ router.post('/checkout', async (req, res) => {
       waiterId = staff?.id;
     }
 
+    // ─── [FORENSIC TRACE] POST /checkout ───────────────────────────────────
+    console.log('[FORENSIC][QR_CHECKOUT] Creating order', {
+      timestamp: new Date().toISOString(),
+      tableId: table.id,
+      waiterId,
+      customerId: customer.id,
+      status: 'pending',
+      itemCount: enrichedItems.length,
+      total: enrichedTotal,
+      tenantId,
+      source: 'qr'
+    });
+
     const { data: newOrder, error: orderError } = await supabase
       .from('orders')
       .insert({
@@ -465,6 +478,12 @@ router.post('/checkout', async (req, res) => {
       .single();
 
     if (orderError) throw orderError;
+
+    console.log('[FORENSIC][QR_CHECKOUT] Order inserted', {
+      orderId: newOrder.id,
+      status: 'pending',
+      timestamp: new Date().toISOString()
+    });
 
     return res.json({ success: true, orderId: newOrder.id });
 
@@ -498,13 +517,28 @@ router.get('/order-status/:qr_token/:orderId', async (req, res) => {
     // Strict tenant scoping
     const { data, error } = await supabase
       .from('orders')
-      .select('id, status, table_id, total, items, created_at, updated_at, tenant_id')
+      .select('id, status, table_id, total, items, created_at, updated_at, tenant_id, confirmed_at, started_at, ready_at, served_at, paid_at, estimated_preparation_time')
       .eq('id', Number(orderId))
       .eq('tenant_id', tenantId)
       .single();
 
     if (error || !data) return res.status(404).json({ error: 'Order not found' });
-    res.json(data);
+
+    // ─── [FORENSIC TRACE] GET /order-status ─────────────────────────────────
+    console.log('[FORENSIC][QR_POLL] Order status fetched', {
+      orderId: Number(orderId),
+      status: data.status,
+      confirmed_at: data.confirmed_at,
+      server_now: new Date().toISOString(),
+      timestamp: new Date().toISOString(),
+      source: 'GET /api/menu/order-status/:token/:orderId'
+    });
+
+    // Return order with server timestamp (source of truth for countdown)
+    res.json({
+      ...data,
+      server_now: new Date().toISOString(), // Single source of truth
+    });
   } catch (err: any) {
     res.status(500).json({ error: 'Failed to fetch status' });
   }

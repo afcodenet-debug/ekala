@@ -772,6 +772,15 @@ export class OrderService {
           }
         }
 
+        // ─── [FORENSIC TRACE] SQLite status write ──────────────────────────
+        console.log('[FORENSIC][STATUS_WRITE] SQLite update', {
+          orderId: id,
+          newStatus: status,
+          tenantId,
+          timestamp: new Date().toISOString(),
+          source: 'OrderService.updateStatus'
+        });
+
         db.prepare('UPDATE orders SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND tenant_id = ?').run(status, id, tenantId);
 
         const updatedOrder = db.prepare(`

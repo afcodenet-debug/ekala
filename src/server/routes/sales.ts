@@ -305,7 +305,15 @@ async function handleCloudCheckout(
     }
 
     // 6. Update order status to paid
-    console.log(`[Sales] Updating order ${normalizedOrderId} status to paid...`);
+    // ─── [FORENSIC TRACE] Sales checkout ────────────────────────────────────
+    console.log('[FORENSIC][SALES_CHECKOUT] Updating order status to paid', {
+      orderId: normalizedOrderId,
+      newStatus: 'paid',
+      tenantId,
+      timestamp: new Date().toISOString(),
+      source: 'POST /sales (Supabase cloud path)',
+      saleId: saleData.id
+    });
     const { error: updateErr } = await supabase
       .from('orders')
       .update({ status: 'paid', updated_at: new Date().toISOString() })
@@ -718,6 +726,14 @@ router.post('/checkout', requirePermission('PROCESS_PAYMENTS'), async (req: any,
           console.warn('[Sales] Failed to queue partial order update for sync:', e);
         }
       } else {
+        // ─── [FORENSIC TRACE] Sales checkout (SQLite path) ─────────────────
+        console.log('[FORENSIC][SALES_CHECKOUT] Updating order status to paid (SQLite)', {
+          orderId: normalizedOrderId,
+          newStatus: 'paid',
+          tenantId,
+          timestamp: new Date().toISOString(),
+          source: 'POST /sales (SQLite local path)'
+        });
         db.prepare("UPDATE orders SET status = 'paid', updated_at = CURRENT_TIMESTAMP WHERE id = ? AND tenant_id = ?").run(normalizedOrderId, tenantId);
         
         // Queue sync

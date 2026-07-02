@@ -689,6 +689,14 @@ const PublicMenuPage = () => {
       }
       if (!coData?.orderId) throw new Error(coData?.error || 'Échec création commande');
       const createdOrderId = Number(coData.orderId);
+      // ─── [FORENSIC TRACE] Frontend checkout response ─────────────────────
+      console.log('[FORENSIC][FRONTEND_CHECKOUT] Response received', {
+        rawOrderId: coData.orderId,
+        parsedOrderId: createdOrderId,
+        type: typeof coData.orderId,
+        timestamp: new Date().toISOString(),
+        source: 'POST /api/menu/checkout response'
+      });
       if (coData.customerPhone) {
         setCustomerPhone(coData.customerPhone);
         persistCustomer(coData.customerPhone, pin);
@@ -697,6 +705,13 @@ const PublicMenuPage = () => {
       setValidationPinInput('');
       setPinAttempts(0);
       const msg = `${t('qrMenu.orderNumber', { num: createdOrderId })} ${t('qrMenu.statusPending')}`;
+      // ─── [FORENSIC TRACE] Frontend state update ──────────────────────────
+      console.log('[FORENSIC][FRONTEND_STATE] Setting pendingOrderId', {
+        orderId: createdOrderId,
+        previousPendingOrderId: pendingOrderId,
+        previousActiveOrderId: activeOrderId,
+        timestamp: new Date().toISOString()
+      });
       setPendingOrderId(createdOrderId);
       setBannerDismissed(false);
       const itemCount = Array.isArray(localOrderData?.items)
@@ -871,6 +886,13 @@ const PublicMenuPage = () => {
 
     const fetchStatus = async () => {
       try {
+        // ─── [FORENSIC TRACE] Frontend polling request ─────────────────────
+        console.log('[FORENSIC][FRONTEND_POLL] Fetching order status', {
+          orderId: pendingOrderId,
+          token: token?.substring(0, 8) + '...',
+          url: apiUrl(`/api/menu/order-status/${token}/${pendingOrderId}`),
+          timestamp: new Date().toISOString()
+        });
         // Use the public menu endpoint that reads directly from Supabase for real-time customer visibility
       // Must include both qr_token and orderId for tenant isolation
       const res = await fetch(apiUrl(`/api/menu/order-status/${token}/${pendingOrderId}`));
@@ -892,11 +914,25 @@ const PublicMenuPage = () => {
         const st = data?.status;
         if (!st) return;
 
+        // ─── [FORENSIC TRACE] Frontend poll response ───────────────────────
+        console.log('[FORENSIC][FRONTEND_POLL] Status received', {
+          orderId: pendingOrderId,
+          status: st,
+          dataId: data?.id,
+          dataStatus: data?.status,
+          timestamp: new Date().toISOString()
+        });
+
         setPendingOrderStatus(st);
         setPendingOrderMessage(buildStatusMessage(st));
 
         // NEW: Trigger countdown when staff confirms the order
         if (st === 'confirmed' && !showCountdown) {
+          console.log('[FORENSIC][FRONTEND_COUNTDOWN] Starting countdown', {
+            orderId: pendingOrderId,
+            status: st,
+            timestamp: new Date().toISOString()
+          });
           setShowCountdown(true);
           setCountdownSeconds(600); // 10 minutes
         }

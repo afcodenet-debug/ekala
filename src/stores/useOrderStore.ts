@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { api } from '../lib/api-client';
 import { withOutboxTransaction } from '../sync/with-outbox-transaction';
 import { useAuthStore } from './useAuthStore';
+import { networkErrorHandler } from '../lib/network-error-handler';
 // Note: real outbox queuing for offline happens in Electron main process via IPC.
 // Renderer calls here are best-effort / will be wired when local DB writes move to main.
 
@@ -104,7 +105,14 @@ export const useOrderStore = create<OrderStore>((set, get) => ({
         params.role = role;
       }
       if (!silent) console.log('[OrderStore] Fetching active orders...');
-      const orders = await api.orders.getAll(params);
+      
+      // Use network error handler with retry
+      const orders = await networkErrorHandler.executeWithRetry(
+        () => api.orders.getAll(params),
+        'fetch_active_orders',
+        'Fetch active orders'
+      );
+      
       set({ activeOrders: Array.isArray(orders) ? orders : [] });
     } catch (err) {
       // Silently fail if not authenticated (token expired)
@@ -136,7 +144,13 @@ export const useOrderStore = create<OrderStore>((set, get) => ({
       if (filters.search) params.search = filters.search;
 
       if (!silent) console.log('[OrderStore] Fetching orders with params:', params);
-      const response: any = await api.orders.getAllOrders(params);
+      
+      // Use network error handler with retry
+      const response: any = await networkErrorHandler.executeWithRetry(
+        () => api.orders.getAllOrders(params),
+        'fetch_all_orders',
+        'Fetch all orders'
+      );
 
       if (response && typeof response === 'object' && Array.isArray(response.orders)) {
         if (!silent) console.log('[OrderStore] Received orders:', response.orders.length);

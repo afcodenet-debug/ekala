@@ -300,5 +300,29 @@
   },
   "products": {
     "showArchived": "Show archived"
+  },
+  "countdown": {
+    "pending": "Waiting for confirmation",
+    "confirmed": "Order confirmed",
+    "preparing": "Being prepared",
+    "ready": "Your order is ready!",
+    "served": "Order served",
+    "paid": "Thank you for your order!",
+    "cancelled": "Order cancelled",
+    "expired": "Estimated time has elapsed",
+    "estimatedTime": "Estimated time: {minutes} min",
+    "remainingTime": "Remaining: {minutes} min {seconds} sec",
+    "readySince": "Ready for {minutes} min",
+    "notifications": {
+      "confirmed": "Your order has been confirmed",
+      "ready": "Your order is ready!",
+      "cancelled": "Your order has been cancelled",
+      "expired": "Your order is taking longer than expected"
+    },
+    "aria": {
+      "countdown": "Time remaining: {minutes} minutes {seconds} seconds",
+      "status": "Status: {status}",
+      "progress": "Progress: {progress}%"
+    }
   }
 }

@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { api } from '../lib/api-client';
+import { networkErrorHandler } from '../lib/network-error-handler';
 
 export interface NotificationCategory {
   value: string;
@@ -156,7 +157,12 @@ export const useNotificationStore = create<NotificationStore>((set, get) => ({
       if (filters.limit) params.append('limit', String(filters.limit));
       if (filters.offset) params.append('offset', String(filters.offset));
 
-      const response: any = await api.get(`/notifications?${params}`);
+      // Use network error handler with retry
+      const response: any = await networkErrorHandler.executeWithRetry(
+        () => api.get(`/notifications?${params}`),
+        'load_notifications',
+        'Load notifications'
+      );
 
       const notifications = response.data?.data || response.data || [];
       const total = response.data?.total || notifications.length;
@@ -203,9 +209,14 @@ export const useNotificationStore = create<NotificationStore>((set, get) => ({
     }
     
     try {
-      const response: any = await api.get('/notifications/unread-count', {
-        params: { tenant_id: tenantId, user_id: userId },
-      });
+      // Use network error handler with retry
+      const response: any = await networkErrorHandler.executeWithRetry(
+        () => api.get('/notifications/unread-count', {
+          params: { tenant_id: tenantId, user_id: userId },
+        }),
+        'sync_unread_count',
+        'Sync unread count'
+      );
       const count = response.data?.data?.count || 0;
       set({ unreadCount: count });
     } catch (error: any) {

@@ -238,6 +238,15 @@ function buildLocalFields(table: string, row: Record<string, any>, local: any): 
     fields[column] = row[column];
   }
 
+  // Protect locally-modified order status from being overwritten by remote sync.
+  if (table === 'orders' && local) {
+    const localStatus = local.status;
+    const remoteStatus = row.status;
+    if (localStatus && localStatus !== 'pending') {
+      fields.status = localStatus;
+    }
+  }
+
   if (table === 'settings') {
     fields.key = row.key;
     fields.value = row.value;

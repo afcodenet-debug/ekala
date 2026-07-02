@@ -225,5 +225,29 @@
   },
   "products": {
     "showArchived": "Mostrar arquivados"
+  },
+  "countdown": {
+    "pending": "Aguardando confirmação",
+    "confirmed": "Pedido confirmado",
+    "preparing": "Em preparação",
+    "ready": "Seu pedido está pronto!",
+    "served": "Pedido servido",
+    "paid": "Obrigado pelo seu pedido!",
+    "cancelled": "Pedido cancelado",
+    "expired": "O tempo estimado foi excedido",
+    "estimatedTime": "Tempo estimado: {minutes} min",
+    "remainingTime": "Restante: {minutes} min {seconds} seg",
+    "readySince": "Pronto há {minutes} min",
+    "notifications": {
+      "confirmed": "Seu pedido foi confirmado",
+      "ready": "Seu pedido está pronto!",
+      "cancelled": "Seu pedido foi cancelado",
+      "expired": "Seu pedido está demorando mais que o esperado"
+    },
+    "aria": {
+      "countdown": "Tempo restante: {minutes} minutos {seconds} segundos",
+      "status": "Status: {status}",
+      "progress": "Progresso: {progress}%"
+    }
   }
 }

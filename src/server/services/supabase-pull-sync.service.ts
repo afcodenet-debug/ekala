@@ -191,8 +191,12 @@ async function pullOrders(supabase: SupabaseClient, since: string, tenantId: num
     }
 
     if (existing) {
+      const localStatus = (existing as any).status;
+      const remoteStatus = o.status;
+      const statusToWrite = (localStatus && localStatus !== 'pending') ? localStatus : remoteStatus;
+
       db.prepare(`UPDATE orders SET status=?, total=?, items=?, source=?, table_id=?, waiter_id=?, updated_at=? WHERE id=?`)
-        .run(o.status, o.total, JSON.stringify(transformedItems), o.source || 'qr', tableId, waiterId, o.updated_at, existing.id);
+        .run(statusToWrite, o.total, JSON.stringify(transformedItems), o.source || 'qr', tableId, waiterId, o.updated_at, existing.id);
     } else {
       db.prepare(`INSERT INTO orders (remote_id, source, table_id, waiter_id, status, total, items, created_at, updated_at, tenant_id) VALUES (?,?,?,?,?,?,?,?,?,?)`)
         .run(o.id, o.source || 'qr', tableId, waiterId, o.status, o.total, JSON.stringify(transformedItems), o.created_at, o.updated_at, tenantId);

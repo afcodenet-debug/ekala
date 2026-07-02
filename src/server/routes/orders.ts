@@ -180,6 +180,25 @@ router.patch('/:id/status', requirePermission('UPDATE_ORDER_STATUS'), async (req
   const { status } = req.body;
   const { id } = req.params;
 
+  // ─── [FORENSIC TRACE] PATCH /orders/:id/status ──────────────────────────
+  const oldStatus = (() => {
+    try {
+      const { db } = require('../db/database');
+      const row = db.prepare('SELECT status FROM orders WHERE id = ?').get(Number(id)) as any;
+      return row?.status || 'unknown';
+    } catch { return 'unknown'; }
+  })();
+  const stack = new Error().stack?.split('\n').slice(2, 6).join(' | ') || 'no stack';
+  console.log('[FORENSIC][PATCH_STATUS]', {
+    orderId: Number(id),
+    oldStatus,
+    newStatus: status,
+    user: (req as any).user?.id || 'unknown',
+    role: (req as any).user?.role || 'unknown',
+    timestamp: new Date().toISOString(),
+    stack
+  });
+
   try {
     const updatedOrder = await OrderService.updateStatus(Number(id), status);
     res.json(updatedOrder);
