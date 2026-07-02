@@ -189,13 +189,13 @@ const PlanCard = ({ plan, current, recommended, onSelect }: { plan: Plan; curren
 
       <ul style={{ listStyle: "none", padding: 0, margin: "12px 0" }}>
         <li style={{ display: "flex", alignItems: "center", gap: 8, padding: "4px 0", fontSize: 11.5, color: "rgba(255,255,255,0.6)" }}>
-          <Check size={12} color="#10b981" /> {t('billing.subscriptionPremium.planCard.users', { count: plan.max_users })}
+          <Check size={12} color="#10b981" /> {t('billing.subscriptionPremium.planCard.users').replace('{count}', String(plan.max_users || 0))}
         </li>
         <li style={{ display: "flex", alignItems: "center", gap: 8, padding: "4px 0", fontSize: 11.5, color: "rgba(255,255,255,0.6)" }}>
-          <Check size={12} color="#10b981" /> {t('billing.subscriptionPremium.planCard.branches', { count: plan.max_branches })}
+          <Check size={12} color="#10b981" /> {t('billing.subscriptionPremium.planCard.branches').replace('{count}', String(plan.max_branches || 0))}
         </li>
         <li style={{ display: "flex", alignItems: "center", gap: 8, padding: "4px 0", fontSize: 11.5, color: "rgba(255,255,255,0.6)" }}>
-          <Check size={12} color="#10b981" /> {t('billing.subscriptionPremium.planCard.products', { count: plan.max_products })}
+          <Check size={12} color="#10b981" /> {t('billing.subscriptionPremium.planCard.products').replace('{count}', String(plan.max_products || 0))}
         </li>
         {featureList.slice(0, 3).map((f, i) => (
           <li key={i} style={{ display: "flex", alignItems: "center", gap: 8, padding: "4px 0", fontSize: 11.5, color: "rgba(255,255,255,0.6)" }}>
