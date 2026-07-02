@@ -1699,3 +1699,41 @@ const PublicMenuPage = () => {
 };
 
 export default PublicMenuPage;
+
+
+
+
+
+// Ok ! Sans commencer à coder je veux que tu analyses ces erreurs que je vois dans les logs de la console navigateur `[OrderStore] Fetching orders with params: 
+// Object { waiter_id: 31, role: "admin" }
+// index-CxzYg_qw.js:48:4703
+// [OrderStore] Fetching orders with params: 
+// Object { waiter_id: 31, role: "admin" }
+// index-CxzYg_qw.js:48:4703
+// Failed to fetch all orders: TypeError: NetworkError when attempting to fetch resource. <anonymous code>:1:147461
+// Failed to fetch all orders: TypeError: NetworkError when attempting to fetch resource. <anonymous code>:1:147461
+// [NotificationStore] loadFromServer failed: TypeError: NetworkError when attempting to fetch resource. <anonymous code>:1:147461
+// [NotificationStore] syncUnreadCount failed: TypeError: NetworkError when attempting to fetch resource. <anonymous code>:1:147461
+// Failed to fetch all orders: TypeError: NetworkError when attempting to fetch resource. <anonymous code>:1:147461
+// [NotificationStore] syncUnreadCount failed: TypeError: NetworkError when attempting to fetch resource. <anonymous code>:1:147461
+// Failed to fetch all orders: TypeError: NetworkError when attempting to fetch resource. <anonymous code>:1:147461
+// Failed to fetch all orders: TypeError: NetworkError when attempting to fetch resource. <anonymous code>:1:147461
+// [NotificationStore] syncUnreadCount failed: TypeError: NetworkError when attempting to fetch resource. <anonymous code>:1:147461
+// [NotificationStore] loadFromServer failed: TypeError: NetworkError when attempting to fetch resource. <anonymous code>:1:147461
+// [NotificationStore] syncUnreadCount failed: TypeError: NetworkError when attempting to fetch resource. <anonymous code>:1:147461
+// [OrderStore] Fetching orders with params: 
+// Object { waiter_id: 31, role: "admin" }
+// index-CxzYg_qw.js:48:4703
+// [AuthStore] Token expired — logging out chunk-BKn8HXpi.js:1:1700
+// [AuthStore] Logging out chunk-BKn8HXpi.js:1:1217
+// [NotificationStore] loadFromServer failed: Error: Token expiré ou invalide. Veuillez vous reconnecter.
+//     r https://ekala.vercel.app/assets/js/chunk-DCoLzTQD.js:1
+// <anonymous code>:1:147461
+// Failed to fetch all orders: TypeError: NetworkError when attempting to fetch resource. <anonymous code>:1:147461
+// TypeError: error loading dynamically imported module: https://ekala.vercel.app/assets/js/LoginPage-C8ZBHodK.js <anonymous code>:1:147461
+// Application Error: TypeError: error loading dynamically imported module: https://ekala.vercel.app/assets/js/LoginPage-C8ZBHodK.js 
+// Object { componentStack: "\nLazy@unknown:0:0\nSuspense@unknown:0:0\nIy@https://ekala.vercel.app/assets/js/chunk-BSg5mHQJ.js:11:3156\npv@https://ekala.vercel.app/assets/js/chunk-BSg5mHQJ.js:11:8036\naa@https://ekala.vercel.app/assets/js/index-CxzYg_qw.js:8:46404\nii@https://ekala.vercel.app/assets/js/chunk-CdKPqucE.js:1:35993\nIt@https://ekala.vercel.app/assets/js/index-CxzYg_qw.js:541:9275\nLa@https://ekala.vercel.app/assets/js/index-CxzYg_qw.js:860:3804\nLm@https://ekala.vercel.app/assets/js/chunk-BSg5mHQJ.js:11:7143\nbv@https://ekala.vercel.app/assets/js/chunk-BSg5mHQJ.js:23:1115" }
+// <anonymous code>:1:147461
+// ` et proposes moi une solution professionnelle, parce que dans le UI lorsque le token est expiré, il y a une notification modal avec ce message `Something went wrong
+
+// The application encountered an unexpected error. This has been logged for review.` ceci n'est pas du tout propore et professionnel en production.. donnes moi d'abord tes propositions et je vais décider selon ta réponse. 

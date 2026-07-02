@@ -1,11 +1,12 @@
 import { create } from 'zustand';
 import { api } from '../lib/api-client';
 import { withOutboxTransaction } from '../sync/with-outbox-transaction';
+import { useAuthStore } from './useAuthStore';
 // Note: real outbox queuing for offline happens in Electron main process via IPC.
 // Renderer calls here are best-effort / will be wired when local DB writes move to main.
 
 export interface OrderItem {
-  productId: number;
+  product_id: number;
   name: string;
   price: number;
   quantity: number;
@@ -22,7 +23,7 @@ export interface Order {
   table_number?: string;
   waiter_name?: string;
   waiter_role?: string;
-  payment_status?: 'pending' | 'completed';
+  payment_status?: 'unpaid' | 'paid' | 'refunded';
   payment_method?: string;
   items_count?: number;
   duration_minutes?: number;
@@ -88,6 +89,12 @@ export const useOrderStore = create<OrderStore>((set, get) => ({
 
   fetchActiveOrders: async (silent = false) => {
     const { userId, role } = get();
+    
+    // Guard: don't fetch if not authenticated
+    if (!useAuthStore.getState().isAuthenticated) {
+      return;
+    }
+    
     try {
       const params: Record<string, string | number> = {};
       if (userId && role) {
@@ -98,6 +105,10 @@ export const useOrderStore = create<OrderStore>((set, get) => ({
       const orders = await api.orders.getAll(params);
       set({ activeOrders: Array.isArray(orders) ? orders : [] });
     } catch (err) {
+      // Silently fail if not authenticated (token expired)
+      if ((err as any)?.status === 401) {
+        return;
+      }
       console.error('Failed to fetch active orders', err);
       set({ activeOrders: [] });
     }
@@ -298,7 +309,18 @@ useOrderStore.subscribe((state) => {
           ? `Table ${order.table_number || order.table_id} : Nouvelle commande client en attente`
           : `Table ${order.table_number || order.table_id} : Commande créée par le personnel`,
         priority: 'high',
-        link: '/orders',
+        severity: 'info',
+        category: 'orders',
+        tenant_id: 'default',
+        user_id: 'all',
+        status: 'unread',
+        read: false,
+        dismissed: false,
+        actionable: true,
+        toast: true,
+        badge: true,
+        banner: false,
+        center: true,
         metadata: { 
           orderId: order.id,
           tableId: order.table_id,

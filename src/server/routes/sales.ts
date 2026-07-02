@@ -9,6 +9,82 @@ import { dataSource } from '../infrastructure/data-source-manager';
 
 const router = express.Router();
 
+// Get receipt data for a sale
+router.get('/receipt/:saleId', async (req: any, res) => {
+  const tenantId = req.tenant_id;
+  if (!tenantId) {
+    return res.status(401).json({ error: 'TENANT_REQUIRED', message: 'tenant_id requis' });
+  }
+
+  try {
+    const saleId = parseInt(req.params.saleId);
+    if (isNaN(saleId)) {
+      return res.status(400).json({ error: 'Invalid sale ID' });
+    }
+
+    // Fetch sale with items
+    const sale = db.prepare(`
+      SELECT s.*, u.full_name as user_name
+      FROM sales s
+      LEFT JOIN users u ON s.user_id = u.id
+      WHERE s.id = ? AND s.tenant_id = ?
+    `).get(saleId, tenantId) as any;
+
+    if (!sale) {
+      return res.status(404).json({ error: 'Sale not found' });
+    }
+
+    // Fetch sale items
+    const items = db.prepare(`
+      SELECT si.quantity, si.unit_price, si.total_price, p.name
+      FROM sale_items si
+      LEFT JOIN products p ON si.product_id = p.id
+      WHERE si.sale_id = ? AND si.tenant_id = ?
+    `).all(saleId, tenantId) as any[];
+
+    // Get business info (you can customize this)
+    const business = {
+      name: 'Ekala Restaurant',
+      address: '123 Main Street',
+      phone: '+1 234 567 8900'
+    };
+
+    // Format receipt data
+    const receiptData = {
+      business,
+      invoice: {
+        number: sale.invoice_number,
+        date: sale.created_at,
+        table: sale.table_number || 'N/A',
+        waiter: sale.waiter_name || 'N/A',
+        cashier: sale.user_name || 'N/A'
+      },
+      items: items.map(item => ({
+        name: item.name || 'Unknown Item',
+        quantity: item.quantity,
+        unitPrice: item.unit_price,
+        totalPrice: item.total_price
+      })),
+      totals: {
+        subtotal: sale.subtotal || 0,
+        discount: sale.discount || 0,
+        tax: sale.tax || 0,
+        total: sale.total_amount || 0
+      },
+      payment: {
+        method: sale.payment_method || 'cash',
+        amount: sale.total_amount || 0
+      },
+      footer: 'Thank you for your business!'
+    };
+
+    res.json(receiptData);
+  } catch (error: any) {
+    console.error('Failed to generate receipt:', error);
+    res.status(500).json({ error: 'Failed to generate receipt', details: error.message });
+  }
+});
+
 // Get all sales for reports and history
 router.get('/', async (req: any, res) => {
   const tenantId = req.tenant_id;

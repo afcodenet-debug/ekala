@@ -161,7 +161,7 @@ export const GlobalNotificationToast: React.FC = () => {
 
   useEffect(() => {
     const candidate = notifications.find(
-      (n) => !n.readAt && !dismissedIds.has(n.id) && ['critical', 'high'].includes(n.priority)
+      (n) => !n.read_at && !dismissedIds.has(n.id) && ['critical', 'high'].includes(n.priority)
     );
     if (candidate && candidate.id !== lastShownIdRef.current) {
       setVisibleToast(candidate);

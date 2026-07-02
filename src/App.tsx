@@ -13,6 +13,7 @@ import { Menu } from 'lucide-react';
 import { SubscriptionBanner } from './components/SubscriptionBanner';
 import { GlobalNotificationToast } from './components/GlobalNotificationToast';
 import { NotificationProvider } from './components/NotificationProvider';
+import { ReconnectModal } from './components/ReconnectModal';
 
 // Lazy load all pages for code splitting
 const LoginPage = lazy(() => import('./pages/auth/LoginPage'));
@@ -124,6 +125,7 @@ function App() {
       <SubscriptionBanner />
       <QueryClientProvider client={queryClient}>
         <I18nProvider lang={language}>
+          <ReconnectModal />
           <Routes>
             <Route path="/login" element={
               <Suspense fallback={<PageLoader />}>

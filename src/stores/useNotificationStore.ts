@@ -18,7 +18,7 @@ export interface AppNotification {
   category: string;
   priority: 'critical' | 'high' | 'medium' | 'low';
   severity: 'error' | 'warning' | 'info' | 'success';
-  type: 'alert' | 'info' | 'reminder' | 'update';
+  type: 'alert' | 'info' | 'reminder' | 'update' | 'newQrOrder' | 'orderAssigned';
   status: string;
   read: boolean;
   dismissed: boolean;
@@ -27,6 +27,7 @@ export interface AppNotification {
   badge: boolean;
   banner: boolean;
   center: boolean;
+  link?: string;
   payload?: Record<string, any>;
   metadata?: Record<string, any>;
   created_at: string;
@@ -88,13 +89,6 @@ export const useNotificationStore = create<NotificationStore>((set, get) => ({
     const notif: AppNotification = {
       id: `local_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`,
       created_at: new Date().toISOString(),
-      tenant_id: payload.tenant_id,
-      user_id: payload.user_id,
-      read: false,
-      dismissed: false,
-      toast: true,
-      badge: true,
-      center: true,
       ...payload,
     };
     set((state) => {
@@ -153,7 +147,7 @@ export const useNotificationStore = create<NotificationStore>((set, get) => ({
       if (filters.limit) params.append('limit', String(filters.limit));
       if (filters.offset) params.append('offset', String(filters.offset));
 
-      const response = await api.get(`/notifications?${params}`);
+      const response: any = await api.get(`/notifications?${params}`);
 
       const notifications = response.data?.data || response.data || [];
       const total = response.data?.total || notifications.length;
@@ -173,7 +167,7 @@ export const useNotificationStore = create<NotificationStore>((set, get) => ({
 
   createOnServer: async (tenantId: string, userId: string, data: any) => {
     try {
-      const response = await api.post('/notifications', {
+      const response: any = await api.post('/notifications', {
         tenant_id: tenantId,
         user_id: userId,
         ...data,
@@ -193,7 +187,7 @@ export const useNotificationStore = create<NotificationStore>((set, get) => ({
 
   syncUnreadCount: async (tenantId: string, userId: string) => {
     try {
-      const response = await api.get('/notifications/unread-count', {
+      const response: any = await api.get('/notifications/unread-count', {
         params: { tenant_id: tenantId, user_id: userId },
       });
       const count = response.data?.data?.count || 0;

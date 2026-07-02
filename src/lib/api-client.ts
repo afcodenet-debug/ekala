@@ -275,8 +275,17 @@ export async function request<T>(
       // Match both /auth/login/pin and /auth/login/email
       if (!endpoint.match(/^\/auth\/login(\/|$)/)) {
         clearAuthToken();
-        // Dispatch a custom event so the auth store can react
-        window.dispatchEvent(new CustomEvent('auth:token-expired'));
+        
+        // Debounce: prevent multiple rapid 401s from spamming the event
+        const eventName = 'auth:token-expired';
+        const now = Date.now();
+        const lastEmission = (window as any).__lastTokenExpiredEmission || 0;
+        
+        // Only emit if we haven't emitted in the last 2 seconds
+        if (now - lastEmission > 2000) {
+          (window as any).__lastTokenExpiredEmission = now;
+          window.dispatchEvent(new CustomEvent(eventName));
+        }
       }
 
       const apiError = new Error(errorJson?.message || 'Session expirée. Veuillez vous reconnecter.');

@@ -124,7 +124,7 @@ export const FloorTableCard: React.FC<TableCardProps> = ({
         <span 
           className="mono" 
           style={{ 
-            fontSize: '52px', 
+            fontSize: '28px', 
             fontWeight: 700, 
             letterSpacing: '-0.06em',
             color: table.status === 'active' ? 'var(--gold)' : 'var(--text-1)',

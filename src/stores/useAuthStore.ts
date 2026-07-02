@@ -143,6 +143,11 @@ if (typeof window !== 'undefined') {
   window.addEventListener('auth:token-expired', () => {
     console.log('[AuthStore] Token expired — logging out');
     useAuthStore.getState().logout();
-    window.location.href = '/login';
+    
+    // Show reconnect modal instead of immediate redirect
+    // This allows for a graceful UX with the modal
+    setTimeout(() => {
+      window.dispatchEvent(new CustomEvent('auth:show-reconnect-modal'));
+    }, 100);
   });
 }

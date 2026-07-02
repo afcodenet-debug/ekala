@@ -63,8 +63,7 @@ export class TableService {
         const { supabaseQuery } = require('../infrastructure/supabase-query');
         let query = supabaseQuery('restaurant_tables')
           .select('*')
-          .eq('tenant_id', resolvedTenantId)
-          .order('table_number', { ascending: true });
+          .eq('tenant_id', resolvedTenantId);
 
         if (params?.role === 'waiter' && params.waiter_id) {
           query = query.eq('assigned_waiter_id', params.waiter_id);
@@ -72,9 +71,36 @@ export class TableService {
 
         const { data, error } = await query;
         if (error) throw new Error(error.message);
-        return (data || []).map((t: any) => ({
+
+        const tables = (data || []) as any[];
+
+        // Récupérer les noms des waiters pour les tables qui ont un assigned_waiter_id
+        const waiterIds = tables
+          .map(t => t.assigned_waiter_id)
+          .filter((id: any) => id !== null && id !== undefined);
+
+        let waiterMap: Record<number, string> = {};
+        if (waiterIds.length > 0) {
+          try {
+            const { data: users } = await supabaseQuery('users')
+              .select('id, full_name, username')
+              .in('id', waiterIds)
+              .eq('tenant_id', resolvedTenantId);
+
+            if (users) {
+              for (const u of users) {
+                waiterMap[u.id] = u.full_name || u.username || '';
+              }
+            }
+          } catch (waiterErr) {
+            console.warn('[TableService] Failed to fetch waiter names:', waiterErr);
+          }
+        }
+
+        return tables.map((t: any) => ({
           ...t,
           status: remoteToLocalStatus(t.status),
+          waiter_name: t.assigned_waiter_id ? (waiterMap[t.assigned_waiter_id] || null) : null,
         })) as Table[];
       } catch (err: any) {
         console.error('[TableService] Supabase getAll failed:', err?.message || err);
