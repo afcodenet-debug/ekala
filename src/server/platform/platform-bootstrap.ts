@@ -9,13 +9,21 @@
 
 import * as bcrypt from 'bcryptjs';
 import { db } from '../db/database';
+import { dataSource } from '../infrastructure/data-source-manager';
 
 const DEFAULT_ADMIN_EMAIL = 'admin@ekala.africa';
 const DEFAULT_ADMIN_PASSWORD = 'AdminEkala2026!'; // Mot de passe par défaut sécurisé
 
 export async function bootstrapPlatform(): Promise<void> {
+  // Skip entirely in cloud mode - no SQLite available
+  if (dataSource.isCloudMode()) {
+    console.log('[PlatformBootstrap] Cloud mode detected - skipping SQLite bootstrap.');
+    return;
+  }
+
+  // Also check if db is actually null (defensive)
   if (!db) {
-    console.warn('[PlatformBootstrap] DB unavailable, skipping.');
+    console.warn('[PlatformBootstrap] DB unavailable (db is null), skipping.');
     return;
   }
 
