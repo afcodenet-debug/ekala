@@ -1078,6 +1078,14 @@ const T = {
         expiresAt: d('Expires on', 'Expire le', 'Expira em'),
         close: d('Close', 'Fermer', 'Fechar'),
       },
+      planNames: {
+        freeTrial: d('Free Trial', 'Essai Gratuit', 'Teste Grátis'),
+        starterWeekly: d('Starter Weekly', 'Starter Hebdo', 'Starter Semanal'),
+        starterMonthly: d('Starter Monthly', 'Starter Mensuel', 'Starter Mensal'),
+        growth: d('Growth', 'Pour les restaurants en croissance', 'Para restaurantes em crescimento'),
+        idealForTesting: d('Ideal for testing', 'Idéal pour tester ou petits établissements', 'Ideal para testes ou pequenos estabelecimentos'),
+        trialDescription: d('7 days to test all features', '7 jours pour tester toutes les fonctionnalités', '7 dias para testar todas as funcionalidades'),
+      },
     },
   },
 

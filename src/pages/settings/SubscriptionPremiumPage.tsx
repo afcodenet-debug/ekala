@@ -142,8 +142,29 @@ const PlanCard = ({ plan, current, recommended, onSelect }: { plan: Plan; curren
         </div>
       )}
 
-      <div style={{ fontSize: 15, fontWeight: 700, color: "#eeeef5", marginBottom: 4 }}>{plan.name}</div>
-                <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", marginBottom: 12 }}>{plan.description}</div>
+      <div style={{ fontSize: 15, fontWeight: 700, color: "#eeeef5", marginBottom: 4 }}>
+        {(() => {
+          const nameMap: Record<string, string> = {
+            'Free Trial': t('billing.subscriptionPremium.planNames.freeTrial'),
+            'Starter Weekly': t('billing.subscriptionPremium.planNames.starterWeekly'),
+            'Starter Monthly': t('billing.subscriptionPremium.planNames.starterMonthly'),
+            'Growth': t('billing.subscriptionPremium.planNames.growth'),
+          };
+          return nameMap[plan.name] || plan.name;
+        })()}
+      </div>
+      <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", marginBottom: 12 }}>
+        {(() => {
+          const descMap: Record<string, string> = {
+            '7 days to test all features': t('billing.subscriptionPremium.planNames.trialDescription'),
+            'Ideal for testing or small establishments': t('billing.subscriptionPremium.planNames.idealForTesting'),
+            'For growing restaurants': t('billing.subscriptionPremium.planNames.growth'),
+            'Idéal pour tester ou petits établissements': t('billing.subscriptionPremium.planNames.idealForTesting'),
+            'Pour les restaurants en croissance': t('billing.subscriptionPremium.planNames.growth'),
+          };
+          return descMap[plan.description] || plan.description;
+        })()}
+      </div>
 
       <div style={{ fontSize: 24, fontWeight: 800, color: "#eeeef5" }}>
         {plan.currency} {(plan.price_cents / 100).toLocaleString('en', { minimumFractionDigits: 2 })}
