@@ -438,7 +438,7 @@ const PublicMenuPage = () => {
 
   // ─── Order confirmation countdown state ──────────────────────────────────
   const [showCountdown, setShowCountdown] = useState(false);
-  const [countdownSeconds, setCountdownSeconds] = useState(5);
+  const [countdownSeconds, setCountdownSeconds] = useState(600); // 10 minutes
 
   const [pendingOrderId, setPendingOrderId]       = useState<number | null>(null);
   const [activeOrderId, setActiveOrderId]         = useState<number | null>(null);
@@ -697,9 +697,9 @@ const PublicMenuPage = () => {
       setCart({});
       showToast('success', t('qrMenu.orderSent'));
 
-      // ─── Trigger confirmation countdown ──────────────────────────────────
+      // ─── Trigger 10-minute confirmation countdown ──────────────────────
       setShowCountdown(true);
-      setCountdownSeconds(5);
+      setCountdownSeconds(600); // 10 minutes
     } catch (e: any) {
       showToast('error', e?.message || 'Erreur lors de la validation');
     } finally {
@@ -1036,15 +1036,15 @@ const PublicMenuPage = () => {
               gap: 16, animation: 'toast-in 0.25s ease-out',
             }}>
               <div style={{
-                width: 96, height: 96, borderRadius: '50%',
+                width: 120, height: 120, borderRadius: '50%',
                 background: T.gold, display: 'flex', alignItems: 'center', justifyContent: 'center',
-                boxShadow: `0 0 0 12px ${T.goldDim}, 0 0 40px rgba(200,168,75,0.25)`,
-                animation: 'qr-spin 2.5s linear infinite',
+                boxShadow: `0 0 0 16px ${T.goldDim}, 0 0 60px rgba(200,168,75,0.35)`,
+                animation: 'qr-spin 3s linear infinite',
               }}>
                 <span style={{
-                  fontFamily: T.serif, fontSize: 38, fontWeight: 700, color: T.bg, lineHeight: 1,
+                  fontFamily: T.mono, fontSize: 42, fontWeight: 700, color: T.bg, lineHeight: 1,
                 }}>
-                  {countdownSeconds}
+                  {Math.floor(countdownSeconds / 60)}:{(countdownSeconds % 60).toString().padStart(2, '0')}
                 </span>
               </div>
               <div style={{
@@ -1439,6 +1439,49 @@ const PublicMenuPage = () => {
                {getCategoryName(cat.name)}
             </button>
           ))}
+        </div>
+      )}
+
+      {/* ─── Product search bar (below categories) ─────────────────────────── */}
+      {searchQuery && (
+        <div style={{ 
+          padding: '12px 16px', 
+          background: T.bg, 
+          borderBottom: `1px solid ${T.goldBorder}`,
+          position: 'sticky',
+          top: 52,
+          zIndex: 55,
+        }}>
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 8,
+            background: T.bg3, border: `1px solid ${T.goldBorder}`, borderRadius: 12,
+            padding: '8px 12px',
+          }}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={T.text3} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+              <circle cx="11" cy="11" r="8" />
+              <line x1="21" y1="21" x2="16.65" y2="16.65" />
+            </svg>
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={e => setSearchQuery(e.target.value)}
+              placeholder={t('qrMenu.searchPlaceholder')}
+              style={{
+                flex: 1, background: 'transparent', border: 'none', outline: 'none',
+                color: T.text, fontSize: 14, fontFamily: T.sans, minWidth: 0,
+              }}
+            />
+            <button
+              onClick={() => setSearchQuery('')}
+              style={{ background: 'none', border: 'none', color: T.text3, cursor: 'pointer', padding: 0, lineHeight: 1, fontSize: 16 }}
+              aria-label={t('qrMenu.clear')}
+            >
+              ×
+            </button>
+          </div>
+          <div style={{ fontSize: 11, color: T.text3, marginTop: 6, letterSpacing: '0.04em' }}>
+            {filteredMenu.reduce((sum, cat) => sum + cat.items.length, 0)} {t('qrMenu.itemsFound', { count: filteredMenu.reduce((sum, cat) => sum + cat.items.length, 0) })}
+          </div>
         </div>
       )}
 
