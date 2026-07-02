@@ -433,6 +433,13 @@ const PublicMenuPage = () => {
   const [orderNotes, setOrderNotes]   = useState('');
   const [showPhoneForm, setShowPhoneForm] = useState(false);
 
+  // ─── Product search state ────────────────────────────────────────────────
+  const [searchQuery, setSearchQuery] = useState('');
+
+  // ─── Order confirmation countdown state ──────────────────────────────────
+  const [showCountdown, setShowCountdown] = useState(false);
+  const [countdownSeconds, setCountdownSeconds] = useState(5);
+
   const [pendingOrderId, setPendingOrderId]       = useState<number | null>(null);
   const [activeOrderId, setActiveOrderId]         = useState<number | null>(null);
   const [pendingOrderMessage, setPendingOrderMessage] = useState<string | null>(null);
@@ -689,12 +696,34 @@ const PublicMenuPage = () => {
       persistLocalOrder(null);
       setCart({});
       showToast('success', t('qrMenu.orderSent'));
+
+      // ─── Trigger confirmation countdown ──────────────────────────────────
+      setShowCountdown(true);
+      setCountdownSeconds(5);
     } catch (e: any) {
       showToast('error', e?.message || 'Erreur lors de la validation');
     } finally {
       setIsValidatingOrder(false);
     }
   };
+
+  // ─── Countdown timer effect ─────────────────────────────────────────────
+  useEffect(() => {
+    if (!showCountdown || countdownSeconds <= 0) {
+      if (countdownSeconds <= 0) setShowCountdown(false);
+      return;
+    }
+    const timer = setInterval(() => {
+      setCountdownSeconds(prev => {
+        if (prev <= 1) {
+          clearInterval(timer);
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [showCountdown, countdownSeconds]);
 
   // ─── Restore on refresh ───────────────────────────────────────────────────
   useEffect(() => {
@@ -953,6 +982,23 @@ const PublicMenuPage = () => {
 
   const showBanner = (pendingOrderMessage || localOrderData || pendingOrderId) && !(pendingOrderId && bannerDismissed);
 
+  // ─── Helper: filter menu items by search query ───────────────────────────
+  const filterMenuBySearch = (categories: MenuCategory[], query: string): MenuCategory[] => {
+    if (!query.trim()) return categories;
+    const lower = query.toLowerCase();
+    return categories
+      .map(cat => ({
+        ...cat,
+        items: cat.items.filter(item =>
+          item.name.toLowerCase().includes(lower) ||
+          (item.description && item.description.toLowerCase().includes(lower))
+        ),
+      }))
+      .filter(cat => cat.items.length > 0);
+  };
+
+  const filteredMenu = filterMenuBySearch(menu, searchQuery);
+
   // ─── Main render ──────────────────────────────────────────────────────────
   return (
     <div style={{ minHeight: '100vh', background: T.bg, color: T.text, fontFamily: T.sans }}>
@@ -981,6 +1027,38 @@ const PublicMenuPage = () => {
           background: 'rgba(6,15,10,0.97)', borderBottom: `1px solid ${T.goldBorder}`,
           padding: '14px 16px', backdropFilter: 'blur(16px)',
         }}>
+          {/* ─── Confirmation countdown overlay ─────────────────────────────── */}
+          {showCountdown && countdownSeconds > 0 && (
+            <div style={{
+              position: 'fixed', inset: 0, zIndex: 9999,
+              background: 'rgba(6,15,10,0.85)', backdropFilter: 'blur(6px)',
+              display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+              gap: 16, animation: 'toast-in 0.25s ease-out',
+            }}>
+              <div style={{
+                width: 96, height: 96, borderRadius: '50%',
+                background: T.gold, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                boxShadow: `0 0 0 12px ${T.goldDim}, 0 0 40px rgba(200,168,75,0.25)`,
+                animation: 'qr-spin 2.5s linear infinite',
+              }}>
+                <span style={{
+                  fontFamily: T.serif, fontSize: 38, fontWeight: 700, color: T.bg, lineHeight: 1,
+                }}>
+                  {countdownSeconds}
+                </span>
+              </div>
+              <div style={{
+                fontFamily: T.serif, fontSize: 22, fontWeight: 600, color: T.text, letterSpacing: '0.04em',
+              }}>
+                {t('qrMenu.orderSent')}
+              </div>
+              <div style={{
+                fontSize: 12, color: T.text2, letterSpacing: '0.08em', textTransform: 'uppercase',
+              }}>
+                {t('qrMenu.statusPending')}
+              </div>
+            </div>
+          )}
           {/* Order ref - clean, no repetition */}
           {pendingOrderId && (
             <div style={{ fontSize: 11, letterSpacing: '0.18em', textTransform: 'uppercase', color: T.gold, fontWeight: 700, marginBottom: 2 }}>
@@ -1238,6 +1316,43 @@ const PublicMenuPage = () => {
         </svg>
 
         <div style={{ position: 'relative', zIndex: 1, padding: '26px 18px 0' }}>
+          {/* ─── Product search bar ─────────────────────────────────────────── */}
+          <div style={{ marginBottom: 14 }}>
+            <div style={{
+              display: 'flex', alignItems: 'center', gap: 8,
+              background: T.bg3, border: `1px solid ${T.goldBorder}`, borderRadius: 12,
+              padding: '8px 12px',
+            }}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={T.text3} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+                <circle cx="11" cy="11" r="8" />
+                <line x1="21" y1="21" x2="16.65" y2="16.65" />
+              </svg>
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={e => setSearchQuery(e.target.value)}
+                placeholder={t('qrMenu.searchPlaceholder')}
+                style={{
+                  flex: 1, background: 'transparent', border: 'none', outline: 'none',
+                  color: T.text, fontSize: 14, fontFamily: T.sans, minWidth: 0,
+                }}
+              />
+              {searchQuery && (
+                <button
+                  onClick={() => setSearchQuery('')}
+                  style={{ background: 'none', border: 'none', color: T.text3, cursor: 'pointer', padding: 0, lineHeight: 1, fontSize: 16 }}
+                  aria-label={t('qrMenu.clear')}
+                >
+                  ×
+                </button>
+              )}
+            </div>
+            {searchQuery && (
+              <div style={{ fontSize: 11, color: T.text3, marginTop: 5, letterSpacing: '0.04em' }}>
+                {filteredMenu.reduce((sum, cat) => sum + cat.items.length, 0)} {t('qrMenu.itemsFound', { count: filteredMenu.reduce((sum, cat) => sum + cat.items.length, 0) })}
+              </div>
+            )}
+          </div>
           {/* Top row */}
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 10, flexWrap: 'wrap', marginBottom: 18 }}>
             {/* Brand */}
@@ -1304,7 +1419,7 @@ const PublicMenuPage = () => {
       </div>
 
       {/* ══ CATEGORY NAV ════════════════════════════════════════════════════ */}
-      {menu.length > 0 && (
+      {filteredMenu.length > 0 && (
          <div className="qr-cat-nav" style={{ 
            display: 'flex', 
            gap: 7, 
@@ -1317,7 +1432,7 @@ const PublicMenuPage = () => {
            zIndex: 60,
            boxShadow: '0 4px 12px rgba(0,0,0,0.3)'
          }}>
-          {menu.map(cat => (
+           {filteredMenu.map(cat => (
             <button key={cat.id} className="qr-cat-btn"
               onClick={() => scrollToCategory(cat.id)}
               style={{ flexShrink: 0, padding: '7px 15px', borderRadius: 20, fontSize: 11, fontWeight: activecat === cat.id ? 700 : 500, letterSpacing: '0.08em', textTransform: 'uppercase', border: `1px solid ${activecat === cat.id ? T.gold : T.goldBorder}`, color: activecat === cat.id ? T.bg : T.text2, background: activecat === cat.id ? T.gold : 'transparent', cursor: 'pointer', fontFamily: T.sans, whiteSpace: 'nowrap', touchAction: 'manipulation' }}>
@@ -1329,13 +1444,13 @@ const PublicMenuPage = () => {
 
       {/* ══ MENU BODY ═══════════════════════════════════════════════════════ */}
       <div style={{ padding: '0 14px 160px' }}>
-        {menu.length === 0 && (
+        {filteredMenu.length === 0 && (
             <p style={{ color: T.text3, padding: '48px 0', textAlign: 'center', fontSize: 14, letterSpacing: '0.05em' }}>
-              {t('qrMenu.noProductsAvailable')}
+              {searchQuery ? t('qrMenu.noProductsFound') : t('qrMenu.noProductsAvailable')}
             </p>
         )}
 
-        {menu.map(category => (
+        {filteredMenu.map(category => (
           <div key={category.id} ref={el => { categoryRefs.current[category.id] = el; }} style={{ marginTop: 30 }}>
             {/* Category heading */}
             <div style={{ display: 'flex', alignItems: 'flex-end', gap: 12, marginBottom: 14, paddingBottom: 10, borderBottom: `1px solid rgba(200,168,75,0.18)` }}>
@@ -1348,8 +1463,8 @@ const PublicMenuPage = () => {
               <div style={{ flex: 1, height: 1, background: 'rgba(200,168,75,0.1)', marginBottom: 5 }} />
             </div>
 
-            {/* Items */}
-            {category.items.map(item => (
+             {/* Items */}
+             {category.items.map((item: MenuItem) => (
               <div key={item.id} className="qr-item-card"
                 style={{ background: T.bg3, border: `1px solid ${T.border}`, borderRadius: 16, padding: 14, marginBottom: 10, opacity: !item.in_stock ? 0.5 : 1 }}>
                 {/* Top: image + name/price */}
@@ -1363,10 +1478,15 @@ const PublicMenuPage = () => {
                     )}
                   </div>
                   {/* Info */}
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 15, fontWeight: 600, color: T.text, lineHeight: 1.3, marginBottom: 5 }}>{item.name}</div>
-                    <div style={{ fontFamily: T.mono, fontSize: 16, fontWeight: 500, color: T.gold2, letterSpacing: '0.03em' }}>{item.price?.toFixed(0)} {item.currency || 'ZMW'}</div>
-                  </div>
+                   <div style={{ flex: 1, minWidth: 0 }}>
+                     <div style={{ fontSize: 15, fontWeight: 600, color: T.text, lineHeight: 1.3, marginBottom: 5 }}>{item.name}</div>
+                     <div style={{ fontFamily: T.mono, fontSize: 16, fontWeight: 500, color: T.gold2, letterSpacing: '0.03em' }}>{item.price?.toFixed(0)} {item.currency || 'ZMW'}</div>
+                     {searchQuery && (
+                       <div style={{ fontSize: 10, color: T.text3, marginTop: 2, letterSpacing: '0.03em' }}>
+                         {getCategoryName(category.name)}
+                       </div>
+                     )}
+                   </div>
                 </div>
 
                 {/* Description */}

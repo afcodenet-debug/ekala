@@ -1196,6 +1196,12 @@ const T = {
     notesPlaceholder: d('Allergies, no onions, etc.', 'Allergies, sans oignons, etc.', 'Alergias, sem cebola, etc.'),
     currency: d('ZMW', 'ZMW', 'ZMW'),
 
+    // Search
+    searchPlaceholder: d('Search products...', 'Rechercher un produit...', 'Pesquisar produtos...'),
+    itemsFound: d('{count} item{plural} found', '{count} article{plural} trouvé{plural}', '{count} item{plural} encontrado{plural}'),
+    noProductsFound: d('No products match your search.', 'Aucun produit ne correspond à votre recherche.', 'Nenhum produto corresponde à sua pesquisa.'),
+
+    // Subscription
     subscription: {
       grace: {
         statusLabel: d('Grace period', 'Période de grâce', 'Período de carência'),
