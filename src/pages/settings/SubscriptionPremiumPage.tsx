@@ -146,11 +146,17 @@ const PlanCard = ({ plan, current, recommended, onSelect }: { plan: Plan; curren
         {(() => {
           const nameMap: Record<string, string> = {
             'Free Trial': t('billing.subscriptionPremium.planNames.freeTrial'),
+            'Essai Gratuit': t('billing.subscriptionPremium.planNames.freeTrial'),
             'Starter Weekly': t('billing.subscriptionPremium.planNames.starterWeekly'),
+            'Starter Hebdo': t('billing.subscriptionPremium.planNames.starterWeekly'),
             'Starter Monthly': t('billing.subscriptionPremium.planNames.starterMonthly'),
+            'Starter Mensuel': t('billing.subscriptionPremium.planNames.starterMonthly'),
             'Starter Annual': t('billing.subscriptionPremium.planNames.starterAnnual'),
+            'Starter Annuel': t('billing.subscriptionPremium.planNames.starterAnnual'),
             'Pro Monthly': t('billing.subscriptionPremium.planNames.proMonthly'),
+            'Pro Mensuel': t('billing.subscriptionPremium.planNames.proMonthly'),
             'Pro Annual': t('billing.subscriptionPremium.planNames.proAnnual'),
+            'Pro Annuel': t('billing.subscriptionPremium.planNames.proAnnual'),
             'Growth': t('billing.subscriptionPremium.planNames.growth'),
           };
           return nameMap[plan.name] || plan.name;
@@ -160,16 +166,17 @@ const PlanCard = ({ plan, current, recommended, onSelect }: { plan: Plan; curren
         {(() => {
           const descMap: Record<string, string> = {
             '7 days to test all features': t('billing.subscriptionPremium.planNames.trialDescription'),
+            '7 jours pour tester toutes les fonctionnalités': t('billing.subscriptionPremium.planNames.trialDescription'),
             'Ideal for testing or small establishments': t('billing.subscriptionPremium.planNames.idealForTesting'),
-            'For growing restaurants': t('billing.subscriptionPremium.planNames.growth'),
-            'For chains and large establishments': t('billing.subscriptionPremium.planNames.forChains'),
-            'Save 2 months': t('billing.subscriptionPremium.planNames.save2Months'),
-            'Save 2 months + priority support': t('billing.subscriptionPremium.planNames.save2MonthsPlusSupport'),
             'Idéal pour tester ou petits établissements': t('billing.subscriptionPremium.planNames.idealForTesting'),
-            'Pour les chaînes et grands établissements': t('billing.subscriptionPremium.planNames.forChains'),
-            'Économisez 2 mois': t('billing.subscriptionPremium.planNames.save2Months'),
-            'Économisez 2 mois + support prioritaire': t('billing.subscriptionPremium.planNames.save2MonthsPlusSupport'),
+            'For growing restaurants': t('billing.subscriptionPremium.planNames.growth'),
             'Pour les restaurants en croissance': t('billing.subscriptionPremium.planNames.growth'),
+            'For chains and large establishments': t('billing.subscriptionPremium.planNames.forChains'),
+            'Pour les chaînes et grands établissements': t('billing.subscriptionPremium.planNames.forChains'),
+            'Save 2 months': t('billing.subscriptionPremium.planNames.save2Months'),
+            'Économisez 2 mois': t('billing.subscriptionPremium.planNames.save2Months'),
+            'Save 2 months + priority support': t('billing.subscriptionPremium.planNames.save2MonthsPlusSupport'),
+            'Économisez 2 mois + support prioritaire': t('billing.subscriptionPremium.planNames.save2MonthsPlusSupport'),
           };
           return descMap[plan.description] || plan.description;
         })()}
