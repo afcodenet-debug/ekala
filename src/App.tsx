@@ -14,6 +14,7 @@ import { SubscriptionBanner } from './components/SubscriptionBanner';
 import { GlobalNotificationToast } from './components/GlobalNotificationToast';
 import { NotificationProvider } from './components/NotificationProvider';
 import { ReconnectModal } from './components/ReconnectModal';
+import { SessionExpiredModal } from './components/SessionExpiredModal';
 
 // Lazy load all pages for code splitting
 const LoginPage = lazy(() => import('./pages/auth/LoginPage'));
@@ -95,6 +96,7 @@ function App() {
   const { isSidebarCollapsed, setSidebarCollapsed, isSidebarOpen, setSidebarOpen } = useUIStore();
   const { isAuthenticated, refreshProfile, user } = useAuthStore();
   const [windowWidth, setWindowWidth] = useState(window.innerWidth);
+  const [showSessionExpiredModal, setShowSessionExpiredModal] = useState(false);
 
   useEffect(() => {
     if (isAuthenticated) {
@@ -106,6 +108,16 @@ function App() {
     const handleResize = () => setWindowWidth(window.innerWidth);
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
+  // Listen for global token expiration event
+  useEffect(() => {
+    const handleTokenExpired = () => {
+      setShowSessionExpiredModal(true);
+    };
+
+    window.addEventListener('auth:token-expired', handleTokenExpired);
+    return () => window.removeEventListener('auth:token-expired', handleTokenExpired);
   }, []);
 
   useEffect(() => {
@@ -126,6 +138,10 @@ function App() {
       <QueryClientProvider client={queryClient}>
         <I18nProvider lang={language}>
           <ReconnectModal />
+          <SessionExpiredModal 
+            isOpen={showSessionExpiredModal} 
+            onClose={() => setShowSessionExpiredModal(false)} 
+          />
           <Routes>
             <Route path="/login" element={
               <Suspense fallback={<PageLoader />}>

@@ -55,6 +55,7 @@ interface OrderStore {
   userId?: number;
   role?: string;
   pendingQrCount: number;
+  _tokenExpired: boolean;
   setUserContext: (userId: number, role: string) => void;
   setFilters: (filters: Partial<OrderStore['filters']>) => void;
   fetchActiveOrders: (silent?: boolean) => Promise<void>;
@@ -80,6 +81,7 @@ export const useOrderStore = create<OrderStore>((set, get) => ({
   userId: undefined,
   role: undefined,
   pendingQrCount: 0,
+  _tokenExpired: false,
 
   setUserContext: (userId, role) => set({ userId, role }),
 
@@ -88,10 +90,10 @@ export const useOrderStore = create<OrderStore>((set, get) => ({
   })),
 
   fetchActiveOrders: async (silent = false) => {
-    const { userId, role } = get();
+    const { userId, role, _tokenExpired } = get();
     
-    // Guard: don't fetch if not authenticated
-    if (!useAuthStore.getState().isAuthenticated) {
+    // Guard: don't fetch if not authenticated or token expired
+    if (!useAuthStore.getState().isAuthenticated || _tokenExpired) {
       return;
     }
     
@@ -115,7 +117,13 @@ export const useOrderStore = create<OrderStore>((set, get) => ({
   },
 
   fetchAllOrders: async (silent = false) => {
-    const { userId, role, filters } = get();
+    const { userId, role, filters, _tokenExpired } = get();
+    
+    // Guard: don't fetch if token expired
+    if (_tokenExpired) {
+      return;
+    }
+    
     try {
       const params: Record<string, string | number> = {};
       if (userId && role) {
@@ -214,7 +222,9 @@ export const useOrderStore = create<OrderStore>((set, get) => ({
 
   deleteOrder: async (id) => {
     try {
-      const { role } = get();
+      const { role, _tokenExpired } = get();
+      if (_tokenExpired) throw new Error('Token expired');
+      
       await api.orders.delete(id, role);
       // remove locally and refetch for consistency
       set({
@@ -229,6 +239,14 @@ export const useOrderStore = create<OrderStore>((set, get) => ({
     }
   }
 }));
+
+// Listen for global token expiration event
+if (typeof window !== 'undefined') {
+  window.addEventListener('auth:token-expired', () => {
+    console.warn('[OrderStore] Token expired - stopping all polling');
+    useOrderStore.setState({ _tokenExpired: true });
+  });
+}
 
 // Auto-feed the global notification store when new QR orders arrive
 // Robust ID-based tracking to avoid duplicate notifications during polling/sync

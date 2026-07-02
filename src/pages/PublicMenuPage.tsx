@@ -436,9 +436,24 @@ const PublicMenuPage = () => {
   // ─── Product search state ────────────────────────────────────────────────
   const [searchQuery, setSearchQuery] = useState('');
 
-  // ─── Order confirmation countdown state ──────────────────────────────────
+  // ─── Order confirmation countdown state (widget flottant) ────────────────
   const [showCountdown, setShowCountdown] = useState(false);
   const [countdownSeconds, setCountdownSeconds] = useState(600); // 10 minutes
+  const [countdownMinimized, setCountdownMinimized] = useState(false);
+  const [countdownPosition, setCountdownPosition] = useState(() => {
+    // Restore saved position, or default to bottom-right
+    try {
+      const saved = localStorage.getItem('qr_countdown_pos');
+      if (saved) return JSON.parse(saved);
+    } catch {}
+    return { x: typeof window !== 'undefined' ? window.innerWidth - 140 : 0, y: typeof window !== 'undefined' ? window.innerHeight - 160 : 0 };
+  });
+  const [isDragging, setIsDragging] = useState(false);
+  const dragStart = useRef<{ x: number; y: number; posX: number; posY: number }>({ x: 0, y: 0, posX: 0, posY: 0 });
+  const countdownElRef = useRef<HTMLDivElement>(null);
+  const countdownSoundPlayed = useRef(false);
+  // Saved countdown state for persistence across page refreshes
+  const countdownStartTime = useRef<number | null>(null);
 
   const [pendingOrderId, setPendingOrderId]       = useState<number | null>(null);
   const [activeOrderId, setActiveOrderId]         = useState<number | null>(null);
@@ -560,7 +575,8 @@ const PublicMenuPage = () => {
       items: cartItems.map(it => ({ 
         product_id: it.productId, 
         quantity: it.quantity,
-        name: it.name   // for display in the PIN confirmation screen
+        name: it.name,
+        price: it.price   // for display in "My order" screen
       })),
       total: cartTotal, 
       customer_phone: customerPhone || undefined,
@@ -697,9 +713,8 @@ const PublicMenuPage = () => {
       setCart({});
       showToast('success', t('qrMenu.orderSent'));
 
-      // ─── Trigger 10-minute confirmation countdown ──────────────────────
-      setShowCountdown(true);
-      setCountdownSeconds(600); // 10 minutes
+      // NOTE: Countdown will be triggered when staff confirms the order (status = 'confirmed')
+      // See polling logic below
     } catch (e: any) {
       showToast('error', e?.message || 'Erreur lors de la validation');
     } finally {
@@ -707,23 +722,100 @@ const PublicMenuPage = () => {
     }
   };
 
-  // ─── Countdown timer effect ─────────────────────────────────────────────
+  // ─── Countdown timer effect (with persistence across refreshes) ─────────
   useEffect(() => {
     if (!showCountdown || countdownSeconds <= 0) {
       if (countdownSeconds <= 0) setShowCountdown(false);
       return;
     }
+    // Save start time on first run
+    if (!countdownStartTime.current) {
+      countdownStartTime.current = Date.now();
+      // Try to restore from saved state on page refresh
+      try {
+        const saved = localStorage.getItem(`qr_countdown_${token}_${pendingOrderId}`);
+        if (saved) {
+          const parsed = JSON.parse(saved);
+          const elapsed = Math.floor((Date.now() - parsed.startedAt) / 1000);
+          if (elapsed < 600) {
+            setCountdownSeconds(600 - elapsed);
+            countdownStartTime.current = parsed.startedAt;
+          } else {
+            setShowCountdown(false);
+            setCountdownSeconds(0);
+            localStorage.removeItem(`qr_countdown_${token}_${pendingOrderId}`);
+            return;
+          }
+        }
+      } catch {}
+    }
     const timer = setInterval(() => {
       setCountdownSeconds(prev => {
         if (prev <= 1) {
           clearInterval(timer);
+          setShowCountdown(false);
+          countdownStartTime.current = null;
+          try { localStorage.removeItem(`qr_countdown_${token}_${pendingOrderId}`); } catch {}
           return 0;
+        }
+        // Persist every 10 seconds
+        if (prev % 10 === 0 && countdownStartTime.current) {
+          try {
+            localStorage.setItem(`qr_countdown_${token}_${pendingOrderId}`, JSON.stringify({
+              startedAt: countdownStartTime.current,
+              remaining: prev,
+            }));
+          } catch {}
         }
         return prev - 1;
       });
     }, 1000);
     return () => clearInterval(timer);
-  }, [showCountdown, countdownSeconds]);
+  }, [showCountdown, countdownSeconds, token, pendingOrderId]);
+
+  // ─── Drag handlers for countdown widget ─────────────────────────────────
+  useEffect(() => {
+    if (!isDragging) return;
+    const handleMouseMove = (e: MouseEvent) => {
+      const dx = e.clientX - dragStart.current.x;
+      const dy = e.clientY - dragStart.current.y;
+      const newX = Math.max(0, Math.min(window.innerWidth - 160, dragStart.current.posX + dx));
+      const newY = Math.max(0, Math.min(window.innerHeight - 200, dragStart.current.posY + dy));
+      setCountdownPosition({ x: newX, y: newY });
+    };
+    const handleTouchMove = (e: TouchEvent) => {
+      const touch = e.touches[0];
+      const dx = touch.clientX - dragStart.current.x;
+      const dy = touch.clientY - dragStart.current.y;
+      const newX = Math.max(0, Math.min(window.innerWidth - 160, dragStart.current.posX + dx));
+      const newY = Math.max(0, Math.min(window.innerHeight - 200, dragStart.current.posY + dy));
+      setCountdownPosition({ x: newX, y: newY });
+    };
+    const handleUp = () => {
+      setIsDragging(false);
+      try { localStorage.setItem('qr_countdown_pos', JSON.stringify(countdownPosition)); } catch {}
+    };
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleUp);
+    window.addEventListener('touchmove', handleTouchMove, { passive: true });
+    window.addEventListener('touchend', handleUp);
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleUp);
+      window.removeEventListener('touchmove', handleTouchMove);
+      window.removeEventListener('touchend', handleUp);
+    };
+  }, [isDragging, countdownPosition]);
+
+  // ─── Stop countdown when order is no longer confirmed ───────────────────
+  useEffect(() => {
+    if (pendingOrderStatus && pendingOrderStatus !== 'confirmed' && showCountdown) {
+      setShowCountdown(false);
+      setCountdownSeconds(600); // Reset for next time
+      countdownStartTime.current = null;
+      try { localStorage.removeItem(`qr_countdown_${token}_${pendingOrderId}`); } catch {}
+    }
+  }, [pendingOrderStatus, showCountdown, token, pendingOrderId]);
 
   // ─── Restore on refresh ───────────────────────────────────────────────────
   useEffect(() => {
@@ -802,6 +894,12 @@ const PublicMenuPage = () => {
 
         setPendingOrderStatus(st);
         setPendingOrderMessage(buildStatusMessage(st));
+
+        // NEW: Trigger countdown when staff confirms the order
+        if (st === 'confirmed' && !showCountdown) {
+          setShowCountdown(true);
+          setCountdownSeconds(600); // 10 minutes
+        }
 
         if (data?.total != null) setPendingOrderTotal(Number(data.total));
         if (Array.isArray(data?.items)) {
@@ -1027,36 +1125,153 @@ const PublicMenuPage = () => {
           background: 'rgba(6,15,10,0.97)', borderBottom: `1px solid ${T.goldBorder}`,
           padding: '14px 16px', backdropFilter: 'blur(16px)',
         }}>
-          {/* ─── Confirmation countdown overlay ─────────────────────────────── */}
-          {showCountdown && countdownSeconds > 0 && (
-            <div style={{
-              position: 'fixed', inset: 0, zIndex: 9999,
-              background: 'rgba(6,15,10,0.85)', backdropFilter: 'blur(6px)',
-              display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
-              gap: 16, animation: 'toast-in 0.25s ease-out',
-            }}>
+          {/* ─── Draggable countdown widget (replaces full-screen overlay) ─── */}
+          {showCountdown && countdownSeconds > 0 && !countdownMinimized && (
+            <div
+              ref={countdownElRef}
+              onMouseDown={(e) => {
+                if (!countdownElRef.current) return;
+                setIsDragging(true);
+                const rect = countdownElRef.current.getBoundingClientRect();
+                dragStart.current = { x: e.clientX, y: e.clientY, posX: rect.left, posY: rect.top };
+              }}
+              onTouchStart={(e) => {
+                if (!countdownElRef.current) return;
+                setIsDragging(true);
+                const rect = countdownElRef.current.getBoundingClientRect();
+                const touch = e.touches[0];
+                dragStart.current = { x: touch.clientX, y: touch.clientY, posX: rect.left, posY: rect.top };
+              }}
+              style={{
+                position: 'fixed',
+                left: countdownPosition.x,
+                top: countdownPosition.y,
+                zIndex: 9999,
+                cursor: isDragging ? 'grabbing' : 'grab',
+                userSelect: 'none', touchAction: 'none',
+                background: 'rgba(6,15,10,0.92)',
+                border: `1px solid ${T.goldBorder}`,
+                borderRadius: 16,
+                padding: 0,
+                backdropFilter: 'blur(12px)',
+                boxShadow: '0 8px 32px rgba(0,0,0,0.5), 0 0 0 1px rgba(200,168,75,0.1)',
+                minWidth: 140,
+                animation: 'toast-in 0.25s ease-out',
+              }}
+            >
+              {/* Drag handle bar */}
               <div style={{
-                width: 120, height: 120, borderRadius: '50%',
-                background: T.gold, display: 'flex', alignItems: 'center', justifyContent: 'center',
-                boxShadow: `0 0 0 16px ${T.goldDim}, 0 0 60px rgba(200,168,75,0.35)`,
-                animation: 'qr-spin 3s linear infinite',
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                padding: '6px 10px 4px', borderBottom: `1px solid rgba(200,168,75,0.15)`,
               }}>
-                <span style={{
-                  fontFamily: T.mono, fontSize: 42, fontWeight: 700, color: T.bg, lineHeight: 1,
+                <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                  <Clock size={10} color={T.gold2} />
+                  <span style={{ fontSize: 8, letterSpacing: '0.1em', textTransform: 'uppercase', color: T.gold, fontWeight: 600 }}>
+                    Commande confirmée
+                  </span>
+                </div>
+                <div style={{ display: 'flex', gap: 4 }}>
+                  <button
+                    onClick={() => setCountdownMinimized(true)}
+                    style={{ background: 'none', border: 'none', color: T.text3, cursor: 'pointer', fontSize: 12, padding: '0 2px', lineHeight: 1 }}
+                    title="Réduire"
+                  >
+                    _
+                  </button>
+                  <button
+                    onClick={() => { setShowCountdown(false); setCountdownMinimized(false); try { localStorage.removeItem(`qr_countdown_${token}_${pendingOrderId}`); } catch {} }}
+                    style={{ background: 'none', border: 'none', color: T.text3, cursor: 'pointer', fontSize: 12, padding: '0 2px', lineHeight: 1 }}
+                    title="Fermer"
+                  >
+                    ×
+                  </button>
+                </div>
+              </div>
+              {/* Timer display */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px 12px' }}>
+                <div style={{
+                  width: 48, height: 48, borderRadius: '50%',
+                  background: `conic-gradient(${T.gold} ${(countdownSeconds / 600) * 100}%, ${T.bg3} ${(countdownSeconds / 600) * 100}%)`,
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  flexShrink: 0,
+                  position: 'relative',
                 }}>
-                  {Math.floor(countdownSeconds / 60)}:{(countdownSeconds % 60).toString().padStart(2, '0')}
-                </span>
+                  <div style={{
+                    width: 40, height: 40, borderRadius: '50%',
+                    background: T.bg2, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  }}>
+                    <Clock size={16} color={T.gold2} />
+                  </div>
+                </div>
+                <div>
+                  <div style={{
+                    fontFamily: T.mono, fontSize: 22, fontWeight: 700, color: T.gold2, lineHeight: 1, letterSpacing: '0.04em',
+                  }}>
+                    {Math.floor(countdownSeconds / 60)}:{(countdownSeconds % 60).toString().padStart(2, '0')}
+                  </div>
+                  <div style={{ fontSize: 8, color: T.text3, letterSpacing: '0.08em', marginTop: 2 }}>
+                    Préparation en cours
+                  </div>
+                </div>
               </div>
+              {/* Progress bar */}
+              <div style={{ height: 2, background: T.bg3, borderRadius: '0 0 16px 16px', overflow: 'hidden' }}>
+                <div style={{
+                  height: '100%',
+                  width: `${(countdownSeconds / 600) * 100}%`,
+                  background: countdownSeconds < 120 ? T.red : T.gold,
+                  transition: 'width 1s linear',
+                }} />
+              </div>
+            </div>
+          )}
+
+          {/* Minimized countdown pill */}
+          {showCountdown && countdownSeconds > 0 && countdownMinimized && (
+            <div
+              onMouseDown={(e) => {
+                setIsDragging(true);
+                dragStart.current = { x: e.clientX, y: e.clientY, posX: countdownPosition.x, posY: countdownPosition.y };
+              }}
+              onTouchStart={(e) => {
+                setIsDragging(true);
+                const touch = e.touches[0];
+                dragStart.current = { x: touch.clientX, y: touch.clientY, posX: countdownPosition.x, posY: countdownPosition.y };
+              }}
+              style={{
+                position: 'fixed',
+                left: countdownPosition.x + 10,
+                top: countdownPosition.y + 10,
+                zIndex: 9999,
+                cursor: isDragging ? 'grabbing' : 'pointer',
+                userSelect: 'none', touchAction: 'none',
+                background: 'rgba(6,15,10,0.9)',
+                border: `1px solid ${T.goldBorder}`,
+                borderRadius: 999,
+                padding: '6px 12px 6px 8px',
+                backdropFilter: 'blur(8px)',
+                display: 'flex', alignItems: 'center', gap: 6,
+                boxShadow: '0 4px 16px rgba(0,0,0,0.4)',
+                animation: 'toast-in 0.2s ease-out',
+              }}
+              onClick={() => setCountdownMinimized(false)}
+            >
               <div style={{
-                fontFamily: T.serif, fontSize: 22, fontWeight: 600, color: T.text, letterSpacing: '0.04em',
+                width: 20, height: 20, borderRadius: '50%',
+                background: T.gold, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                flexShrink: 0,
               }}>
-                {t('qrMenu.orderSent')}
+                <Clock size={10} color={T.bg} />
               </div>
-              <div style={{
-                fontSize: 12, color: T.text2, letterSpacing: '0.08em', textTransform: 'uppercase',
-              }}>
-                {t('qrMenu.statusPending')}
-              </div>
+              <span style={{ fontFamily: T.mono, fontSize: 14, fontWeight: 700, color: T.gold2, lineHeight: 1 }}>
+                {Math.floor(countdownSeconds / 60)}:{(countdownSeconds % 60).toString().padStart(2, '0')}
+              </span>
+              <button
+                onClick={(e) => { e.stopPropagation(); setShowCountdown(false); setCountdownMinimized(false); }}
+                style={{ background: 'none', border: 'none', color: T.text3, cursor: 'pointer', fontSize: 12, padding: 0, lineHeight: 1 }}
+              >
+                ×
+              </button>
             </div>
           )}
           {/* Order ref - clean, no repetition */}

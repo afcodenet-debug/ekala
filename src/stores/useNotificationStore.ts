@@ -50,6 +50,7 @@ interface NotificationStore {
   isLoading: boolean;
   error: string | null;
   filters: NotificationFilters;
+  _tokenExpired: boolean;
 
   // Actions locales
   addNotification: (payload: Omit<AppNotification, 'id' | 'created_at'>) => void;
@@ -82,6 +83,7 @@ export const useNotificationStore = create<NotificationStore>((set, get) => ({
   isLoading: false,
   error: null,
   filters: {},
+  _tokenExpired: false,
 
   // ─── Actions locales (fallback) ─────────────────────────────────────
 
@@ -135,6 +137,13 @@ export const useNotificationStore = create<NotificationStore>((set, get) => ({
   // ─── Actions serveur ─────────────────────────────────────────────────
 
   loadFromServer: async (tenantId: string, userId: string) => {
+    const { _tokenExpired } = get();
+    
+    // Guard: don't fetch if token expired
+    if (_tokenExpired) {
+      return;
+    }
+    
     set({ isLoading: true, error: null });
     try {
       const filters = get().filters;
@@ -186,6 +195,13 @@ export const useNotificationStore = create<NotificationStore>((set, get) => ({
   },
 
   syncUnreadCount: async (tenantId: string, userId: string) => {
+    const { _tokenExpired } = get();
+    
+    // Guard: don't fetch if token expired
+    if (_tokenExpired) {
+      return;
+    }
+    
     try {
       const response: any = await api.get('/notifications/unread-count', {
         params: { tenant_id: tenantId, user_id: userId },
@@ -263,3 +279,11 @@ export const useNotificationStore = create<NotificationStore>((set, get) => ({
   closeCenter: () => set({ isCenterOpen: false }),
   toggleCenter: () => set((state) => ({ isCenterOpen: !state.isCenterOpen })),
 }));
+
+// Listen for global token expiration event
+if (typeof window !== 'undefined') {
+  window.addEventListener('auth:token-expired', () => {
+    console.warn('[NotificationStore] Token expired - stopping all server requests');
+    useNotificationStore.setState({ _tokenExpired: true });
+  });
+}

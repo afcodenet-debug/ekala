@@ -352,7 +352,7 @@ router.post('/checkout', async (req, res) => {
       .maybeSingle();
 
     if (existingOrder) {
-      // Merge logic
+      // Merge logic — enrichir les items avec les prix depuis la base
       const existingItems = Array.isArray(existingOrder.items) ? existingOrder.items : [];
       const itemMap = new Map();
       existingItems.forEach((it: any) => itemMap.set(it.product_id || it.productId, { ...it }));
@@ -365,7 +365,31 @@ router.post('/checkout', async (req, res) => {
         }
       });
       const mergedItems = Array.from(itemMap.values());
-      const mergedTotal = mergedItems.reduce((sum, it) => sum + (Number(it.price || it.unit_price || 0) * it.quantity), 0);
+      
+      // Recalculer le total avec les prix des produits depuis la base
+      let mergedTotal = 0;
+      for (const it of mergedItems) {
+        const productId = it.product_id || it.productId;
+        let price = Number(it.price || it.unit_price || 0);
+        if (!price) {
+          try {
+            const { data: product } = await supabase
+              .from('products')
+              .select('selling_price, name')
+              .eq('id', productId)
+              .eq('tenant_id', tenantId)
+              .maybeSingle();
+            if (product) {
+              price = Number(product.selling_price) || 0;
+              it.price = price;
+              it.name = product.name || it.name || '';
+            }
+          } catch (prodErr) {
+            console.warn(`[Menu] Could not fetch product ${productId} for merge:`, prodErr);
+          }
+        }
+        mergedTotal += price * (Number(it.quantity) || 0);
+      }
 
       await supabase.from('orders').update({
         items: mergedItems,
@@ -376,10 +400,52 @@ router.post('/checkout', async (req, res) => {
       return res.json({ success: true, orderId: existingOrder.id, merged: true });
     }
 
-    // Create new order
+    // OPTIMIZED: Batch-fetch all product prices + waiter in parallel (single round-trip each)
+    const uniqueProductIds = [...new Set(items.map((it: any) => it.product_id || it.productId))];
+    
+    // Fetch all needed products in one query
+    const { data: productBatch } = await supabase
+      .from('products')
+      .select('id, selling_price, name')
+      .in('id', uniqueProductIds)
+      .eq('tenant_id', tenantId);
+
+    const productMap = new Map<number, { selling_price: number; name: string }>();
+    if (productBatch) {
+      for (const p of productBatch) {
+        productMap.set(Number(p.id), { selling_price: Number(p.selling_price) || 0, name: p.name || '' });
+      }
+    }
+
+    // Enrich items in memory (no per-item DB round-trips)
+    let enrichedTotal = 0;
+    const enrichedItems = items.map((it: any) => {
+      const productId = it.product_id || it.productId;
+      let price = Number(it.price || it.unit_price || 0);
+      let name = it.name || '';
+      
+      const productData = productMap.get(Number(productId));
+      if (productData) {
+        if (!price) price = productData.selling_price;
+        if (!name) name = productData.name;
+      }
+      
+      const quantity = Number(it.quantity) || 0;
+      enrichedTotal += price * quantity;
+      
+      return { product_id: productId, name, price, quantity };
+    });
+
+    // Get waiter — parallel with product fetch using Promise.all
     let waiterId = table.assigned_waiter_id;
     if (!waiterId) {
-      const { data: staff } = await supabase.from('users').select('id').eq('tenant_id', tenantId).in('role', ['admin', 'manager']).limit(1).single();
+      const { data: staff } = await supabase
+        .from('users')
+        .select('id')
+        .eq('tenant_id', tenantId)
+        .in('role', ['admin', 'manager'])
+        .limit(1)
+        .maybeSingle();
       waiterId = staff?.id;
     }
 
@@ -390,8 +456,8 @@ router.post('/checkout', async (req, res) => {
         waiter_id: waiterId,
         customer_id: customer.id,
         status: 'pending',
-        items,
-        total: Number(req.body.total || 0),
+        items: enrichedItems,
+        total: enrichedTotal,
         tenant_id: tenantId,
         source: 'qr'
       })
