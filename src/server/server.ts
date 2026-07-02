@@ -380,8 +380,10 @@ app.use('/api', async (req, res, next) => {
     });
   } catch (err: any) {
     console.error('[SubGuard] Middleware error:', err.message);
-    // Fail-open: allow request on error
-    return next();
+    console.error('[SubGuard] Stack:', err?.stack);
+    // Propager l'erreur à l'error handler global pour qu'elle soit rendue en JSON
+    // plutôt que de laisser Express produire du HTML
+    return next(err);
   }
 });
 
@@ -439,6 +441,21 @@ app.use('/api/platform', platformRoutes);
 // Sync Diagnostic Routes
 // =============================================================================
 app.use('/api/platform', syncDiagnosticRoutes);
+
+// =============================================================================
+// GLOBAL ERROR HANDLER — Convertit TOUTES les erreurs en JSON
+// =============================================================================
+// SANS CE MIDDLEWARE, Express retourne des pages HTML <pre>Internal Server Error</pre>
+// qui cassent les clients attendus du JSON (frontend React, API consumers).
+app.use((err: any, req: any, res: any, next: any) => {
+  console.error('[FATAL] Unhandled error:', err?.message || err);
+  console.error('[FATAL] Stack:', err?.stack);
+  res.status(err?.status || 500).json({
+    error: err?.code || 'INTERNAL_SERVER_ERROR',
+    message: err?.message || 'An unexpected error occurred',
+    ...(process.env.NODE_ENV === 'development' ? { stack: err?.stack } : {}),
+  });
+});
 
 // =============================================================================
 // SaaS Multi-Tenant Routes (Phase 1 + 3)
