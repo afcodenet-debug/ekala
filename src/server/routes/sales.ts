@@ -44,6 +44,145 @@ router.get('/', async (req: any, res) => {
   }
 });
 
+// =============================================================================
+// Cloud Checkout Handler (Supabase) — Extracted to avoid db.prepare() before
+// cloud mode detection. En cloud mode (RENDER_CLOUD_MODE=true), le default
+// export de database.ts est un Proxy/fonction qui n'a PAS de méthode .prepare().
+// =============================================================================
+async function handleCloudCheckout(
+  req: any,
+  res: any,
+  normalizedOrderId: number,
+  normalizedUserId: number | null,
+  rawPaymentMethod: string | undefined,
+  discount: number,
+  tax: number,
+  requestItems: any[] | undefined
+) {
+  let tenantId = req.tenant_id;
+  let user_id = normalizedUserId || req.user?.sub || 1;
+
+  console.log(`[Sales] Cloud mode. Using Supabase for checkout (tenant=${tenantId})`);
+  try {
+    const supabaseUrl = env.SUPABASE_URL || process.env.SUPABASE_URL;
+    const supabaseKey = env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY;
+    if (!supabaseUrl || !supabaseKey) {
+      console.error('[Sales] Supabase config missing for cloud checkout');
+      return res.status(500).json({ error: 'Supabase not configured' });
+    }
+    
+    const supabase = createClient(supabaseUrl, supabaseKey, { auth: { persistSession: false } });
+    
+    // 1. Fetch order details from Supabase
+    console.log(`[Sales] Fetching order ${normalizedOrderId} from Supabase...`);
+    const { data: supaOrder, error: supaErr } = await supabase
+      .from('orders')
+      .select('id, status, table_id, waiter_id, items, total')
+      .eq('id', normalizedOrderId)
+      .eq('tenant_id', tenantId)
+      .single();
+
+    if (supaErr || !supaOrder) {
+      console.error(`[Sales] Order ${normalizedOrderId} not found in Supabase for tenant ${tenantId}`, supaErr);
+      return res.status(404).json({ error: 'Order not found in Supabase', details: supaErr?.message });
+    }
+
+    console.log(`[Sales] Order found:`, { id: supaOrder.id, status: supaOrder.status, total: supaOrder.total });
+
+    // 2. Generate a unique invoice number (NOT NULL constraint)
+    const invoiceNumber = `INV-${String(Date.now()).slice(-6)}${Math.floor(Math.random() * 100)}`;
+    console.log(`[Sales] Generated invoice number: ${invoiceNumber} for order ${normalizedOrderId}`);
+
+    const subtotal = Number((supaOrder as any).total || 0);
+    const total_amount = subtotal - Number(discount) + Number(tax);
+
+    // 3. Create the sale record
+    console.log(`[Sales] Creating sale in Supabase...`);
+    const { data: saleData, error: saleErr } = await supabase
+      .from('sales')
+      .insert({
+        invoice_number: invoiceNumber,
+        order_id: normalizedOrderId,
+        user_id: user_id,
+        payment_method: rawPaymentMethod || 'cash',
+        subtotal,
+        discount: Number(discount),
+        tax: Number(tax),
+        total_amount,
+        tenant_id: tenantId,
+        created_at: new Date().toISOString()
+      })
+      .select()
+      .single();
+
+    if (saleErr) {
+      console.error('[Sales] Supabase sale insert failed:', saleErr);
+      return res.status(500).json({ 
+        error: 'Failed to create sale in Supabase', 
+        details: saleErr.message,
+        code: saleErr.code,
+        hint: saleErr.hint
+      });
+    }
+
+    console.log(`[Sales] Sale ${saleData.id} created successfully in Supabase`);
+
+    // 4. Insert sale items
+    const rawItems = typeof supaOrder.items === 'string' ? JSON.parse(supaOrder.items) : (supaOrder.items || []);
+    const items = Array.isArray(rawItems) ? rawItems : [];
+    console.log(`[Sales] Processing ${items.length} sale items...`);
+    
+    if (items.length > 0) {
+      const saleItems = items.map((it: any) => ({
+        sale_id: saleData.id,
+        product_id: it.product_id || it.productId,
+        quantity: Number(it.quantity) || 0,
+        unit_price: Number(it.price || it.unit_price || 0),
+        total_price: (Number(it.quantity) || 0) * Number(it.price || it.unit_price || 0),
+        tenant_id: tenantId
+      }));
+      
+      const { error: itemsErr } = await supabase.from('sale_items').insert(saleItems);
+      if (itemsErr) {
+        console.error('[Sales] Failed to insert sale items in Supabase:', itemsErr);
+        // Don't fail the whole checkout if items fail
+      } else {
+        console.log(`[Sales] ${saleItems.length} sale items inserted successfully`);
+      }
+    }
+
+    // 5. Update order status to paid
+    console.log(`[Sales] Updating order ${normalizedOrderId} status to paid...`);
+    const { error: updateErr } = await supabase
+      .from('orders')
+      .update({ status: 'paid', updated_at: new Date().toISOString() })
+      .eq('id', normalizedOrderId)
+      .eq('tenant_id', tenantId);
+    
+    if (updateErr) {
+      console.error('[Sales] Failed to update order status:', updateErr);
+    } else {
+      console.log(`[Sales] Order ${normalizedOrderId} marked as paid`);
+    }
+
+    return res.json({
+      saleId: saleData.id,
+      invoiceNumber: saleData.invoice_number || invoiceNumber,
+      partial: false,
+      blockedItems: [],
+      soldItems: items,
+      saleTotal: saleData.total_amount
+    });
+  } catch (err: any) {
+    console.error('[Sales] Supabase checkout failed:', err?.message || err);
+    console.error('[Sales] Error stack:', err?.stack);
+    return res.status(500).json({ 
+      error: err?.message || 'Failed to checkout via Supabase',
+      stack: process.env.NODE_ENV === 'development' ? err?.stack : undefined
+    });
+  }
+}
+
 // Checkout logic: Convert Order to Sale
 router.post('/checkout', requirePermission('PROCESS_PAYMENTS'), async (req: any, res) => {
   const { order_id, payment_method: rawPaymentMethod, user_id: bodyUserId, discount = 0, tax = 0, items: requestItems } = req.body;
@@ -64,32 +203,48 @@ router.post('/checkout', requirePermission('PROCESS_PAYMENTS'), async (req: any,
     return res.status(400).json({ error: 'Invalid order_id - must be a valid number' });
   }
 
+  // ===== Mode Cloud (Supabase) — VÉRIFIÉ EN PREMIER avant tout accès SQLite =====
+  // CRITIQUE: dataSource.isCloudMode() DOIT être appelé avant tout db.prepare()
+  // car en cloud mode (RENDER_CLOUD_MODE=true), db est un Proxy/fonction sans .prepare()
+  if (dataSource.isCloudMode()) {
+    return await handleCloudCheckout(req, res, normalizedOrderId, normalizedUserId, rawPaymentMethod, discount, tax, requestItems);
+  }
+
+  // ===== Mode Local (SQLite) =====
   // Resolve tenantId and user_id to local IDs to prevent FK failures
   let tenantId = req.tenant_id;
   let user_id = normalizedUserId || req.user?.sub || 1;
 
   // 1. Resolve tenantId: if current tenantId doesn't exist in 'tenants' table, try finding a valid one
-  const validTenant = db ? db.prepare('SELECT id FROM tenants WHERE id = ?').get(tenantId) : null;
-  if (db && !validTenant) {
-    const fallbackTenant = db.prepare('SELECT id FROM tenants LIMIT 1').get() as { id: number } | undefined;
-    if (fallbackTenant) {
-      console.log(`[Sales] Current tenant_id ${tenantId} not found in tenants table. Falling back to ${fallbackTenant.id}`);
-      tenantId = fallbackTenant.id;
+  try {
+    const validTenant = db ? db.prepare('SELECT id FROM tenants WHERE id = ?').get(tenantId) : null;
+    if (db && !validTenant) {
+      const fallbackTenant = db.prepare('SELECT id FROM tenants LIMIT 1').get() as { id: number } | undefined;
+      if (fallbackTenant) {
+        console.log(`[Sales] Current tenant_id ${tenantId} not found in tenants table. Falling back to ${fallbackTenant.id}`);
+        tenantId = fallbackTenant.id;
+      }
     }
+  } catch (e) {
+    console.warn('[Sales] Tenant resolution failed:', e);
   }
 
   // 2. Resolve user_id: if user_id doesn't exist in 'users' table, check if it's a remote_id
-  const validUser = db ? db.prepare('SELECT id FROM users WHERE id = ?').get(user_id) : null;
-  if (db && !validUser) {
-    const remoteUser = db.prepare('SELECT id FROM users WHERE remote_id = ?').get(user_id) as { id: number } | undefined;
-    if (remoteUser) {
-      console.log(`[Sales] user_id ${user_id} not found as local ID, but found as remote_id. Using local id ${remoteUser.id}`);
-      user_id = remoteUser.id;
-    } else {
-      // Last resort: use the first admin or user ID 1
-      const firstUser = db.prepare('SELECT id FROM users WHERE role = "admin" OR is_active = 1 LIMIT 1').get() as { id: number } | undefined;
-      user_id = firstUser?.id || 1;
+  try {
+    const validUser = db ? db.prepare('SELECT id FROM users WHERE id = ?').get(user_id) : null;
+    if (db && !validUser) {
+      const remoteUser = db.prepare('SELECT id FROM users WHERE remote_id = ?').get(user_id) as { id: number } | undefined;
+      if (remoteUser) {
+        console.log(`[Sales] user_id ${user_id} not found as local ID, but found as remote_id. Using local id ${remoteUser.id}`);
+        user_id = remoteUser.id;
+      } else {
+        // Last resort: use the first admin or user ID 1
+        const firstUser = db.prepare('SELECT id FROM users WHERE role = "admin" OR is_active = 1 LIMIT 1').get() as { id: number } | undefined;
+        user_id = firstUser?.id || 1;
+      }
     }
+  } catch (e) {
+    console.warn('[Sales] User resolution failed:', e);
   }
 
   // Normalize to the exact values allowed by the DB CHECK constraint
@@ -100,129 +255,6 @@ router.post('/checkout', requirePermission('PROCESS_PAYMENTS'), async (req: any,
   }
 
   console.log('[Sales] Checkout request:', { order_id: normalizedOrderId, payment_method, user_id, discount, tax, itemsCount: Array.isArray(requestItems) ? requestItems.length : 'none' });
-
-  // ===== Mode Cloud (Supabase) =====
-  if (dataSource.isCloudMode()) {
-    console.log(`[Sales] Cloud mode. Using Supabase for checkout (tenant=${tenantId})`);
-    try {
-      const supabaseUrl = env.SUPABASE_URL || process.env.SUPABASE_URL;
-      const supabaseKey = env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY;
-      if (!supabaseUrl || !supabaseKey) {
-        console.error('[Sales] Supabase config missing for cloud checkout');
-        return res.status(500).json({ error: 'Supabase not configured' });
-      }
-      
-      const supabase = createClient(supabaseUrl, supabaseKey, { auth: { persistSession: false } });
-      
-      // 1. Fetch order details from Supabase
-      console.log(`[Sales] Fetching order ${normalizedOrderId} from Supabase...`);
-      const { data: supaOrder, error: supaErr } = await supabase
-        .from('orders')
-        .select('id, status, table_id, waiter_id, items, total')
-        .eq('id', normalizedOrderId)
-        .eq('tenant_id', tenantId)
-        .single();
-
-      if (supaErr || !supaOrder) {
-        console.error(`[Sales] Order ${normalizedOrderId} not found in Supabase for tenant ${tenantId}`, supaErr);
-        return res.status(404).json({ error: 'Order not found in Supabase', details: supaErr?.message });
-      }
-
-      console.log(`[Sales] Order found:`, { id: supaOrder.id, status: supaOrder.status, total: supaOrder.total });
-
-      // 2. Generate a unique invoice number (NOT NULL constraint)
-      const invoiceNumber = `INV-${String(Date.now()).slice(-6)}${Math.floor(Math.random() * 100)}`;
-      console.log(`[Sales] Generated invoice number: ${invoiceNumber} for order ${normalizedOrderId}`);
-
-      const subtotal = Number((supaOrder as any).total || 0);
-      const total_amount = subtotal - Number(discount) + Number(tax);
-
-      // 3. Create the sale record
-      console.log(`[Sales] Creating sale in Supabase...`);
-      const { data: saleData, error: saleErr } = await supabase
-        .from('sales')
-        .insert({
-          invoice_number: invoiceNumber,
-          order_id: normalizedOrderId,
-          user_id: user_id,
-          payment_method,
-          subtotal,
-          discount: Number(discount),
-          tax: Number(tax),
-          total_amount,
-          tenant_id: tenantId,
-          created_at: new Date().toISOString()
-        })
-        .select()
-        .single();
-
-      if (saleErr) {
-        console.error('[Sales] Supabase sale insert failed:', saleErr);
-        return res.status(500).json({ 
-          error: 'Failed to create sale in Supabase', 
-          details: saleErr.message,
-          code: saleErr.code,
-          hint: saleErr.hint
-        });
-      }
-
-      console.log(`[Sales] Sale ${saleData.id} created successfully in Supabase`);
-
-      // 4. Insert sale items
-      const rawItems = typeof supaOrder.items === 'string' ? JSON.parse(supaOrder.items) : (supaOrder.items || []);
-      const items = Array.isArray(rawItems) ? rawItems : [];
-      console.log(`[Sales] Processing ${items.length} sale items...`);
-      
-      if (items.length > 0) {
-        const saleItems = items.map((it: any) => ({
-          sale_id: saleData.id,
-          product_id: it.product_id || it.productId,
-          quantity: Number(it.quantity) || 0,
-          unit_price: Number(it.price || it.unit_price || 0),
-          total_price: (Number(it.quantity) || 0) * Number(it.price || it.unit_price || 0),
-          tenant_id: tenantId
-        }));
-        
-        const { error: itemsErr } = await supabase.from('sale_items').insert(saleItems);
-        if (itemsErr) {
-          console.error('[Sales] Failed to insert sale items in Supabase:', itemsErr);
-          // Don't fail the whole checkout if items fail
-        } else {
-          console.log(`[Sales] ${saleItems.length} sale items inserted successfully`);
-        }
-      }
-
-      // 5. Update order status to paid
-      console.log(`[Sales] Updating order ${normalizedOrderId} status to paid...`);
-      const { error: updateErr } = await supabase
-        .from('orders')
-        .update({ status: 'paid', updated_at: new Date().toISOString() })
-        .eq('id', normalizedOrderId)
-        .eq('tenant_id', tenantId);
-      
-      if (updateErr) {
-        console.error('[Sales] Failed to update order status:', updateErr);
-      } else {
-        console.log(`[Sales] Order ${normalizedOrderId} marked as paid`);
-      }
-
-      return res.json({
-        saleId: saleData.id,
-        invoiceNumber: saleData.invoice_number || invoiceNumber,
-        partial: false,
-        blockedItems: [],
-        soldItems: items,
-        saleTotal: saleData.total_amount
-      });
-    } catch (err: any) {
-      console.error('[Sales] Supabase checkout failed:', err?.message || err);
-      console.error('[Sales] Error stack:', err?.stack);
-      return res.status(500).json({ 
-        error: err?.message || 'Failed to checkout via Supabase',
-        stack: process.env.NODE_ENV === 'development' ? err?.stack : undefined
-      });
-    }
-  }
 
   // ── Variables captured by the transaction closure (SQLite path) ──────────────────
   let invoiceNumber = '';
