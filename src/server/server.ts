@@ -53,6 +53,7 @@ import platformRoutes from './routes/platform.routes';
 import syncDiagnosticRoutes from './routes/sync-diagnostic.routes';
 import platformAuthRoutes from './platform/platform-auth.routes';
 import { bootstrapPlatform } from './platform/platform-bootstrap';
+import diagnosticRoutes from './routes/diagnostic-build.routes';
 
 const app = express();
 
@@ -235,8 +236,8 @@ app.use('/api', (req, res, next) => {
   }
 
   // Also skip for auth endpoints (they handle their own auth)
-  // Note: p is req.path which is relative to the /api mount point
-  if (p === '/auth' || p.startsWith('/auth/')) {
+  // Use originalUrl to catch all /api/auth/* routes regardless of mount point
+  if (req.originalUrl.startsWith('/api/auth')) {
     return next();
   }
 
@@ -436,6 +437,7 @@ app.use('/api/platform', platformAuthRoutes);
 // Platform Routes (Super Admin) — MUST BE BEFORE tenant scope middleware
 // =============================================================================
 app.use('/api/platform', platformRoutes);
+app.use('/api/diagnostic', diagnosticRoutes);
 
 // =============================================================================
 // Sync Diagnostic Routes
