@@ -265,7 +265,8 @@ app.use('/api', (req, res, next) => {
   // Platform auth endpoints (plateforme) - gérés par requirePlatformAuth
   // Legacy subscription status (public, for login page)
   // GET /api/v1/subscription/status/:tenantId
-  if (p.startsWith('/platform') ||
+  if (p.startsWith('/diagnostic') ||
+      p.startsWith('/platform') ||
       p === '/plans' || p.startsWith('/plans') ||
       p === '/tenants' || p.startsWith('/tenants/') ||
       p.startsWith('/payments') || p.startsWith('/webhooks') ||
@@ -285,6 +286,7 @@ app.use('/api', (req, res, next) => {
   // SaaS endpoints are public and do not rely on tenant scope from JWT
   // Public QR Menu endpoints
   if (p.startsWith('/menu') ||
+      p.startsWith('/diagnostic') ||
       p.startsWith('/platform') ||
       p === '/plans' || p === '/tenants' || p.startsWith('/tenants/') ||
       p.startsWith('/payments') || p.startsWith('/webhooks')) {
