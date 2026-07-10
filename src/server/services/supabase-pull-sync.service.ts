@@ -61,6 +61,9 @@ function getPullConfig(): PullConfig {
     explicit === 'true' ||
     explicit === '1';
 
+  // In CLOUD mode (RENDER_CLOUD_MODE) there is no local SQLite, so the
+  // Supabase → SQLite pull is meaningless and would crash on `db.prepare`.
+  if (dataSource.isCloud()) enabled = false;
   if (!dbAvailable) enabled = false;
   if (dataSource.isLocal()) enabled = false;
 

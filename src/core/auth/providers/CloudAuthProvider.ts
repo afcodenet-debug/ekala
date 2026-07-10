@@ -1,5 +1,6 @@
 import type { IAuthProvider, LoginRequest, LoginResponse, TenantInfo } from '../IAuthProvider';
 import type { User } from '../../../stores/useAuthStore';
+import { request } from '../../../lib/api-client';
 
 interface SupabaseUser {
   id: string;
@@ -24,22 +25,14 @@ interface SupabaseTenant {
 }
 
 export class CloudAuthProvider implements IAuthProvider {
-  private apiBase = '/api/auth';
-
-  private async request<T>(endpoint: string, options?: RequestInit): Promise<T> {
-    const res = await fetch(`${this.apiBase}${endpoint}`, {
-      headers: { 'Content-Type': 'application/json' },
-      ...options,
-    });
-    if (!res.ok) {
-      const body = await res.text();
-      throw new Error(`CloudAuthProvider: ${res.status} ${body}`);
-    }
-    return res.json();
-  }
+  // All requests go through the shared api-client `request` helper, which uses
+  // the centralized API_BASE (honours VITE_API_BASE_URL in cloud mode) and
+  // degrades gracefully on non-JSON responses instead of throwing a raw
+  // SyntaxError from JSON.parse (which previously surfaced as
+  // "login.tenantNotFound" in the console).
 
   async resolveTenant(slug: string): Promise<TenantInfo> {
-    const tenant = await this.request<SupabaseTenant>(`/tenants/${slug}`);
+    const tenant = await request<SupabaseTenant>(`/auth/tenants/${slug}`);
     return {
       id: tenant.id,
       name: tenant.name,
@@ -50,36 +43,36 @@ export class CloudAuthProvider implements IAuthProvider {
     };
   }
 
-  async loginAdmin(request: LoginRequest): Promise<LoginResponse> {
-    if (!request.email || !request.password) {
+  async loginAdmin(requestAuth: LoginRequest): Promise<LoginResponse> {
+    if (!requestAuth.email || !requestAuth.password) {
       throw new Error('Email and password required');
     }
 
-    const result = await this.request<{ user: SupabaseUser; token: string }>('/login/email', {
+    const result = await request<{ user: SupabaseUser; token: string }>('/auth/login/email', {
       method: 'POST',
-      body: JSON.stringify({
-        email: request.email,
-        password: request.password,
-        tenant_slug: request.tenantSlug,
-      }),
+      body: {
+        email: requestAuth.email,
+        password: requestAuth.password,
+        tenant_slug: requestAuth.tenantSlug,
+      },
     });
 
     const user: User = this.mapUser(result.user);
     return { user, token: result.token };
   }
 
-  async loginStaff(request: LoginRequest): Promise<LoginResponse> {
-    if (!request.pin) {
+  async loginStaff(requestAuth: LoginRequest): Promise<LoginResponse> {
+    if (!requestAuth.pin) {
       throw new Error('PIN required');
     }
 
-    const result = await this.request<{ user: SupabaseUser; token: string }>('/login/pin', {
+    const result = await request<{ user: SupabaseUser; token: string }>('/auth/login/pin', {
       method: 'POST',
-      body: JSON.stringify({
-        pin_code: request.pin,
-        identity: request.identity,
-        tenant_slug: request.tenantSlug,
-      }),
+      body: {
+        pin_code: requestAuth.pin,
+        identity: requestAuth.identity,
+        tenant_slug: requestAuth.tenantSlug,
+      },
     });
 
     const user: User = this.mapUser(result.user);
@@ -88,7 +81,7 @@ export class CloudAuthProvider implements IAuthProvider {
 
   async checkHealth(): Promise<boolean> {
     try {
-      await this.request('/status');
+      await request('/auth/status');
       return true;
     } catch {
       return false;
@@ -96,7 +89,7 @@ export class CloudAuthProvider implements IAuthProvider {
   }
 
   async getProfile(token: string): Promise<User> {
-    const result = await this.request<{ user: SupabaseUser }>('/me', {
+    const result = await request<{ user: SupabaseUser }>('/auth/me', {
       headers: {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${token}`,

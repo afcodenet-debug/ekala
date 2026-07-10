@@ -20,6 +20,10 @@ function persistToSqlite(events: TraceLogEntry[]): void {
   // DB and triggers a full table scan in the (now skipped) Supabase sync timer.
   if (dataSource.isLocal()) return;
 
+  // CLOUD mode: there is no local SQLite at all (RENDER_CLOUD_MODE forbids it),
+  // so there is nothing to persist here. The disk→Supabase path handles cloud.
+  if (dataSource.isCloud()) return;
+
   try {
     // Dynamic require to avoid crash if better-sqlite3 is not available
     const db = require('../db/database').default;

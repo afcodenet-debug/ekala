@@ -7,6 +7,7 @@
 
 import { useState, useEffect } from 'react';
 import { RuntimeContext } from '../core/runtime/runtime-context';
+import { request } from '../lib/api-client';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -91,50 +92,30 @@ export function useBillingStatus(tenantId: string | null): UseBillingStatusResul
     setError(null);
 
     try {
-      // Récupère le token JWT depuis le localStorage
-      const token = (() => {
-        try {
-          const raw = localStorage.getItem('ekala-auth');
-          if (!raw) return null;
-          const parsed = JSON.parse(raw);
-          return parsed?.state?.token || null;
-        } catch { return null; }
-      })();
+      // Token JWT is attached automatically by the shared `request` helper
+      // (it reads ekala-auth from localStorage). The helper also handles
+      // non-JSON responses gracefully (no raw JSON.parse SyntaxError), which
+      // previously surfaced as "Failed to check billing status".
 
       // Essayer le nouveau système V1.1
-      const response = await fetch(`/api/v1/subscription/status/${tenantId}`, {
-        headers: {
-          ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
-        }
-      });
-      
-      if (response.ok) {
-        const data = await response.json();
-        
+      const data = await request<{
+        active: boolean;
+        plan?: string | null;
+        expires_at?: string | null;
+        daysUntilRenewal?: number | null;
+        isGracePeriod?: boolean;
+        isExpired?: boolean;
+      }>(`/v1/subscription/status/${tenantId}`);
         setStatus({
           active: data.active,
-          plan: data.plan,
-          expiresAt: data.expires_at,
-          daysUntilRenewal: data.daysUntilRenewal,
+          plan: data.plan ?? null,
+          expiresAt: data.expires_at ?? null,
+          daysUntilRenewal: data.daysUntilRenewal ?? null,
           state: data.active ? 'active' : (data.isGracePeriod ? 'grace' : 'expired'),
-          graceDaysRemaining: data.graceDaysRemaining,
-          isExpired: data.isExpired,
-          isGracePeriod: data.isGracePeriod,
-        });
-      } else {
-        // Fallback: ancien système ou pas de subscription
-        // Fail-open: permettre l'accès
-        setStatus({
-          active: true,
-          plan: null,
-          expiresAt: null,
-          daysUntilRenewal: null,
-          state: 'active',
           graceDaysRemaining: null,
-          isExpired: false,
-          isGracePeriod: false,
+          isExpired: data.isExpired ?? false,
+          isGracePeriod: data.isGracePeriod ?? false,
         });
-      }
     } catch (err) {
       console.error('Failed to check billing status:', err);
       setError('Failed to check subscription status');

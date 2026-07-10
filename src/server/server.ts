@@ -689,12 +689,18 @@ app.listen(PORT, async () => {
   console.log('[RENDER BOOT] endpoints mounted: /health, /test, /api/auth, /api/menu, /api/tables, /api/products, /api/categories, /api/orders, /api/sales, /api/expenses, /api/dashboard, /api/users, /api/settings, /api/logs, /api/inventory, /api/reports, /api/suppliers, /api/purchase-orders, /api/stock-adjustments');
 
   // Lightweight Supabase → SQLite pull worker (QR orders visibility)
-  // Only start if Supabase credentials are available and NOT in LOCAL mode
-  if (!dataSource.isLocal() && env.SUPABASE_URL && env.SUPABASE_SERVICE_ROLE_KEY) {
+  // ONLY meaningful when a real local SQLite exists (Electron / LOCAL mode).
+  // In CLOUD mode there is no local SQLite (RENDER_CLOUD_MODE forbids it), so
+  // these workers would crash every cycle on `db.prepare is not a function`.
+  // The cloud frontend reads directly from Supabase, so no pull is needed.
+  if (dataSource.isLocal() && env.SUPABASE_URL && env.SUPABASE_SERVICE_ROLE_KEY) {
     startSupabasePullWorker();
     startSupabaseRealtimePull();
+    console.log('[Supabase] Local SQLite detected — started pull workers (QR orders → SQLite)');
+  } else if (dataSource.isCloud()) {
+    console.log('[Supabase] CLOUD mode — skipping pull workers (no local SQLite, reads from Supabase directly)');
   } else if (dataSource.isLocal()) {
-    console.log('[Supabase] Local mode — skipping pull workers');
+    console.log('[Supabase] Local mode — skipping pull workers (credentials not configured)');
   } else {
     console.log('[Supabase] Credentials not configured — skipping pull workers');
   }

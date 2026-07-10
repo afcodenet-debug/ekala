@@ -124,6 +124,12 @@ export async function flushSqliteToSupabase(): Promise<number> {
   // hundreds of thousands of rows) and starve the event loop.
   if (dataSource.isLocal()) return 0;
 
+  // CLOUD mode has no local SQLite at all, so there is nothing to read from.
+  // The disk→Supabase persistence is already handled by flushDiskToSqlite()
+  // (persistTraceEvents writes directly to Supabase in cloud mode). Attempting
+  // to query `db.prepare` here would throw "db.prepare is not a function".
+  if (dataSource.isCloud()) return 0;
+
   if (isSyncingToSupabase) return 0;
   isSyncingToSupabase = true;
 
@@ -214,11 +220,12 @@ export function startFlushScheduler(): void {
     }
   }, FLUSH_INTERVAL_MS);
 
-  // Supabase sync timer — only meaningful when a Supabase target exists.
-  // In LOCAL mode this is skipped to avoid scanning the (potentially huge)
-  // traces_events table on every tick, which would peg the CPU and block
-  // the HTTP server.
-  if (!dataSource.isLocal()) {
+  // Supabase sync timer — only meaningful when a local SQLite exists AND a
+  // Supabase target is reachable (i.e. a Hybrid/Local-with-Supabase setup).
+  // In pure CLOUD mode there is no SQLite to scan, and in pure LOCAL mode there
+  // is no Supabase target — skip the timer in both to avoid wasted cycles and
+  // the "db.prepare is not a function" crash in cloud mode.
+  if (!dataSource.isLocal() && !dataSource.isCloud()) {
     supabaseSyncTimer = setInterval(async () => {
       try {
         await flushSqliteToSupabase();
