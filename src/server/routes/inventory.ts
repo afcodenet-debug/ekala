@@ -5,6 +5,7 @@ import { env } from '../config/env';
 import { createClient } from '@supabase/supabase-js';
 
 const router = express.Router();
+// const router = express.Router();
 
 // Get stock levels for dashboard
 router.get('/stock-levels', async (req: any, res) => {
