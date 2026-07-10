@@ -26,6 +26,13 @@ const T = {
     serverError:   d('Server unavailable — please contact support.', 'Serveur indisponible — contactez le support.', 'Servidor indisponível — contate o suporte.'),
     failed:        d('Login Failed',    'Échec de connexion',  'Falha de Entrada'),
     loading:       d('Verifying…',      'Vérification…',       'A verificar…'),
+    reconnect: {
+      title:         d('Session Expired',         'Session expirée',          'Sessão expirada'),
+      message:       d('Your session has expired for security reasons.', 'Votre session a expiré pour des raisons de sécurité.', 'Sua sessão expirou por motivos de segurança.'),
+      messageSecondary: d('Please log in again to continue.', 'Veuillez vous reconnecter pour continuer.', 'Inicie sessão novamente para continuar.'),
+      cta:           d('Reconnect',               'Se reconnecter',           'Reconectar'),
+      dataPreserved: d('Your local data is preserved', 'Vos données locales sont préservées', 'Seus dados locais estão preservados'),
+    },
   },
 
   // ── sidebar ─────────────────────────────────────────────────────────
@@ -1371,6 +1378,73 @@ const T = {
         meta: d('No credit card required for the trial.', 'Aucune carte bancaire requise pour l\'essai.', 'Nenhum cartão de crédito necessário para o teste.'),
       },
       close: d('Close', 'Fermer', 'Fechar'),
+    },
+  },
+
+  // ── notifications ────────────────────────────────────────────────────
+  notifications: {
+    toast: {
+      viewDetails: d('View details', 'Voir le détail', 'Ver detalhes'),
+      close:      d('Close',      'Fermer',          'Fechar'),
+    },
+    bell: {
+      title: d('Notifications', 'Notifications', 'Notificações'),
+    },
+    center: {
+      title:            d('Notifications',     'Notifications',          'Notificações'),
+      markAllRead:      d('Mark all as read',    'Tout lire',              'Marcar tudo como lido'),
+      tabAll:           d('All ({count})',       'Toutes ({count})',       'Todas ({count})'),
+      tabUnread:        d('Unread ({count})',    'Non lues ({count})',    'Não lidas ({count})'),
+      emptyUnreadTitle: d('No unread notifications', 'Aucune notification non lue', 'Nenhuma notificação não lida'),
+      emptyAllTitle:    d('No notifications',     'Aucune notification',     'Nenhuma notificação'),
+      emptyUnreadMsg:   d('All your notifications have been read.',       'Toutes vos notifications ont été lues.',       'Todas as suas notificações foram lidas.'),
+      emptyAllMsg:      d('New notifications will appear here in real time.', 'Les nouvelles notifications apparaîtront ici en temps réel.', 'Novas notificações aparecerão aqui em tempo real.'),
+      allUpdated:       d('All caught up', 'Tout est à jour', 'Tudo em dia'),
+      footer:           d('Data stored locally on this device', 'Données stockées localement sur cet appareil', 'Dados armazenados localmente neste dispositivo'),
+      priority: {
+        critical: d('Critical',   'Critique',     'Crítico'),
+        high:     d('High',       'Priorité haute', 'Alta'),
+        medium:   d('Medium',     'Normale',       'Média'),
+        low:      d('Low',        'Basse',         'Baixa'),
+      },
+    },
+    network: {
+      retry:      d('Unstable connection',       'Connexion instable',      'Conexão instável'),
+      error:      d('Connection error',           'Erreur de connexion',     'Erro de conexão'),
+      reconnected:d('Reconnected',                'Reconnecté',              'Reconectado'),
+      restored:   d('Connection restored',        'Connexion rétablie',      'Conexão restaurada'),
+      autoRetry:  d('New automatic retry in progress...', 'Nouvel essai automatique en cours...', 'Nova tentativa automática em andamento...'),
+      retryBtn:   d('Retry',                      'Réessayer',               'Tentar novamente'),
+    },
+    statusToast: {
+      close:   d('Close',   'Fermer',   'Fechar'),
+      details: d('Details', 'Détails', 'Detalhes'),
+      line:    d('line',    'ligne',   'linha'),
+    },
+    subscription: {
+      expired:         d('Subscription Expired', 'Abonnement Expiré', 'Assinatura Expirada'),
+      grace:           d('Grace Period',         'Période de Grâce',  'Período de Carência'),
+      noActiveSub:     d('No Active Subscription', 'Aucun Abonnement Actif', 'Nenhuma Assinatura Ativa'),
+      pending:         d('Account Pending',      'Compte en Attente',   'Conta Pendente'),
+      info:            d('Information',          'Information',         'Informação'),
+      expiredMsg:      d('Your subscription has expired. Renew it to continue using all features.', 'Votre abonnement a expiré. Renouvelez-le pour continuer à utiliser toutes les fonctionnalités.', 'Sua assinatura expirou. Renove para continuar usando todos os recursos.'),
+      graceMsg:        d('Your subscription has expired. You have {days} grace days left. Renew now.', 'Votre abonnement a expiré. Il vous reste {days} jours de grâce. Renouvelez maintenant.', 'Sua assinatura expirou. Você tem {days} dias de carência restantes. Renove agora.'),
+      noPlanMsg:       d('Choose a plan to start using the platform.', 'Choisissez un plan pour commencer à utiliser la plateforme.', 'Escolha um plano para começar a usar a plataforma.'),
+      pendingMsg:      d('Your account is pending activation. Please enter a voucher code.', 'Votre compte est en attente d\'activation. Veuillez saisir un code voucher.', 'Sua conta está pendente de ativação. Insira um código voucher.'),
+      checkMessage:    d('Please verify your subscription.', 'Veuillez vérifier votre abonnement.', 'Por favor, verifique sua assinatura.'),
+      currentPlan:     d('Current plan: {name}', 'Plan actuel: {name}', 'Plano atual: {name}'),
+      renew:           d('Renew',              'Renouveler',           'Renovar'),
+      viewPlans:       d('View Plans',          'Voir les Plans',       'Ver Planos'),
+      activateWithVoucher: d('Activate with Voucher', 'Activer avec Voucher', 'Ativar com Voucher'),
+      viewPricing:     d('View Pricing',        'Voir les Tarifs',     'Ver Preços'),
+    },
+    alert: {
+      timeAgo: d('{time} ago', 'Il y a {time}', 'Há {time}'),
+    },
+    time: {
+      justNow:   d('Just now',   "À l'instant",    'Agora mesmo'),
+      minutesAgo:d('{count} min ago',       'Il y a {count} min',       'Há {count} min'),
+      hoursAgo:  d('{count} h ago',         'Il y a {count} h',         'Há {count} h'),
     },
   },
 };

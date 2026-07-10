@@ -135,9 +135,9 @@ function App() {
 
   return (
     <ErrorBoundary>
-      <SubscriptionBanner />
       <QueryClientProvider client={queryClient}>
         <I18nProvider lang={language}>
+          <SubscriptionBanner />
           <ReconnectModal />
           <SessionExpiredModal 
             isOpen={showSessionExpiredModal} 

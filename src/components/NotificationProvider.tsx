@@ -1,12 +1,11 @@
 // Notification System V3 - Provider Component
 // Initializes notification polling and provides context to the app
 import { useNotifications } from '../hooks/useNotifications';
-import { useAuthStore } from '../stores/useAuthStore';
 import { NotificationCenter } from './NotificationCenter';
 import { useNotificationStore } from '../stores/useNotificationStore';
 
 export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const { user } = useAuthStore();
+
   const { isCenterOpen, closeCenter } = useNotificationStore();
 
   // Initialize notification polling when user is authenticated

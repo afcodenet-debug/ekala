@@ -1,6 +1,7 @@
 import React, { ReactNode } from 'react';
 import { AlertTriangle, AlertCircle, CheckCircle2, Info, X } from 'lucide-react';
 import { EnterpriseTokens } from '../lib/design-system';
+import { useI18n } from '../lib/i18n';
 
 const { colors, radius, shadows } = EnterpriseTokens;
 
@@ -50,7 +51,8 @@ export const StatusToast: React.FC<StatusToastProps> = ({
   actions,
   onClose,
 }) => {
-  const { accent, background, border } = colorMap[variant];
+  const { t } = useI18n();
+  const { accent, background } = colorMap[variant];
 
   return (
     <div
@@ -128,8 +130,8 @@ export const StatusToast: React.FC<StatusToastProps> = ({
                   borderRadius: '10px',
                   transition: 'all 0.15s ease',
                 }}
-                aria-label="Fermer"
-                title="Fermer"
+                aria-label={t('notifications.statusToast.close')}
+                title={t('notifications.statusToast.close')}
                 onMouseOver={e => {
                   (e.currentTarget as HTMLButtonElement).style.background = colors.surface;
                   (e.currentTarget as HTMLButtonElement).style.color = colors.text1;
@@ -152,8 +154,10 @@ export const StatusToast: React.FC<StatusToastProps> = ({
         {details?.length ? (
           <div style={{ marginTop: 16, padding: '14px 16px', borderRadius: radius.md, background: 'rgba(255,255,255,0.03)', border: `1px solid ${colors.borderHi}` }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
-              <span style={{ fontSize: '12px', fontWeight: 700, color: accent }}>Détails</span>
-              <span style={{ fontSize: '12px', color: colors.text3, fontWeight: 700 }}>{details.length} ligne{details.length > 1 ? 's' : ''}</span>
+              <span style={{ fontSize: '12px', fontWeight: 700, color: accent }}>{t('notifications.statusToast.details')}</span>
+              <span style={{ fontSize: '12px', color: colors.text3, fontWeight: 700 }}>
+                {details.length} {t('notifications.statusToast.line')}{details.length > 1 ? 's' : ''}
+              </span>
             </div>
             <div style={{ display: 'grid', gap: 10 }}>
               {details.map((item, index) => (

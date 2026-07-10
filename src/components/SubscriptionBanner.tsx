@@ -9,6 +9,7 @@ import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AlertTriangle, CreditCard, Info } from 'lucide-react';
 import { useBillingStatus } from '../hooks/useBillingStatus';
+import { useI18n } from '../lib/i18n';
 
 // ── Styles ────────────────────────────────────────────────────────────────────
 
@@ -45,6 +46,7 @@ const bannerStyles: Record<string, React.CSSProperties> = {
  */
 export function SubscriptionBanner() {
   const navigate = useNavigate();
+  const { t } = useI18n();
   const { status, loading, isExpired, isGracePeriod, planName, daysUntilRenewal } = useBillingStatus('16'); // TODO: utiliser le tenant_id réel
 
   if (loading || !status) {
@@ -70,28 +72,28 @@ export function SubscriptionBanner() {
   const getMessage = (): { title: string; message: string } => {
     if (isExpired) {
       return {
-        title: 'Abonnement Expiré',
-        message: `Votre abonnement a expiré. Renouvelez-le pour continuer à utiliser toutes les fonctionnalités.`,
+        title: t('notifications.subscription.expired'),
+        message: t('notifications.subscription.expiredMsg'),
       };
     } else if (isGracePeriod) {
       return {
-        title: 'Période de Grâce',
-        message: `Votre abonnement a expiré. Il vous reste ${daysUntilRenewal} jours de grâce. Renouvelez maintenant.`,
+        title: t('notifications.subscription.grace'),
+        message: t('notifications.subscription.graceMsg', { days: daysUntilRenewal ?? 0 }),
       };
     } else if (status.state === 'no_plan') {
       return {
-        title: 'Aucun Abonnement Actif',
-        message: 'Choisissez un plan pour commencer à utiliser la plateforme.',
+        title: t('notifications.subscription.noActiveSub'),
+        message: t('notifications.subscription.noPlanMsg'),
       };
     } else if (status.state === 'pending') {
       return {
-        title: 'Compte en Attente',
-        message: 'Votre compte est en attente d\'activation. Veuillez saisir un code voucher.',
+        title: t('notifications.subscription.pending'),
+        message: t('notifications.subscription.pendingMsg'),
       };
     }
     return {
-      title: 'Information',
-      message: 'Veuillez vérifier votre abonnement.',
+      title: t('notifications.subscription.info'),
+      message: t('notifications.subscription.checkMessage'),
     };
   };
 
@@ -140,7 +142,7 @@ export function SubscriptionBanner() {
           </p>
           {planName && (
             <p style={{ margin: '4px 0 0 0', fontSize: '12px', opacity: 0.85 }}>
-              Plan actuel: {planName}
+              {t('notifications.subscription.currentPlan', { name: planName })}
             </p>
           )}
         </div>
@@ -168,7 +170,7 @@ export function SubscriptionBanner() {
             onMouseOut={(e) => e.currentTarget.style.transform = 'scale(1)'}
           >
             <CreditCard size={16} />
-            Activer avec Voucher
+            {t('notifications.subscription.activateWithVoucher')}
           </button>
         ) : (
           <>
@@ -192,9 +194,9 @@ export function SubscriptionBanner() {
               onMouseOut={(e) => e.currentTarget.style.transform = 'scale(1)'}
             >
               <CreditCard size={16} />
-              {isExpired ? 'Renouveler' : 'Voir les Plans'}
+              {isExpired ? t('notifications.subscription.renew') : t('notifications.subscription.viewPlans')}
             </button>
-            
+
             {isExpired && (
               <button
                 onClick={handleViewPlans}
@@ -215,7 +217,7 @@ export function SubscriptionBanner() {
                 onMouseOver={(e) => e.currentTarget.style.transform = 'scale(1.05)'}
                 onMouseOut={(e) => e.currentTarget.style.transform = 'scale(1)'}
               >
-                Voir les Tarifs
+                {t('notifications.subscription.viewPricing')}
               </button>
             )}
           </>

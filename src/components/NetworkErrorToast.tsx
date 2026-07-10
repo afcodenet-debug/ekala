@@ -5,6 +5,7 @@
 
 import React, { useEffect, useState } from 'react';
 import { WifiOff, RefreshCw, AlertCircle } from 'lucide-react';
+import { useI18n } from '../lib/i18n';
 
 // ─── Design Tokens ────────────────────────────────────────────────────────────
 const T = {
@@ -49,6 +50,7 @@ export const NetworkErrorToast: React.FC<NetworkErrorToastProps> = ({
   onDismiss,
   onRetry,
 }) => {
+  const { t } = useI18n();
   if (!toast) return null;
 
   const getIcon = () => {
@@ -106,10 +108,10 @@ export const NetworkErrorToast: React.FC<NetworkErrorToastProps> = ({
       {getIcon()}
       <div style={{ flex: 1 }}>
         <div style={{ fontWeight: 600, marginBottom: 2, fontSize: 13 }}>
-          {toast.type === 'retry' && 'Connexion instable'}
-          {toast.type === 'error' && 'Erreur de connexion'}
-          {toast.type === 'success' && 'Connexion rétablie'}
-          {toast.type === 'reconnected' && 'Reconnecté'}
+          {toast.type === 'retry' && t('notifications.network.retry')}
+          {toast.type === 'error' && t('notifications.network.error')}
+          {toast.type === 'success' && t('notifications.network.restored')}
+          {toast.type === 'reconnected' && t('notifications.network.reconnected')}
         </div>
         <div style={{ fontSize: 11, opacity: 0.9 }}>
           {toast.message}
@@ -131,7 +133,7 @@ export const NetworkErrorToast: React.FC<NetworkErrorToastProps> = ({
             whiteSpace: 'nowrap',
           }}
         >
-          Réessayer
+          {t('notifications.network.retryBtn')}
         </button>
       )}
       <button
@@ -182,16 +184,16 @@ export const useNetworkToast = () => {
     setToast({ id, type, message, context, duration });
   };
 
-  const dismissToast = (id: string) => {
+  const dismissToast = (_id: string) => {
     setToast(null);
     setRetryCallback(null);
   };
 
-  const showRetryToast = (context: string, onRetry?: () => void) => {
+  const showRetryToast = (message: string, onRetry?: () => void) => {
     showToast(
       'retry',
-      `Nouvel essai automatique en cours...`,
-      context,
+      message,
+      '',
       4000,
       onRetry
     );

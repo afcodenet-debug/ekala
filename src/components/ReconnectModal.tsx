@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Lock, RefreshCw, Shield } from 'lucide-react';
+import { useI18n } from '../lib/i18n';
 
 /**
  * ReconnectModal - Affiche un modal élégant quand la session expire
- * 
+ *
  * Architecture:
  * - Écoute l'événement 'auth:show-reconnect-modal' émis par AuthStore
  * - Affiche un modal avec glassmorphism design
@@ -15,6 +16,7 @@ export const ReconnectModal = () => {
   const [isVisible, setIsVisible] = useState(false);
   const [isAnimating, setIsAnimating] = useState(false);
   const navigate = useNavigate();
+  const { t } = useI18n();
 
   useEffect(() => {
     // Écouter l'événement d'expiration de token
@@ -113,7 +115,7 @@ export const ReconnectModal = () => {
             letterSpacing: '0.02em',
           }}
         >
-          Session expirée
+          {t('auth.reconnect.title')}
         </h2>
 
         {/* Message */}
@@ -125,9 +127,8 @@ export const ReconnectModal = () => {
             lineHeight: 1.6,
             marginBottom: 8,
           }}
-        >
-          Votre session a expiré pour des raisons de sécurité.
-        </p>
+          dangerouslySetInnerHTML={{ __html: t('auth.reconnect.message') }}
+        />
 
         <p
           style={{
@@ -138,12 +139,12 @@ export const ReconnectModal = () => {
             marginBottom: 32,
           }}
         >
-          Veuillez vous reconnecter pour continuer.
+          {t('auth.reconnect.messageSecondary')}
         </p>
 
         {/* Bouton de reconnexion */}
         <button
-          onClick={handleReconnect}
+        onClick={handleReconnect}
           style={{
             width: '100%',
             padding: '14px 24px',
@@ -174,7 +175,7 @@ export const ReconnectModal = () => {
           }}
         >
           <RefreshCw size={18} />
-          Se reconnecter
+          {t('auth.reconnect.cta')}
         </button>
 
         {/* Note de sécurité */}
@@ -193,7 +194,7 @@ export const ReconnectModal = () => {
         >
           <Shield size={14} color="#D4AF37" />
           <span style={{ fontSize: 11, color: '#a8997e', letterSpacing: '0.03em' }}>
-            Vos données locales sont préservées
+            {t('auth.reconnect.dataPreserved')}
           </span>
         </div>
 

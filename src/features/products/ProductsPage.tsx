@@ -471,74 +471,177 @@ const ProductCard = ({
   );
 };
 
-// ─── Toast ────────────────────────────────────────────────────────────────────
+// ─── Types pour le toast ──────────────────────────────────────────────────────
+interface ToastAction {
+  label: string;
+  onClick: () => void;
+  variant?: 'default' | 'ghost';
+}
+
+/** Données minimales stockées dans l'état (sans les props de rendu) */
+interface ToastData {
+  type: 'success' | 'error';
+  msg: string;
+  productName?: string;
+  details?: string;
+  actions?: ToastAction[];
+}
+
+interface ToastProps extends ToastData {
+  onDismiss: () => void;
+  isMobile: boolean;
+  colors: any;
+}
+
+// ─── Toast ― composant notification professionnel ──────────────────────────────
 const Toast = ({
   type, msg, onDismiss, isMobile, colors,
-}: { type: 'success' | 'error'; msg: string; onDismiss: () => void; isMobile: boolean; colors: any }) => {
+  productName, details, actions,
+}: ToastProps) => {
+  const config = {
+    success: { accent: colors.accent?.green, icon: '✓', borderAccent: `${colors.accent?.green}18` },
+    error:   { accent: colors.accent?.red,   icon: '✕', borderAccent: `${colors.accent?.red}32` },
+    info:    { accent: colors.accent?.blue,  icon: 'ℹ', borderAccent: `${colors.accent?.blue}25` },
+    warning: { accent: colors.accent?.amber, icon: '⚠', borderAccent: `${colors.accent?.amber}30` },
+  }[type];
+
   const isSuccess = type === 'success';
-  const accent = isSuccess ? colors.accent?.green : colors.accent?.red;
 
   return (
     <div
       role="status"
       aria-live="polite"
       style={{
-        position: 'fixed',
+        position: 'fixed' as const,
         bottom: isMobile ? '80px' : '24px',
         right: isMobile ? '12px' : '24px',
         left: isMobile ? '12px' : 'auto',
         zIndex: 9999,
-        maxWidth: isMobile ? 'none' : '380px',
-        background: isSuccess ? 'rgba(10,10,20,0.92)' : `${accent}10`,
-        border: `1px solid ${accent}${isSuccess ? '18' : '32'}`,
-        borderRadius: '14px',
-        padding: '14px 16px',
-        display: 'flex', alignItems: 'center', gap: '12px',
-        boxShadow: `0 20px 48px rgba(0,0,0,0.45), 0 4px 12px rgba(0,0,0,0.25), 0 0 0 1px ${accent}10`,
-        backdropFilter: 'blur(20px)',
-        WebkitBackdropFilter: 'blur(20px)',
-        animation: 'pp-toast-in 0.32s cubic-bezier(0.34,1.56,0.64,1) both',
+        width: isMobile ? 'calc(100% - 24px)' : '420px',
+        background: '#0a0a14f2',
+        border: `1px solid ${config.borderAccent}`,
+        borderRadius: '16px',
+        overflow: 'hidden',
+        boxShadow: `0 24px 60px rgba(0,0,0,0.55), 0 4px 12px rgba(0,0,0,0.3), 0 0 0 1px ${config.accent}10`,
+        backdropFilter: 'blur(24px)',
+        WebkitBackdropFilter: 'blur(24px)',
+        animation: 'pp-toast-in 0.35s cubic-bezier(0.34,1.56,0.64,1) both',
       }}
     >
-      {/* Icon circle */}
+      {/* Accent barre supérieure */}
       <div style={{
-        width: '30px', height: '30px', borderRadius: '50%', flexShrink: 0,
-        background: `${accent}18`,
-        border: `1px solid ${accent}30`,
-        color: accent,
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-        fontSize: '14px', fontWeight: 800,
-        boxShadow: `0 0 0 4px ${accent}0c`,
-      }}>
-        {isSuccess ? '✓' : '✕'}
+        height: '3px',
+        background: `linear-gradient(90deg, ${config.accent}, ${config.accent}60, transparent)`,
+        width: '100%',
+      }} />
+
+      <div style={{ padding: '16px 16px 14px' }}>
+        {/* Header avec icône + titre */}
+        <div style={{ display: 'flex', alignItems: 'flex-start', gap: '12px' }}>
+          <div style={{
+            width: '34px', height: '34px', borderRadius: '10px', flexShrink: 0,
+            background: `${config.accent}14`,
+            border: `1px solid ${config.accent}25`,
+            color: config.accent,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            fontSize: '16px', fontWeight: 800,
+            boxShadow: `0 0 0 4px ${config.accent}08`,
+          }}>
+            {config.icon}
+          </div>
+
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{
+              fontWeight: 650, fontSize: '14px', color: '#e8e8f2',
+              letterSpacing: '-0.01em', lineHeight: 1.4, marginBottom: '3px',
+            }}>
+              {productName && (
+                <span style={{ color: config.accent, fontWeight: 700 }}>{productName}</span>
+              )}
+              {productName && msg && ' — '}
+              {msg}
+            </div>
+
+            {details && (
+              <div style={{
+                fontSize: '12.5px', color: '#7b7b95', lineHeight: 1.5,
+                marginTop: '6px', padding: '8px 10px',
+                background: 'rgba(255,255,255,0.03)',
+                border: '1px solid rgba(255,255,255,0.05)',
+                borderRadius: '8px',
+                fontFamily: "'DM Mono', monospace",
+                letterSpacing: '0.01em',
+              }}>
+                {details}
+              </div>
+            )}
+          </div>
+
+          <button
+            type="button"
+            onClick={onDismiss}
+            style={{
+              width: '28px', height: '28px', borderRadius: '8px', flexShrink: 0,
+              border: '1px solid rgba(255,255,255,0.06)',
+              background: 'rgba(255,255,255,0.03)',
+              color: '#5a5a72',
+              cursor: 'pointer',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              fontSize: '13px', fontWeight: 600,
+              transition: 'all 0.15s ease',
+            }}
+            aria-label="Fermer"
+            onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = 'rgba(255,255,255,0.08)'; (e.currentTarget as HTMLButtonElement).style.color = '#9090aa'; }}
+            onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = 'rgba(255,255,255,0.03)'; (e.currentTarget as HTMLButtonElement).style.color = '#5a5a72'; }}
+          >
+            ✕
+          </button>
+        </div>
+
+        {/* Actions rapides */}
+        {actions && actions.length > 0 && (
+          <div style={{
+            display: 'flex', gap: '8px', marginTop: '12px',
+            paddingTop: '12px',
+            borderTop: '1px solid rgba(255,255,255,0.05)',
+          }}>
+            {actions.map((action, i) => (
+              <button
+                key={i}
+                type="button"
+                onClick={(e) => { e.stopPropagation(); action.onClick(); }}
+                style={{
+                  padding: '8px 14px', borderRadius: '9px',
+                  border: action.variant === 'ghost'
+                    ? '1px solid rgba(255,255,255,0.08)'
+                    : `1px solid ${config.accent}30`,
+                  background: action.variant === 'ghost'
+                    ? 'transparent'
+                    : `${config.accent}14`,
+                  color: action.variant === 'ghost' ? '#7b7b95' : config.accent,
+                  cursor: 'pointer', flex: 1,
+                  fontSize: '12px', fontWeight: 700,
+                  letterSpacing: '0.02em',
+                  textTransform: 'uppercase',
+                  transition: 'all 0.15s ease',
+                }}
+                onMouseEnter={e => {
+                  const btn = e.currentTarget;
+                  btn.style.background = action.variant === 'ghost' ? 'rgba(255,255,255,0.05)' : `${config.accent}22`;
+                  btn.style.transform = 'translateY(-1px)';
+                }}
+                onMouseLeave={e => {
+                  const btn = e.currentTarget;
+                  btn.style.background = action.variant === 'ghost' ? 'transparent' : `${config.accent}14`;
+                  btn.style.transform = 'translateY(0)';
+                }}
+              >
+                {action.label}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
-
-      <span style={{
-        flex: 1, fontSize: dt.text.sm, fontWeight: 600,
-        color: isSuccess ? colors.text1 : accent,
-        lineHeight: 1.5,
-      }}>
-        {msg}
-      </span>
-
-      <button
-        type="button"
-        onClick={onDismiss}
-        style={{
-          width: '26px', height: '26px', borderRadius: '7px',
-          border: `1px solid ${colors.border}`,
-          background: 'rgba(255,255,255,0.04)',
-          color: colors.text3,
-          cursor: 'pointer', flexShrink: 0,
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-          fontSize: '12px', transition: dt.ease.snap,
-        }}
-        aria-label="Fermer"
-        onMouseEnter={e => { e.currentTarget.style.background = 'rgba(255,255,255,0.09)'; e.currentTarget.style.color = colors.text2; }}
-        onMouseLeave={e => { e.currentTarget.style.background = 'rgba(255,255,255,0.04)'; e.currentTarget.style.color = colors.text3; }}
-      >
-        ✕
-      </button>
     </div>
   );
 };
@@ -844,7 +947,7 @@ const ProductsPage = () => {
   const [selectedIds, setSelectedIds]           = useState<number[]>([]);
   const [sortField, setSortField]               = useState<'name' | 'stock_quantity' | 'selling_price'>('name');
   const [sortDirection, setSortDirection]       = useState<'asc' | 'desc'>('asc');
-  const [toast, setToast]                       = useState<{ type: 'success' | 'error'; msg: string } | null>(null);
+  const [toast, setToast]                       = useState<ToastData | null>(null);
   const [bulkArchiveConfirm, setBulkArchiveConfirm] = useState(false);
   const [bulkDeleteConfirm, setBulkDeleteConfirm]   = useState(false);
   const [deleteConfirmId, setDeleteConfirmId]       = useState<number | null>(null);
@@ -948,13 +1051,31 @@ const ProductsPage = () => {
   const confirmDelete = useCallback(async () => {
     if (!deleteConfirmId) return;
     const id = deleteConfirmId;
+    const product = products.find(p => p.id === id);
     setDeleteConfirmId(null);
     const ok = await deleteProduct(id);
-    setToast(ok
-      ? { type: 'success', msg: t('products.deletedSuccess') }
-      : { type: 'error',   msg: t('products.failedToDelete') });
+    if (ok) {
+      setToast({
+        type: 'success',
+        msg: t('products.deletedSuccess'),
+        productName: product?.name,
+        details: product ? `Stock: ${product.stock_quantity} ${product.unit} · Prix: $${product.selling_price.toFixed(2)}` : undefined,
+        actions: [
+          { label: 'Annuler', variant: 'ghost', onClick: () => {} },
+        ],
+      });
+    } else {
+      setToast({
+        type: 'error',
+        msg: t('products.failedToDelete'),
+        productName: product?.name,
+        actions: [
+          { label: 'Réessayer', onClick: () => requestDelete(id) },
+        ],
+      });
+    }
     fetchCategories(); fetchProducts();
-  }, [deleteConfirmId, deleteProduct, fetchCategories, fetchProducts, t]);
+  }, [deleteConfirmId, deleteProduct, fetchCategories, fetchProducts, t, products, requestDelete]);
 
   const handleDelete = useCallback(async (id: number) => requestDelete(id), [requestDelete]);
 
@@ -1220,8 +1341,13 @@ const ProductsPage = () => {
 
       {toast && (
         <Toast
-          type={toast.type} msg={toast.msg}
-          isMobile={isMobile} colors={colors}
+          type={toast.type}
+          msg={toast.msg}
+          productName={toast.productName}
+          details={toast.details}
+          actions={toast.actions}
+          isMobile={isMobile}
+          colors={colors}
           onDismiss={() => setToast(null)}
         />
       )}

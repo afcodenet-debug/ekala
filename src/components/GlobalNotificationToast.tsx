@@ -1,8 +1,8 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useNotificationStore, AppNotification } from '../stores/useNotificationStore';
-import { useSettingsStore } from '../stores/useSettingsStore';
 import { X, AlertCircle, AlertTriangle } from 'lucide-react';
+import { useI18n } from '../lib/i18n';
 
 /**
  * GlobalNotificationToast
@@ -138,13 +138,13 @@ const PRIORITY_CONFIG = {
   critical: {
     color: '#ef4444',
     bg: 'rgba(239,68,68,0.12)',
-    label: 'Critique',
+    labelKey: 'notifications.center.priority.critical',
     icon: <AlertCircle size={15} />,
   },
   high: {
     color: '#f59e0b',
     bg: 'rgba(245,158,11,0.11)',
-    label: 'Haute priorité',
+    labelKey: 'notifications.center.priority.high',
     icon: <AlertTriangle size={15} />,
   },
 };
@@ -152,7 +152,7 @@ const PRIORITY_CONFIG = {
 export const GlobalNotificationToast: React.FC = () => {
   const store = useNotificationStore();
   const { notifications, markAsRead } = store;
-  const { language } = useSettingsStore();
+  const { t } = useI18n();
   const navigate = useNavigate();
 
   const [visibleToast, setVisibleToast] = useState<AppNotification | null>(null);
@@ -187,7 +187,6 @@ export const GlobalNotificationToast: React.FC = () => {
 
   if (!visibleToast) return null;
 
-  const isFr = language === 'fr';
   const pConfig =
     PRIORITY_CONFIG[visibleToast.priority as keyof typeof PRIORITY_CONFIG] ??
     PRIORITY_CONFIG.high;
@@ -212,7 +211,7 @@ export const GlobalNotificationToast: React.FC = () => {
           <div className="gnt-message">{visibleToast.message}</div>
           {visibleToast.link && (
             <div className="gnt-cta" style={{ color: pConfig.color }}>
-              {isFr ? 'Voir le détail' : 'View details'}
+              {t('notifications.toast.viewDetails')}
               <span style={{ fontSize: 13, lineHeight: 1 }}>→</span>
             </div>
           )}
@@ -222,7 +221,7 @@ export const GlobalNotificationToast: React.FC = () => {
         <button
           className="gnt-close"
           onClick={(e) => { e.stopPropagation(); dismiss(); }}
-          aria-label="Fermer"
+          aria-label={t('notifications.toast.close')}
         >
           <X size={13} />
         </button>
@@ -232,7 +231,7 @@ export const GlobalNotificationToast: React.FC = () => {
       <div className="gnt-footer">
         <div className="gnt-dot" style={{ background: pConfig.color, opacity: 0.8 }} />
         <span className="gnt-footer-label" style={{ color: pConfig.color }}>
-          {pConfig.label}
+          {t(pConfig.labelKey)}
         </span>
       </div>
     </div>

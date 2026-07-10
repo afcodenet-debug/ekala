@@ -1,5 +1,6 @@
 import React from 'react';
 import { AlertTriangle, CheckCircle2, Info, XCircle } from 'lucide-react';
+import { useI18n } from '../lib/i18n';
 
 type AlertType = 'error' | 'warning' | 'success' | 'info';
 
@@ -12,6 +13,7 @@ interface AlertProps {
 }
 
 const Alert: React.FC<AlertProps> = ({ type, message, time, onAction, actionLabel }) => {
+  const { t } = useI18n();
   const icons = {
     error: XCircle,
     warning: AlertTriangle,
@@ -82,7 +84,7 @@ const Alert: React.FC<AlertProps> = ({ type, message, time, onAction, actionLabe
             fontSize: 10.5,
             color: 'rgba(255,255,255,0.4)',
           }}>
-            Il y a {time}
+            {t('notifications.alert.timeAgo', { time })}
           </div>
         )}
       </div>

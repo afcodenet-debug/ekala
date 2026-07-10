@@ -1,6 +1,7 @@
 import React from 'react';
 import { useNotificationStore, AppNotification } from '../stores/useNotificationStore';
 import { X, Bell, CheckCheck, Package, AlertTriangle, AlertCircle, Info } from 'lucide-react';
+import { useI18n } from '../lib/i18n';
 
 // ─── Inject styles once ───────────────────────────────────────────────────────
 if (typeof document !== 'undefined' && !document.getElementById('nc-styles')) {
@@ -202,32 +203,32 @@ if (typeof document !== 'undefined' && !document.getElementById('nc-styles')) {
 }
 
 // ─── Priority config ──────────────────────────────────────────────────────────
-const PRIORITY_CONFIG: Record<string, { color: string; bg: string; label: string; icon: React.ReactNode }> = {
+const PRIORITY_CONFIG: Record<string, { color: string; bg: string; labelKey: string; icon: React.ReactNode }> = {
   critical: {
     color: '#ef4444', bg: 'rgba(239,68,68,0.12)',
-    label: 'Critique', icon: <AlertCircle size={15} />,
+    labelKey: 'notifications.center.priority.critical', icon: <AlertCircle size={15} />,
   },
   high: {
     color: '#f59e0b', bg: 'rgba(245,158,11,0.11)',
-    label: 'Priorité haute', icon: <AlertTriangle size={15} />,
+    labelKey: 'notifications.center.priority.high', icon: <AlertTriangle size={15} />,
   },
   medium: {
     color: '#3b82f6', bg: 'rgba(59,130,246,0.1)',
-    label: 'Normale', icon: <Info size={15} />,
+    labelKey: 'notifications.center.priority.medium', icon: <Info size={15} />,
   },
   low: {
     color: '#6b7280', bg: 'rgba(107,114,128,0.1)',
-    label: 'Basse', icon: <Package size={15} />,
+    labelKey: 'notifications.center.priority.low', icon: <Package size={15} />,
   },
 };
 
-function formatTime(iso: string) {
+function formatTime(iso: string, t: (key: string, params?: Record<string, string | number>) => string) {
   const date = new Date(iso);
   const now = new Date();
   const diffMin = Math.floor((now.getTime() - date.getTime()) / 60000);
-  if (diffMin < 1) return "À l'instant";
-  if (diffMin < 60) return `Il y a ${diffMin} min`;
-  if (diffMin < 1440) return `Il y a ${Math.floor(diffMin / 60)} h`;
+  if (diffMin < 1) return t('notifications.time.justNow');
+  if (diffMin < 60) return t('notifications.time.minutesAgo', { count: diffMin });
+  if (diffMin < 1440) return t('notifications.time.hoursAgo', { count: Math.floor(diffMin / 60) });
   return date.toLocaleDateString('fr-FR', { day: '2-digit', month: 'short' });
 }
 
@@ -239,18 +240,19 @@ interface NotificationCenterProps {
 
 export const NotificationCenter: React.FC<NotificationCenterProps> = ({ isOpen, onClose }) => {
   const { notifications, unreadCount, markAsRead, markAllAsRead } = useNotificationStore();
+  const { t } = useI18n();
   const [activeTab, setActiveTab] = React.useState<'unread' | 'all'>('all');
 
   if (!isOpen) return null;
 
   const sorted = [...notifications].sort(
-    (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+    (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
   );
 
-  const filtered = activeTab === 'unread' ? sorted.filter((n) => !n.readAt) : sorted;
+  const filtered = activeTab === 'unread' ? sorted.filter((n) => !n.read_at) : sorted;
 
   const handleItemClick = (notif: AppNotification) => {
-    if (!notif.readAt) markAsRead(notif.id);
+    if (!notif.read_at) markAsRead(notif.id);
     if (notif.link) window.location.href = notif.link;
   };
 
@@ -260,26 +262,28 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({ isOpen, 
       <div className="nc-backdrop" onClick={onClose} />
 
       {/* Panel */}
-      <div className="nc-panel" role="dialog" aria-label="Centre de notifications">
+      <div className="nc-panel" role="dialog" aria-label={t('notifications.center.title')}>
         {/* Header */}
         <div className="nc-header">
           <div className="nc-header-icon">
             <Bell size={18} />
           </div>
           <div className="nc-header-text">
-            <div className="nc-header-title">Notifications</div>
+            <div className="nc-header-title">{t('notifications.center.title')}</div>
             <div className="nc-header-sub">
-              {unreadCount > 0 ? `${unreadCount} non lue${unreadCount > 1 ? 's' : ''}` : 'Tout est à jour'}
+              {unreadCount > 0
+                ? t('notifications.bell.unread', { count: unreadCount })
+                : t('notifications.center.allUpdated')}
             </div>
           </div>
           <div className="nc-header-actions">
             {unreadCount > 0 && (
               <button className="nc-btn-mark-all" onClick={markAllAsRead}>
                 <CheckCheck size={12} />
-                Tout lire
+                {t('notifications.center.markAllRead')}
               </button>
             )}
-            <button className="nc-btn-close" onClick={onClose} aria-label="Fermer">
+            <button className="nc-btn-close" onClick={onClose} aria-label={t('notifications.toast.close')}>
               <X size={15} />
             </button>
           </div>
@@ -291,13 +295,13 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({ isOpen, 
             className={`nc-tab ${activeTab === 'all' ? 'active' : ''}`}
             onClick={() => setActiveTab('all')}
           >
-            Toutes ({sorted.length})
+            {t('notifications.center.tabAll', { count: sorted.length })}
           </button>
           <button
             className={`nc-tab ${activeTab === 'unread' ? 'active' : ''}`}
             onClick={() => setActiveTab('unread')}
           >
-            Non lues{unreadCount > 0 ? ` (${unreadCount})` : ''}
+            {t('notifications.center.tabUnread', { count: unreadCount > 0 ? unreadCount : 0 })}
           </button>
         </div>
 
@@ -309,18 +313,18 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({ isOpen, 
                 <Bell size={22} />
               </div>
               <div className="nc-empty-title">
-                {activeTab === 'unread' ? 'Aucune notification non lue' : 'Aucune notification'}
+                {activeTab === 'unread' ? t('notifications.center.emptyUnreadTitle') : t('notifications.center.emptyAllTitle')}
               </div>
               <div className="nc-empty-sub">
                 {activeTab === 'unread'
-                  ? 'Toutes vos notifications ont été lues.'
-                  : 'Les nouvelles notifications apparaîtront ici en temps réel.'}
+                  ? t('notifications.center.emptyUnreadMsg')
+                  : t('notifications.center.emptyAllMsg')}
               </div>
             </div>
           ) : (
             filtered.map((notif: AppNotification) => {
               const pConf = PRIORITY_CONFIG[notif.priority] ?? PRIORITY_CONFIG.medium;
-              const isUnread = !notif.readAt;
+              const isUnread = !notif.read_at;
               const isHighPriority = notif.priority === 'high' || notif.priority === 'critical';
 
               return (
@@ -345,7 +349,7 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({ isOpen, 
                       <div className={`nc-item-title ${!isUnread ? 'read' : ''}`}>
                         {notif.title}
                       </div>
-                      <div className="nc-item-time">{formatTime(notif.createdAt)}</div>
+                      <div className="nc-item-time">{formatTime(notif.created_at, t)}</div>
                     </div>
                     <div className={`nc-item-msg ${!isUnread ? 'read' : ''}`}>
                       {notif.message}
@@ -360,7 +364,7 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({ isOpen, 
                         }}
                       >
                         {pConf.icon}
-                        {pConf.label}
+                        {t(pConf.labelKey)}
                       </div>
                     )}
                   </div>
@@ -373,7 +377,7 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({ isOpen, 
         {/* Footer */}
         <div className="nc-footer">
           <div className="nc-footer-dot" />
-          <span className="nc-footer-text">Données stockées localement sur cet appareil</span>
+          <span className="nc-footer-text">{t('notifications.center.footer')}</span>
           <div className="nc-footer-dot" />
         </div>
       </div>
