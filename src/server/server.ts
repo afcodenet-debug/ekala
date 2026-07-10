@@ -378,11 +378,16 @@ app.use('/api', (req, res, next) => {
 
   // SaaS endpoints are public and do not rely on tenant scope from JWT
   // Public QR Menu endpoints
+  // Legacy public subscription status (used by the login page to check a
+  // tenant's plan BEFORE authentication) is also public — it takes tenantId
+  // from the URL, not the JWT. Skipping here avoids a spurious 401 that would
+  // otherwise trigger a global logout on the login screen.
   if (p.startsWith('/menu') ||
       p.startsWith('/diagnostic') ||
       p.startsWith('/platform') ||
       p === '/plans' || p === '/tenants' || p.startsWith('/tenants/') ||
-      p.startsWith('/payments') || p.startsWith('/webhooks')) {
+      p.startsWith('/payments') || p.startsWith('/webhooks') ||
+      p.startsWith('/v1/subscription/status')) {
     return next();
   }
 
@@ -505,15 +510,15 @@ app.use('/api/notification_preferences', notificationPreferencesRoutes);
 app.use('/api/scheduled_reports_log', scheduledReportsLogRoutes);
 app.use('/api/billing', billingRoutes);
 
-// Legacy route: /api/v1/subscription/status/:tenantId → /api/billing/v1/subscription/status/:tenantId
+// Legacy route: /api/v1/subscription/status/:tenantId → billing router handler.
+// The billing router is mounted at /api/billing and its routes are defined
+// relative to that mount (e.g. /v1/subscription/status/:tenantId). When we
+// forward by calling the router directly we must use the path relative to the
+// router (i.e. /v1/...), NOT the full /api/billing/v1/... path, otherwise no
+// route matches and the request 404s.
 app.get('/api/v1/subscription/status/:tenantId', (req, res) => {
-  // Redirect to the billing route
-  const newPath = `/api/billing/v1/subscription/status/${req.params.tenantId}`;
-  const newUrl = `${req.protocol}://${req.get('host')}${newPath}`;
-  // Proxy the request by forwarding it to the billing route
-  // Or simply use the same handler
   const billingRouter = require('./routes/billing.routes').default;
-  req.url = `/billing/v1/subscription/status/${req.params.tenantId}`;
+  req.url = `/v1/subscription/status/${req.params.tenantId}`;
   billingRouter(req, res, () => {
     res.status(404).json({ error: 'NOT_FOUND' });
   });

@@ -203,6 +203,17 @@ export const useAuthStore = create<AuthStore>()(
       },
       onRehydrateStorage: () => (state) => {
         trace.persistHydrate(state);
+        // Reject stale/expired sessions immediately so the app never boots into
+        // a dead "authenticated" state. A leftover (expired) token previously
+        // caused a 401 on the first API call (e.g. billing status) which the
+        // API client treated as "token expired" → global logout loop on /login.
+        if (state?.token) {
+          const claims = getTokenClaims();
+          const now = Math.floor(Date.now() / 1000);
+          if (!claims || (claims.exp && claims.exp < now)) {
+            useAuthStore.getState().logout();
+          }
+        }
       },
     }
   )

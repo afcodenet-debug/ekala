@@ -98,23 +98,31 @@ export function useBillingStatus(tenantId: string | null): UseBillingStatusResul
       // previously surfaced as "Failed to check billing status".
 
       // Essayer le nouveau système V1.1
+      // Le backend renvoie { subscription_status, tenant_status, is_grace_period, plan_name, expires_at, ... }
+      // (et non pas les champs `active`/`isExpired` attendus historiquement).
       const data = await request<{
-        active: boolean;
-        plan?: string | null;
+        subscription_status?: string;
+        tenant_status?: string;
+        is_grace_period?: boolean;
+        plan_name?: string | null;
+        plan_code?: string | null;
         expires_at?: string | null;
-        daysUntilRenewal?: number | null;
-        isGracePeriod?: boolean;
-        isExpired?: boolean;
+        grace_days_remaining?: number | null;
       }>(`/v1/subscription/status/${tenantId}`);
+
+      const subStatus = data.subscription_status || (data.tenant_status === 'active' ? 'active' : 'no_plan');
+      // Une souscription active/trial/grace donne accès (grace = lecture seule mais accès).
+      const active = subStatus === 'active' || subStatus === 'trial' || !!data.is_grace_period;
+
         setStatus({
-          active: data.active,
-          plan: data.plan ?? null,
+          active,
+          plan: data.plan_name || data.plan_code || null,
           expiresAt: data.expires_at ?? null,
-          daysUntilRenewal: data.daysUntilRenewal ?? null,
-          state: data.active ? 'active' : (data.isGracePeriod ? 'grace' : 'expired'),
-          graceDaysRemaining: null,
-          isExpired: data.isExpired ?? false,
-          isGracePeriod: data.isGracePeriod ?? false,
+          daysUntilRenewal: data.grace_days_remaining ?? null,
+          state: (subStatus as any) || 'no_plan',
+          graceDaysRemaining: data.grace_days_remaining ?? null,
+          isExpired: subStatus === 'expired',
+          isGracePeriod: !!data.is_grace_period,
         });
     } catch (err) {
       console.error('Failed to check billing status:', err);
