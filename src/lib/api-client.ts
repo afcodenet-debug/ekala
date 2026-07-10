@@ -3,6 +3,7 @@ import type { Employee } from '../shared/employeesStore';
 import type { RestaurantTable } from '../shared/tablesStore';
 import type { Order } from '../shared/ordersStore';
 import { resolveRuntimeMode, type RuntimeMode } from '../shared/runtime-mode';
+import { isLocal } from './app-mode';
 
 /**
  * Détecte le mode d'exécution actuel (local vs cloud) une seule fois au démarrage.
@@ -18,9 +19,9 @@ const CURRENT_RUNTIME_MODE: RuntimeMode = (() => {
   try {
     // @ts-ignore
     const viteEnv = (typeof import.meta !== 'undefined' ? (import.meta as any).env : undefined);
-    if (viteEnv?.DEV === true || viteEnv?.MODE === 'development') return 'local';
+    if (viteEnv?.DEV === true || viteEnv?.MODE === 'development') return 'LOCAL';
   } catch {}
-  return 'cloud';
+  return 'CLOUD';
 })();
 
 /**
@@ -44,7 +45,7 @@ const API_BASE: string = (() => {
   } catch {}
 
   // Mode local → proxy Vite (pas de CORS)
-  if (CURRENT_RUNTIME_MODE === 'local') {
+  if (CURRENT_RUNTIME_MODE === 'LOCAL') {
     return '/api';
   }
 
@@ -175,7 +176,7 @@ interface AuthPersistedState {
   };
 }
 
-function getToken(): string | null {
+export function getToken(): string | null {
   try {
     const raw = localStorage.getItem(AUTH_STORAGE_KEY);
     if (!raw) return null;
@@ -186,11 +187,42 @@ function getToken(): string | null {
   }
 }
 
+export interface TokenClaims {
+  sub: number;
+  tenant_id: number;
+  role: string;
+  email?: string;
+  full_name?: string;
+  tenant_name?: string;
+  tenant_slug?: string;
+  iat?: number;
+  exp?: number;
+}
+
+/**
+ * Decodes the JWT payload (no signature check — the server validates that).
+ * Used as a fallback source for tenant_name/tenant_slug so the UI can always
+ * show the connected tenant even before /me resolves or if the user object
+ * is missing those fields.
+ */
+export function getTokenClaims(): TokenClaims | null {
+  try {
+    const token = getToken();
+    if (!token) return null;
+    const payload = token.split('.')[1];
+    if (!payload) return null;
+    let b64 = payload.replace(/-/g, '+').replace(/_/g, '/');
+    while (b64.length % 4) b64 += '=';
+    return JSON.parse(Buffer.from(b64, 'base64').toString('utf-8')) as TokenClaims;
+  } catch {
+    return null;
+  }
+}
+
 export function setAuthToken(token: string): void {
   try {
     const raw = localStorage.getItem(AUTH_STORAGE_KEY);
-    if (!raw) return;
-    const parsed = JSON.parse(raw);
+    const parsed = raw ? JSON.parse(raw) : {};
     parsed.state = parsed.state || {};
     parsed.state.token = token;
     localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(parsed));
@@ -263,7 +295,21 @@ export async function request<T>(
   };
 
   try {
-    const response = await fetch(url, config);
+    const controller = new AbortController();
+    const isLoginEndpoint = endpoint.match(/^\/auth\/login(\/|$)/);
+    const isGetTenant = endpoint.match(/^\/auth\/tenants\//);
+    const timeoutMs = isLoginEndpoint ? 5000 : isGetTenant ? 3000 : 10000;
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+
+    // Merge signal with any existing signal
+    const existingSignal = options.signal;
+    const combinedSignal = existingSignal
+      ? combineSignals([existingSignal, controller.signal])
+      : controller.signal;
+
+    const response = await fetch(url, { ...config, signal: combinedSignal });
+
+    clearTimeout(timeout);
 
     // If 401, clear auth state so user gets redirected to login
     if (response.status === 401) {
@@ -340,6 +386,19 @@ export async function request<T>(
   }
 }
 
+// Signal combiner for AbortController
+function combineSignals(signals: AbortSignal[]): AbortSignal {
+  const controller = new AbortController();
+  for (const signal of signals) {
+    if (signal.aborted) {
+      controller.abort();
+      break;
+    }
+    signal.addEventListener('abort', () => controller.abort(), { once: true });
+  }
+  return controller.signal;
+}
+
 export const api = {
   // Auth — new JWT-based endpoints
   auth: {
@@ -351,7 +410,23 @@ export const api = {
       request<{ token: string }>('/auth/refresh', { method: 'POST', body: { token } }),
     me: () => request<User>('/auth/me'),
     status: () => request('/auth/status'),
-    getTenant: (slug: string) => request(`/auth/tenants/${slug}`),
+    getTenant: (slug: string) => {
+      // LOCAL mode: read tenant from localStorage, never call network
+      if (isLocal()) {
+        try {
+          const raw = localStorage.getItem('ekala-tenants');
+          if (raw) {
+            const tenants = JSON.parse(raw);
+            const tenant = tenants.find((t: any) => t.slug === slug);
+            if (tenant) {
+              return Promise.resolve(tenant);
+            }
+          }
+        } catch {}
+        return Promise.reject(new Error(`Tenant "${slug}" not found locally`));
+      }
+      return request(`/auth/tenants/${slug}`);
+    },
     // Legacy PIN login (backward compatibility)
     login: (pin_code: string, identity?: string) =>
       request<User>('/auth/login', { method: 'POST', body: { pin_code, identity } }),
@@ -367,7 +442,7 @@ export const api = {
       request(`/tables/${id}`, { method: 'PATCH', body: data, role }),
     delete: (id: number, role?: string) =>
       request(`/tables/${id}`, { method: 'DELETE', role }),
-    open: (tableId: number, waiterId: number) =>
+    open: (tableId: number, waiterId: string) =>
       request(`/tables/${tableId}/open`, { method: 'POST', body: { waiter_id: waiterId } }),
     reserve: (tableId: number) =>
       request(`/tables/${tableId}/reserve`, { method: 'POST' }),
@@ -576,8 +651,19 @@ export const api = {
        requestPlatform<{ success: boolean; vouchers: any[]; pagination: any }>('/platform/vouchers', { params }),
      approveVoucher: (id: number) =>
        requestPlatform('/platform/vouchers/' + id + '/approve', { method: 'POST' }),
-     rejectVoucher: (id: number, reason: string) =>
-       requestPlatform('/platform/vouchers/' + id + '/reject', { method: 'POST', body: { reason } }),
+      rejectVoucher: (id: number, reason: string) =>
+        requestPlatform('/platform/vouchers/' + id + '/reject', { method: 'POST', body: { reason } }),
+      // Voucher Codes (CRUD sur le pool de codes)
+      getVoucherCodes: (params?: { page?: number; limit?: number; planId?: number; active?: string; search?: string }) =>
+        requestPlatform<{ success: boolean; voucherCodes: any[]; pagination: any }>('/platform/voucher-codes', { params }),
+      createVoucherCode: (body: any) =>
+        requestPlatform<{ success: boolean; voucherCode: any }>('/platform/voucher-codes', { method: 'POST', body }),
+      updateVoucherCode: (id: number, body: any) =>
+        requestPlatform<{ success: boolean; voucherCode: any }>('/platform/voucher-codes/' + id, { method: 'PUT', body }),
+      deleteVoucherCode: (id: number) =>
+        requestPlatform<{ success: boolean }>('/platform/voucher-codes/' + id, { method: 'DELETE' }),
+      getPlans: () =>
+        requestPlatform<{ success: boolean; plans?: any[] }>('/platform/plans'),
      // Subscriptions
      getSubscriptions: (params?: { page?: number; limit?: number; status?: string }) =>
        requestPlatform<{ success: boolean; subscriptions: any[]; pagination: any }>('/platform/subscriptions', { params }),

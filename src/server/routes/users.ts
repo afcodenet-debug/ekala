@@ -26,6 +26,24 @@ router.get('/', async (req, res) => {
   }
 });
 
+router.get('/:id', async (req, res) => {
+  const tenantId = (req as any).tenant_id;
+  if (!tenantId) {
+    return res.status(401).json({ error: 'TENANT_REQUIRED', message: 'tenant_id requis' });
+  }
+  const id = Number(req.params.id);
+  try {
+    const user = await UserService.getById(tenantId, id);
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    res.json({ user });
+  } catch (error: any) {
+    console.error('[Users] GET /:id failed:', error);
+    res.status(500).json({ error: 'Failed to fetch user', details: error?.message });
+  }
+});
+
 /**
  * Create a new user.
  *

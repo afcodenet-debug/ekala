@@ -9,8 +9,6 @@ import {
 import { useAuthStore } from '../../stores/useAuthStore';
 import { api } from '../../lib/api-client';
 
-const API_BASE = (window as any).VITE_API_BASE_URL || 'https://ekala-api.onrender.com/api';
-
 // ─── Inject styles once ───────────────────────────────────────────────────────
 if (typeof document !== 'undefined' && !document.getElementById('billing-styles')) {
   const style = document.createElement('style');
@@ -805,7 +803,7 @@ const BillingPage = () => {
   const modeUpgrade = modeParam === 'upgrade' || searchParams.get('upgrade') === '1';
   const planParam = searchParams.get('plan');
 
-  const load = () => {
+  const load = async () => {
     if (!tenantId) {
       setError(t('billing.noTenant'));
       setLoading(false);
@@ -813,14 +811,15 @@ const BillingPage = () => {
     }
     setLoading(true);
     setError(null);
-    fetch(`${API_BASE}/tenants/${tenantId}`)
-      .then(r => r.json())
-      .then(data => {
-        if (data?.error) throw new Error(data.error);
-        setTenant(data?.tenant ?? data);
-      })
-      .catch((e: any) => setError(e.message || t('pricing.error.unexpectedFormat')))
-      .finally(() => setLoading(false));
+    try {
+      const data = await api.get<any>('/billing/subscription');
+      if (data?.error) throw new Error(data.error);
+      setTenant(data?.tenant ?? data);
+    } catch (e: any) {
+      setError(e?.message || t('pricing.error.unexpectedFormat'));
+    } finally {
+      setLoading(false);
+    }
   };
 
   // Charger les plans payants si nécessaire
@@ -830,11 +829,10 @@ const BillingPage = () => {
     // Si on vient d'un contexte d'upgrade (trial expirée) ou si un plan est pré-sélectionné, charger les plans payants
     if (planParam || fromExpired || fromSuspended || modeUpgrade) {
       setPlansLoading(true);
-      fetch(`${API_BASE}/plans?type=paid`)
-        .then(r => r.json())
+      api.get<any>('/billing/plans')
         .then(data => {
-          const paidPlans = Array.isArray(data) ? data : data?.plans || [];
-          setPlans(paidPlans.filter((p: Plan) => !p.is_trial));
+          const all = Array.isArray(data) ? data : data?.plans || [];
+          setPlans(all.filter((p: Plan) => !p.is_trial));
         })
         .catch(() => setPlans([]))
         .finally(() => setPlansLoading(false));
@@ -1013,14 +1011,14 @@ const BillingPage = () => {
                         <div className="bp-plan-icon">
                           <Package size={16} />
                         </div>
-                        <h3 className="bp-plan-card-name">{t(`pricing.planNames.${plan.code}`)}</h3>
+                        <h3 className="bp-plan-card-name">{plan.name}</h3>
                         <div className="bp-plan-price-row">
                           <span className="bp-plan-price">{plan.price_display}</span>
                           <span className="bp-plan-per">{plan.per}</span>
                         </div>
                         <div className="bp-divider" style={{ margin: '0 0 12px' }} />
                         <p className="bp-plan-desc" style={{ marginTop: 0 }}>
-                          {t(`pricing.plans.${plan.code}`)}
+                          {plan.description}
                         </p>
                       </div>
                     );
@@ -1059,7 +1057,7 @@ const BillingPage = () => {
 
               <div className="bp-modal-summary">
                 <div>
-                  <div className="bp-modal-plan-name">{t(`pricing.planNames.${selectedPlan.code}`)}</div>
+                  <div className="bp-modal-plan-name">{selectedPlan.name}</div>
                   <div className="bp-modal-plan-per">{selectedPlan.per}</div>
                 </div>
                 <div className="bp-modal-plan-price">{selectedPlan.price_display}</div>

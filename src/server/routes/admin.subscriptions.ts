@@ -12,8 +12,20 @@ import { db } from '../db/database';
 import { getSubscriptionStatus } from '../middleware/subscription-guard';
 import { withOutboxTransaction } from '../../sync/with-outbox-transaction';
 import { queueSyncChange } from '../../sync/sync-helper';
-import { sendEmailDirect, loadRawSettings } from '../services/notification.service';
-import { buildPaymentVerifiedEmailHTML, buildPaymentRejectedEmailHTML } from '../services/email-templates';
+import { sendEmailDirect, loadRawSettings, getTenantName } from '../services/notification.service';
+import { createNotification } from '../services/notification.repository';
+import { buildPaymentRejectedEmailHTML, buildVoucherActivatedEmail } from '../services/email-templates';
+import { getTenantSubscriptionEmails } from '../services/subscription-recipients.service';
+import { WriteInterceptor } from '../infrastructure/synchronization/write-interceptor';
+
+function getPlanName(planId: number): string {
+  const localDb = db;
+  if (localDb) {
+    const row = localDb.prepare('SELECT name FROM plans WHERE id = ?').get(planId) as any;
+    return row?.name || `Plan #${planId}`;
+  }
+  return `Plan #${planId}`;
+}
 
 function getSupabase(): SupabaseClient | null {
   if (!env.SUPABASE_URL || !env.SUPABASE_SERVICE_ROLE_KEY) return null;
@@ -49,6 +61,8 @@ async function getRequestRow(id: number): Promise<any | null> {
 async function activateTenantSub(tenantId: number, planId: number, _adminUserId: number | null, nowISO: string): Promise<void> {
   const supabase = getSupabase();
   const localDb = db;
+  const writeInterceptor = WriteInterceptor.getInstance();
+  
   if (localDb) {
     withOutboxTransaction(localDb, String(tenantId), () => {
       const sub = localDb.prepare(`SELECT id, status FROM subscriptions WHERE tenant_id = ? ORDER BY created_at DESC LIMIT 1`).get(tenantId) as any;
@@ -65,14 +79,35 @@ async function activateTenantSub(tenantId: number, planId: number, _adminUserId:
       queueSyncChange('tenant', 'update', { id: tenantId, status: 'active', is_provisioned: 1, provisioned_at: nowISO });
     });
   } else if (supabase) {
+    // Verify write permission for Supabase writes
+    writeInterceptor.verifyWritePermission({
+      operation: 'select',
+      table: 'subscriptions',
+      caller: 'admin.subscriptions.ts/activateTenantSub'
+    });
     const { data: existingSub } = await supabase.from('subscriptions').select('id').eq('tenant_id', tenantId).order('created_at', { ascending: false }).limit(1).maybeSingle();
     const periodStart = nowISO;
     const periodEnd = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
     if (existingSub) {
+      writeInterceptor.verifyWritePermission({
+        operation: 'update',
+        table: 'subscriptions',
+        caller: 'admin.subscriptions.ts/activateTenantSub'
+      });
       await supabase.from('subscriptions').update({ status: 'active', current_period_start: periodStart, current_period_end: periodEnd, updated_at: nowISO }).eq('id', existingSub.id);
     } else {
+      writeInterceptor.verifyWritePermission({
+        operation: 'insert',
+        table: 'subscriptions',
+        caller: 'admin.subscriptions.ts/activateTenantSub'
+      });
       await supabase.from('subscriptions').insert([{ tenant_id: tenantId, plan_id: planId, status: 'active', started_at: nowISO, current_period_start: periodStart, current_period_end: periodEnd, auto_renew: true, created_at: nowISO, updated_at: nowISO }]);
     }
+    writeInterceptor.verifyWritePermission({
+      operation: 'update',
+      table: 'tenants',
+      caller: 'admin.subscriptions.ts/activateTenantSub'
+    });
     await supabase.from('tenants').update({ status: 'active', is_provisioned: true, provisioned_at: nowISO, updated_at: nowISO }).eq('id', tenantId);
   }
   getSubscriptionStatus(tenantId);
@@ -81,26 +116,38 @@ async function activateTenantSub(tenantId: number, planId: number, _adminUserId:
 async function sendApprovalEmail(requestRow: any, verifiedAt: string): Promise<void> {
   try {
     const settingsRaw = loadRawSettings();
-    let recipient = '';
-    if (db) {
-      const user = db.prepare('SELECT email FROM users WHERE id = ?').get(requestRow.requested_by || 0) as any;
-      recipient = user?.email || '';
-    } else {
-      const supabase = getSupabase();
-      if (supabase) {
-        const { data: user } = await supabase.from('users').select('email').eq('id', requestRow.requested_by).maybeSingle();
-        recipient = user?.email || '';
-      }
-    }
-    if (recipient) {
+    const planName = getPlanName(Number(requestRow.plan_id));
+    const tenantName = getTenantName(requestRow.tenant_id || 0);
+    const recipients = await getTenantSubscriptionEmails(Number(requestRow.tenant_id));
+    for (const recipient of recipients) {
       void sendEmailDirect(
-        `[Great Olive] Paiement validé`,
-        buildPaymentVerifiedEmailHTML(requestRow.voucher_code, verifiedAt),
+        `[${tenantName}] Abonnement activé — code de bon`,
+        buildVoucherActivatedEmail({ voucherCode: requestRow.voucher_code, planName, businessName: tenantName, activatedAt: verifiedAt }),
         settingsRaw, recipient,
       );
     }
   } catch (mailErr) {
     console.error('[AdminSubscriptions] Email send error (verify):', mailErr);
+  }
+}
+
+async function notifyTenantSubscriptionActivated(requestRow: any, verifiedAt: string): Promise<void> {
+  try {
+    const planName = getPlanName(Number(requestRow.plan_id));
+    createNotification({
+      type: 'subscription_activated',
+      title: 'Abonnement activé',
+      message: `Paiement validé le ${new Date(verifiedAt).toLocaleString('fr-FR')}. Votre forfait ${planName} est actif. Code de bon : ${requestRow.voucher_code}`,
+      priority: 'high',
+      notification_type: 'subscription',
+      metadata: { planId: Number(requestRow.plan_id), voucherCode: requestRow.voucher_code, requestId: requestRow.id },
+      link: '/settings/subscription',
+      user_id: Number(requestRow.requested_by) || undefined,
+      tenant_id: Number(requestRow.tenant_id),
+      role: 'owner',
+    });
+  } catch (notifErr) {
+    console.error('[AdminSubscriptions] Notification error (verify):', notifErr);
   }
 }
 
@@ -119,9 +166,10 @@ async function sendRejectionEmail(requestRow: any, reason: string, rejectedAt: s
       }
     }
     if (recipient) {
+      const tenantName = getTenantName(requestRow.tenant_id || 0);
       void sendEmailDirect(
-        `[Great Olive] Paiement rejeté`,
-        buildPaymentRejectedEmailHTML(requestRow.voucher_code, reason, rejectedAt),
+        `[${tenantName}] Paiement rejeté`,
+        buildPaymentRejectedEmailHTML(requestRow.voucher_code, reason, rejectedAt, tenantName),
         settingsRaw, recipient,
       );
     }
@@ -179,6 +227,7 @@ router.post('/verify', async (req: Request, res: Response) => {
     }
     await activateTenantSub(requestRow.tenant_id, requestRow.plan_id, adminUserId, nowISO);
     await sendApprovalEmail(requestRow, nowISO);
+    await notifyTenantSubscriptionActivated(requestRow, nowISO);
     res.json({ ok: true, message: 'Demande vérifiée. Abonnement activé.', requestId: id });
   } catch (e: any) {
     console.error('[AdminSubscriptions] verify error:', e);
@@ -354,6 +403,7 @@ subRouter.post('/verify', async (req: Request, res: Response) => {
     }
     await activateTenantSub(requestRow.tenant_id, requestRow.plan_id, adminUserId, nowISO);
     await sendApprovalEmail(requestRow, nowISO);
+    await notifyTenantSubscriptionActivated(requestRow, nowISO);
     res.json({ ok: true, message: 'Demande vérifiée. Abonnement activé.', requestId: id });
   } catch (e: any) {
     console.error('[AdminVouchers] verify error:', e);

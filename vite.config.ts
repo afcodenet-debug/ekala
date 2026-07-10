@@ -10,7 +10,7 @@ export default defineConfig({
       '@': path.resolve(__dirname, './src')
     }
   },
-
+  
   // Note: for Electron, the packager (electron-builder) expects renderer in dist/renderer.
   // For Vercel / static web deploys we use outDir: 'dist' (see vercel.json + build:vercel script).
   // The two use-cases are separate; Vercel always runs `vite build` directly.
@@ -73,7 +73,24 @@ export default defineConfig({
         target: 'http://127.0.0.1:3001',
         changeOrigin: true,
         secure: false,
-        timeout: 10000,
+        timeout: 30000,
+        ws: false,
+        configure: (proxy) => {
+          proxy.on('proxyRes', (proxyRes) => {
+            delete proxyRes.headers['etag'];
+            delete proxyRes.headers['last-modified'];
+            delete proxyRes.headers['age'];
+            proxyRes.headers['cache-control'] = 'no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0';
+            proxyRes.headers['expires'] = '0';
+            proxyRes.headers['pragma'] = 'no-cache';
+          });
+        }
+      },
+      '/menu': {
+        target: 'http://127.0.0.1:3001',
+        changeOrigin: true,
+        secure: false,
+        timeout: 30000,
         ws: false
       }
     }

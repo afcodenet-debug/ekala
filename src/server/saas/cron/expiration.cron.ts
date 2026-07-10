@@ -73,8 +73,8 @@ async function expireVouchers(): Promise<number> {
         
         if (tenant && plan && voucher.customer_email) {
           void sendEmailDirect(
-            `[Great Olive] Voucher expiré — ${plan.name}`,
-            buildVoucherExpiredEmail(voucher.voucher_code, plan, voucher.customer_email),
+            `[${tenant.name}] Voucher expiré — ${plan.name}`,
+            buildVoucherExpiredEmail(voucher.voucher_code, plan, new Date(), tenant.name),
             settingsRaw,
             voucher.customer_email
           );

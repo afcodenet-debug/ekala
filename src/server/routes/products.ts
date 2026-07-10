@@ -84,7 +84,7 @@ router.get('/analytics', async (_req, res) => {
 router.get('/:id', async (req: any, res) => {
   try {
     const { id } = req.params;
-    const isSupabaseMode = dataSource.resolveFromRequest(req) === 'cloud';
+    const isSupabaseMode = dataSource.resolveFromRequest(req) === 'CLOUD';
     const tenantId = req.tenant_id;
   if (!tenantId) {
     return res.status(401).json({ error: 'TENANT_REQUIRED', message: 'tenant_id requis' });
@@ -155,7 +155,7 @@ router.post('/', requireRole(['admin', 'manager']), async (req: any, res) => {
   
   return runWithRequestId(requestId, async () => {
     logTrace('ENTER products.ts:POST /');
-    const isSupabaseMode = dataSource.resolveFromRequest(req) === 'cloud';
+    const isSupabaseMode = dataSource.resolveFromRequest(req) === 'CLOUD';
     logTrace('CHOICE', { isSupabaseMode, tenantId: req.tenant_id, mode: dataSource.resolveFromRequest(req) });
     const tenantId = parseInt(String(req.tenant_id), 10);
     if (!tenantId || isNaN(tenantId)) {
@@ -294,7 +294,7 @@ router.post('/', requireRole(['admin', 'manager']), async (req: any, res) => {
         // Queue for sync (outbox pattern) - sync will be triggered AFTER transaction commit
         logTrace('ENTER queueChangeInsideTransaction');
         try {
-          const sync = getProductSyncService();
+          const sync = getProductSyncService(); if (!sync) throw new Error('sync-disabled');
           logTrace('Queueing product for sync', { id: newProduct.id, name: data.name, tenant_id: data.tenant_id });
           sync.queueChangeInsideTransaction('product', 'insert', {
             ...newProduct,
@@ -309,10 +309,11 @@ router.post('/', requireRole(['admin', 'manager']), async (req: any, res) => {
         }
 
         // ── Send new product notification (role-driven, non-blocking) ─────
+        const productTenantId = (req as any).tenant_id;
         setImmediate(async () => {
           try {
-            const settings = loadRawSettings();
-            await notifyNewProduct(data.name, data, settings);
+            const settings = loadRawSettings(productTenantId);
+            await notifyNewProduct(data.name, data, settings, productTenantId);
           } catch (notifyErr) {
             console.error('[Notification] newProduct failed:', notifyErr);
           }
@@ -354,7 +355,7 @@ router.post('/', requireRole(['admin', 'manager']), async (req: any, res) => {
 
 // Update product
 router.patch('/:id', requireRole(['admin', 'manager']), async (req: any, res) => {
-  const isSupabaseMode = dataSource.resolveFromRequest(req) === 'cloud';
+  const isSupabaseMode = dataSource.resolveFromRequest(req) === 'CLOUD';
   const tenantId = parseInt(String(req.tenant_id), 10);
   if (!tenantId || isNaN(tenantId)) {
     return res.status(401).json({ error: 'TENANT_REQUIRED', message: 'tenant_id requis' });
@@ -441,7 +442,7 @@ router.patch('/:id', requireRole(['admin', 'manager']), async (req: any, res) =>
 if (result.changes > 0) {
          // Queue for sync (outbox pattern) and trigger IMMEDIATE sync
          try {
-           const sync = getProductSyncService();
+           const sync = getProductSyncService(); if (!sync) throw new Error('sync-disabled');
            sync.queueChangeInsideTransaction('product', 'update', {
              id: Number(id),
              ...updateData,
@@ -482,7 +483,7 @@ if (result.changes > 0) {
 
 // Delete product
 router.delete('/:id', requireRole(['admin', 'manager']), async (req: any, res) => {
-  const isSupabaseMode = dataSource.resolveFromRequest(req) === 'cloud';
+  const isSupabaseMode = dataSource.resolveFromRequest(req) === 'CLOUD';
   const tenantId = parseInt(String(req.tenant_id), 10);
   if (!tenantId || isNaN(tenantId)) {
     return res.status(401).json({ error: 'TENANT_REQUIRED', message: 'tenant_id requis' });
@@ -534,7 +535,7 @@ router.get('/low-stock', async (req: any, res) => {
     return res.status(401).json({ error: 'TENANT_REQUIRED', message: 'tenant_id requis' });
   }
   try {
-    const isSupabaseMode = dataSource.resolveFromRequest(req) === 'cloud';
+    const isSupabaseMode = dataSource.resolveFromRequest(req) === 'CLOUD';
     if (!db && !isSupabaseMode) {
       console.warn('[Products] SQLite disabled (db is null). Returning [] for low-stock');
       return res.json([]);
@@ -663,7 +664,7 @@ router.post('/:id/adjust-stock', requireRole(['admin', 'manager']), (req: any, r
 
     // Queue for Supabase push (outbox pattern)
     try {
-      const sync = getProductSyncService();
+      const sync = getProductSyncService(); if (!sync) throw new Error('sync-disabled');
       sync.queueChangeInsideTransaction('product', 'update', {
         id: Number(id),
         stock_quantity: qtyAfter,
@@ -705,19 +706,18 @@ router.post('/:id/adjust-stock', requireRole(['admin', 'manager']), (req: any, r
     // ── Fire-and-forget: email notification (non-blocking, after response)
     setImmediate(async () => {
       try {
-        const settingsRows = db.prepare(
-          "SELECT key, value FROM settings"
-        ).all() as { key: string; value: string }[];
-        const rawSettings = Object.fromEntries(
-          settingsRows.map(r => [r.key, r.value])
-        );
+        // Respect the tenant's settings (currency + language). Tenant 16 has no
+        // explicit settings rows, so loadRawSettings() falls back to the seeded
+        // defaults (ZMW / English) instead of the previous hardcoded 'USD'.
+        const rawSettings = loadRawSettings(tenantId);
         await notifyStockAdjustment(
           notifyData.productName, Number(id),
           notifyData.qtyBefore, notifyData.qtyChanged, notifyData.qtyAfter,
           notifyData.reason,
           notifyData.performedBy,
-          String(rawSettings.app_currency || 'USD'),
+          String(rawSettings.app_currency || 'ZMW'),
           rawSettings,
+          tenantId,
         );
       } catch (notifyErr) {
         console.error('[Notification] stock-adjustment email failed:', notifyErr);
@@ -803,7 +803,7 @@ router.get('/', async (req: any, res) => {
     return res.status(401).json({ error: 'TENANT_REQUIRED', message: 'tenant_id requis' });
   }
   try {
-    const isSupabaseMode = dataSource.resolveFromRequest(req) === 'cloud';
+    const isSupabaseMode = dataSource.resolveFromRequest(req) === 'CLOUD';
     // showArchived: admin/owner only - shows products with is_available=0 or deleted_at NOT NULL
     const showArchived = req.query.showArchived === 'true';
     const userRole = req.user?.role;

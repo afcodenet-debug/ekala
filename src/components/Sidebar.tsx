@@ -1,7 +1,8 @@
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../stores/useAuthStore';
 import { useI18n } from '../lib/i18n';
+import { trace } from '../lib/runtime-tracer';
 
 import { EnterpriseTokens } from '../lib/design-system';
 import { APP_NAME } from '../lib/app-config';
@@ -88,6 +89,10 @@ const Sidebar = ({ onClose }: SidebarProps) => {
     label: t(section.tKey),
     items: filteredMenu.filter(item => section.paths.includes(item.path)),
   })).filter(g => g.items.length > 0);
+
+  const renderCount = useRef(0);
+  renderCount.current++;
+  trace.render('Sidebar', renderCount.current, user);
 
   const handleClose = () => {
     onClose?.();
@@ -515,68 +520,11 @@ const Sidebar = ({ onClose }: SidebarProps) => {
               </span>
             </div>
 
-            {/* Plan Badge - Premium Card Design */}
-            {user?.plan_name && (
-              <div
-                onClick={() => navigate('/billing')}
-                style={{
-                  marginTop: 10,
-                  padding: '12px 14px',
-                  background: 'linear-gradient(135deg, rgba(212,175,55,0.15), rgba(146,64,14,0.15))',
-                  borderRadius: 12,
-                  border: '1px solid rgba(212,175,55,0.4)',
-                  cursor: 'pointer',
-                  transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
-                  position: 'relative',
-                  overflow: 'hidden',
-                  boxShadow: '0 4px 12px rgba(212,175,55,0.1)',
-                }}
-                onMouseOver={e => {
-                  e.currentTarget.style.background = 'linear-gradient(135deg, rgba(212,175,55,0.22), rgba(146,64,14,0.22))';
-                  e.currentTarget.style.transform = 'translateY(-2px)';
-                  e.currentTarget.style.boxShadow = '0 8px 20px rgba(212,175,55,0.2)';
-                  e.currentTarget.style.borderColor = 'rgba(212,175,55,0.6)';
-                }}
-                onMouseOut={e => {
-                  e.currentTarget.style.background = 'linear-gradient(135deg, rgba(212,175,55,0.15), rgba(146,64,14,0.15))';
-                  e.currentTarget.style.transform = 'translateY(0)';
-                  e.currentTarget.style.boxShadow = '0 4px 12px rgba(212,175,55,0.1)';
-                  e.currentTarget.style.borderColor = 'rgba(212,175,55,0.4)';
-                }}
-              >
-                {/* Shimmer effect */}
-                <div style={{
-                  position: 'absolute',
-                  top: 0,
-                  left: '-100%',
-                  width: '100%',
-                  height: '100%',
-                  background: 'linear-gradient(90deg, transparent, rgba(255,255,255,0.1), transparent)',
-                  animation: 'shimmer 3s infinite',
-                }} />
-                
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, fontWeight: 800, color: colors.accent.gold, position: 'relative', zIndex: 1 }}>
-                  <ShieldCheck size={16} strokeWidth={2.5} />
-                  <span style={{ letterSpacing: '0.02em' }}>{user.plan_name}</span>
-                </div>
-
-                {user.expires_at && (
-                  <div style={{ fontSize: 11, color: colors.text2, fontWeight: 700, marginTop: 2, paddingLeft: 24, position: 'relative', zIndex: 1 }}>
-                    {(() => {
-                      const days = Math.ceil((new Date(user.expires_at).getTime() - Date.now()) / 86400000);
-                      if (days <= 0) return '✕';
-                      return t('sidebar.daysRemaining', { days });
-                    })()}
-                  </div>
-                )}
-              </div>
-            )}
-
             {/* Premium Action Card */}
             {user?.status === 'trial' && (
               <div style={{ marginTop: 10 }}>
                 <button
-                  onClick={() => navigate('/billing')}
+                  onClick={() => navigate('/settings/subscription')}
                   style={{
                     width: '100%',
                     fontSize: 10,
@@ -616,7 +564,7 @@ const Sidebar = ({ onClose }: SidebarProps) => {
             {(user?.status === 'past_due' || user?.status === 'expired') && (
               <div style={{ marginTop: 10 }}>
                 <button
-                  onClick={() => navigate('/billing')}
+                  onClick={() => navigate('/settings/subscription')}
                   style={{
                     width: '100%',
                     fontSize: 10,
@@ -657,7 +605,7 @@ const Sidebar = ({ onClose }: SidebarProps) => {
             {user?.status === 'active' && (
               <div style={{ marginTop: 10 }}>
                 <button
-                  onClick={() => navigate('/billing')}
+                  onClick={() => navigate('/settings/subscription')}
                   style={{
                     width: '100%',
                     fontSize: 10,

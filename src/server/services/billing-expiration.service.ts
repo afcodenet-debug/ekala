@@ -7,7 +7,7 @@
 
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { env } from '../config/env';
-import { sendEmailDirect, loadRawSettings } from './notification.service';
+import { sendEmailDirect, loadRawSettings, getTenantName } from './notification.service';
 import { buildVoucherExpiredEmail } from './email-templates';
 
 function getSupabase(): SupabaseClient | null {
@@ -141,9 +141,10 @@ export class BillingExpirationService {
                 .maybeSingle();
 
               if (plan) {
+                const tenantName = getTenantName(tenantId);
                 void sendEmailDirect(
-                  `[Great Olive] Demande de paiement expirée — ${plan.name}`,
-                  buildVoucherExpiredEmail(voucher.voucher_code, plan, new Date(now)),
+                  `[${tenantName}] Demande de paiement expirée — ${plan.name}`,
+                  buildVoucherExpiredEmail(voucher.voucher_code, plan, new Date(now), tenantName),
                   loadRawSettings(),
                   voucher.customer_email,
                 );

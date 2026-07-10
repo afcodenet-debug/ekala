@@ -838,6 +838,14 @@ function ensureAdvancedTables(): void {
 
     const userCols = dbInstance.prepare("PRAGMA table_info(users)").all() as Array<{ name: string }>;
     if (!userCols.some(c => c.name === 'tenant_id')) dbInstance.exec(`ALTER TABLE users ADD COLUMN tenant_id INTEGER`);
+    // Align local users schema with the Supabase `users` table so that all
+    // columns can be synchronized (local-first → Supabase).
+    if (!userCols.some(c => c.name === 'is_super_admin')) dbInstance.exec(`ALTER TABLE users ADD COLUMN is_super_admin INTEGER DEFAULT 0`);
+    if (!userCols.some(c => c.name === 'is_platform_user')) dbInstance.exec(`ALTER TABLE users ADD COLUMN is_platform_user INTEGER DEFAULT 0`);
+    if (!userCols.some(c => c.name === 'status')) dbInstance.exec(`ALTER TABLE users ADD COLUMN status TEXT DEFAULT 'active'`);
+    if (!userCols.some(c => c.name === 'revoked_at')) dbInstance.exec(`ALTER TABLE users ADD COLUMN revoked_at TEXT`);
+    if (!userCols.some(c => c.name === 'revoked_by')) dbInstance.exec(`ALTER TABLE users ADD COLUMN revoked_by INTEGER`);
+    if (!userCols.some(c => c.name === 'locked_until')) dbInstance.exec(`ALTER TABLE users ADD COLUMN locked_until TEXT`);
 
     const expCols = dbInstance.prepare("PRAGMA table_info(expenses)").all() as Array<{ name: string }>;
     if (!expCols.some(c => c.name === 'user_id'))   dbInstance.exec(`ALTER TABLE expenses ADD COLUMN user_id INTEGER`);
@@ -998,9 +1006,21 @@ function ensureTenantSyncColumns(): void {
     `);
   }
   
-  try { dbInstance.prepare(`ALTER TABLE tenants ADD COLUMN remote_id INTEGER`).run(); } catch {}
-  try { dbInstance.prepare(`CREATE INDEX IF NOT EXISTS idx_tenants_remote_id ON tenants(remote_id) WHERE remote_id IS NOT NULL`).run(); } catch {}
-  try { dbInstance.prepare(`CREATE INDEX IF NOT EXISTS idx_tenants_tenant_id ON tenants(tenant_id)`).run(); } catch {}
+    try { dbInstance.prepare(`ALTER TABLE tenants ADD COLUMN remote_id INTEGER`).run(); } catch {}
+    try { dbInstance.prepare(`CREATE INDEX IF NOT EXISTS idx_tenants_remote_id ON tenants(remote_id) WHERE remote_id IS NOT NULL`).run(); } catch {}
+    try { dbInstance.prepare(`CREATE INDEX IF NOT EXISTS idx_tenants_tenant_id ON tenants(tenant_id)`).run(); } catch {}
+
+    // Align local tenants schema with the Supabase `tenants` table so every
+    // column can be synchronized (local-first → Supabase).
+    const tenantCols = dbInstance.prepare("PRAGMA table_info(tenants)").all() as Array<{ name: string }>;
+    if (!tenantCols.some(c => c.name === 'tenant_id')) dbInstance.exec(`ALTER TABLE tenants ADD COLUMN tenant_id TEXT`);
+    if (!tenantCols.some(c => c.name === 'suspended_at')) dbInstance.exec(`ALTER TABLE tenants ADD COLUMN suspended_at TEXT`);
+    if (!tenantCols.some(c => c.name === 'suspension_reason')) dbInstance.exec(`ALTER TABLE tenants ADD COLUMN suspension_reason TEXT`);
+    if (!tenantCols.some(c => c.name === 'suspended_by')) dbInstance.exec(`ALTER TABLE tenants ADD COLUMN suspended_by INTEGER`);
+    if (!tenantCols.some(c => c.name === 'last_reactivated_at')) dbInstance.exec(`ALTER TABLE tenants ADD COLUMN last_reactivated_at TEXT`);
+    if (!tenantCols.some(c => c.name === 'last_reactivated_by')) dbInstance.exec(`ALTER TABLE tenants ADD COLUMN last_reactivated_by INTEGER`);
+    if (!tenantCols.some(c => c.name === 'disabled_at')) dbInstance.exec(`ALTER TABLE tenants ADD COLUMN disabled_at TEXT`);
+    if (!tenantCols.some(c => c.name === 'disabled_by')) dbInstance.exec(`ALTER TABLE tenants ADD COLUMN disabled_by INTEGER`);
 
   const needsTenantUsers = !dbInstance.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='tenant_users'").get();
   if (needsTenantUsers) {
@@ -1022,7 +1042,38 @@ function ensureTenantSyncColumns(): void {
       )
     `);
   }
-  
+
+  // Relax the tenant_users role CHECK to include 'staff' (matches Supabase).
+  // The original CHECK omitted 'staff', which broke the auto-backfill
+  // (ensureIntegrity inserts role='staff') and the pull of Supabase rows.
+  const tuSql = dbInstance.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='tenant_users'").get()?.sql || '';
+  if (tuSql && !tuSql.includes("'staff'")) {
+    console.log('[Database] Relaxing tenant_users role CHECK to include staff');
+    dbInstance.transaction(() => {
+      dbInstance.exec(`
+        CREATE TABLE tenant_users_new (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          tenant_id INTEGER NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+          user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          role TEXT NOT NULL DEFAULT 'waiter' CHECK (role IN ('owner','admin','manager','cashier','waiter','staff')),
+          is_default INTEGER NOT NULL DEFAULT 0,
+          is_active INTEGER NOT NULL DEFAULT 1,
+          invited_at TEXT,
+          joined_at TEXT,
+          remote_id INTEGER,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          UNIQUE(tenant_id, user_id)
+        )
+      `);
+      dbInstance.exec(`INSERT INTO tenant_users_new (id, tenant_id, user_id, role, is_default, is_active, invited_at, joined_at, remote_id, created_at, updated_at) SELECT id, tenant_id, user_id, role, is_default, is_active, invited_at, joined_at, remote_id, created_at, updated_at FROM tenant_users`);
+      dbInstance.exec(`DROP TABLE tenant_users`);
+      dbInstance.exec(`ALTER TABLE tenant_users_new RENAME TO tenant_users`);
+      dbInstance.exec(`CREATE INDEX IF NOT EXISTS idx_tenant_users_remote_id ON tenant_users(remote_id) WHERE remote_id IS NOT NULL`);
+      dbInstance.exec(`CREATE INDEX IF NOT EXISTS idx_tenant_users_tenant_id ON tenant_users(tenant_id)`);
+    })();
+  }
+
   try { dbInstance.prepare(`ALTER TABLE tenant_users ADD COLUMN remote_id INTEGER`).run(); } catch {}
   try { dbInstance.prepare(`CREATE INDEX IF NOT EXISTS idx_tenant_users_remote_id ON tenant_users(remote_id) WHERE remote_id IS NOT NULL`).run(); } catch {}
   try { dbInstance.prepare(`CREATE INDEX IF NOT EXISTS idx_tenant_users_tenant_id ON tenant_users(tenant_id)`).run(); } catch {}

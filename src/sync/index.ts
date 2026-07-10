@@ -19,6 +19,10 @@ let saleSyncService: SaleSyncService | null = null;
 let userTenantSyncService: UserTenantSyncService | null = null;
 let orchestratorV2: SyncOrchestratorV2 | null = null;
 let database: Database.Database | null = null;
+// When false (local mode without ENABLE_SUPABASE_SYNC), the sync services are
+// only used to queue writes into the local outbox — they must NEVER push to
+// Supabase. This keeps local-first writes working without side effects.
+let syncEnabled = false;
 
 export function initializeProductSync(
   db: Database.Database,
@@ -39,15 +43,70 @@ export function initializeProductSync(
   return productSyncService;
 }
 
-export function getProductSyncService(): ProductSyncService {
+/**
+ * Bind the live server database instance to the sync module without starting
+ * the full sync engine. Required so that getProductSyncService()/getOrderSyncService()
+ * can lazily initialize (and queue writes to the outbox) even in LOCAL mode where
+ * initializeSyncV2() is intentionally skipped (ENABLE_SUPABASE_SYNC !== 'true').
+ */
+export function setSyncDatabase(dbInstance: Database.Database | null): void {
+  if (dbInstance) {
+    database = dbInstance;
+  }
+}
+
+/**
+ * Mark the sync engine as enabled (full cloud sync). Called by initializeSyncV2.
+ * When NOT enabled (local mode), sync services only queue writes locally and must
+ * never push to Supabase.
+ */
+export function setSyncEnabled(enabled: boolean): void {
+  syncEnabled = enabled;
+}
+
+export function isSyncEnabled(): boolean {
+  return syncEnabled;
+}
+
+export function getProductSyncService(): ProductSyncService | null {
   if (!productSyncService) {
-    // Auto-initialize with minimal fallback if not yet initialized
-    // This ensures routes can always queue changes even if V2 sync failed
+    // Auto-initialize with minimal fallback if not yet initialized.
+    // The sync engine (initializeSyncV2) is intentionally skipped in LOCAL mode
+    // (ENABLE_SUPABASE_SYNC !== 'true'), but routes still call getProductSyncService()
+    // to queue local writes to the outbox. Without this fallback every local
+    // order/sale/product write would throw "ProductSyncService not initialized".
+    // So we always allow a lazy init here to keep writes working offline.
+    if (!database) {
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const serverDb = require('../server/db/database').db;
+        if (serverDb) {
+          database = serverDb;
+          console.log('[Sync] ProductSyncService bound to server database (lazy)');
+        }
+      } catch {
+        // database stays null — will be reported below
+      }
+    }
+
     if (database) {
+      // Only auto-initialize when sync is actually available. In LOCAL mode
+      // (ENABLE_SUPABASE_SYNC !== 'true' and no real Supabase credentials) we must
+      // NOT instantiate a client with empty credentials (createClient throws
+      // "supabaseUrl is required"). Sync queuing is then skipped — local writes
+      // still succeed (callers already guard sync calls in try/catch).
+      const realSupabaseUrl = process.env.SUPABASE_URL || '';
+      const canSync = syncEnabled || realSupabaseUrl.length > 0;
+      if (!canSync) {
+        console.warn('[Sync] ProductSyncService NOT initialized (local mode, sync disabled). Writes will skip outbox queuing.');
+        return null;
+      }
       console.warn('[Sync] ProductSyncService auto-initializing (fallback)');
       try {
         ensureSyncTables(database);
-        productSyncService = new ProductSyncService(database, process.env.SUPABASE_URL || '', process.env.SUPABASE_SERVICE_ROLE_KEY || '');
+        const supabaseUrl = syncEnabled ? realSupabaseUrl : realSupabaseUrl;
+        const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || '';
+        productSyncService = new ProductSyncService(database, supabaseUrl, supabaseKey);
         console.log('[Sync] ProductSyncService auto-initialized (fallback)');
       } catch (err: any) {
         console.error('[Sync] ProductSyncService auto-init failed:', err?.message);
@@ -60,22 +119,25 @@ export function getProductSyncService(): ProductSyncService {
   return productSyncService;
 }
 
-export function getOrderSyncService(): OrderSyncService {
+export function getOrderSyncService(): OrderSyncService | null {
   if (!orderSyncService) {
     const core = getProductSyncService();
-    if (!database) {
-      throw new Error('Database not initialized for sync. Call initializeProductSync first.');
+    if (!core || !database) {
+      // Sync not available (e.g. local mode without Supabase). Return null so
+      // callers that queue writes can skip outbox queuing without breaking the
+      // local transaction.
+      return null;
     }
     orderSyncService = new OrderSyncService(core, database);
   }
   return orderSyncService;
 }
 
-export function getSaleSyncService(): SaleSyncService {
+export function getSaleSyncService(): SaleSyncService | null {
   if (!saleSyncService) {
     const core = getProductSyncService();
-    if (!database) {
-      throw new Error('Database not initialized for sync. Call initializeProductSync first.');
+    if (!core || !database) {
+      return null;
     }
     saleSyncService = new SaleSyncService(core, database);
   }
@@ -114,6 +176,7 @@ export function initializeSyncV2(
   tenantId?: string
 ): SyncOrchestratorV2 {
   database = db;
+  syncEnabled = true;
 
   // Services legacy (utilisés en complément)
   const pSync = initializeProductSync(db, supabaseUrl, supabaseAnonKey);
@@ -124,7 +187,7 @@ export function initializeSyncV2(
   // Orchestrator V2 (toutes les tables)
   orchestratorV2 = new SyncOrchestratorV2(
     db, supabaseUrl, supabaseAnonKey,
-    pSync, oSync, sSync, uSync
+    pSync, oSync!, sSync!, uSync
   );
 
   console.log('[Sync] SyncOrchestratorV2 initialized (ALL tables covered with GenericSyncService)');

@@ -6,7 +6,7 @@ export interface RestaurantTable {
   table_number: number;
   capacity: number;
   status: 'available' | 'occupied' | 'reserved' | 'cleaning';
-  assigned_waiter_id?: number;
+  assigned_waiter_id?: number | null;
   current_order_id?: number;
 }
 

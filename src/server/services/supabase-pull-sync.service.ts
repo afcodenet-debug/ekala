@@ -6,6 +6,7 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { db } from '../db/database';
 import { env } from '../config/env';
+import { dataSource } from '../infrastructure/data-source-manager';
 import { createNotification } from './notification.repository';
 
 let pullInterval: NodeJS.Timeout | null = null;
@@ -54,15 +55,14 @@ function getPullConfig(): PullConfig {
   const explicit = process.env.ENABLE_SUPABASE_PULL;
   const hasSupabaseCreds = !!process.env.SUPABASE_URL && !!process.env.SUPABASE_SERVICE_ROLE_KEY;
 
-  // Hard safety: if DB is disabled/null (Render cloud), never enable SQLite pull worker.
   const dbAvailable = !!db;
 
   let enabled =
     explicit === 'true' ||
-    explicit === '1' ||
-    (explicit === undefined && hasSupabaseCreds && !env.RENDER_CLOUD_MODE);
+    explicit === '1';
 
   if (!dbAvailable) enabled = false;
+  if (dataSource.isLocal()) enabled = false;
 
   return {
     enabled,

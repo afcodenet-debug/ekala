@@ -20,7 +20,7 @@ function getNotificationRepo(req: any) {
   // Use request-aware mode detection (checks X-Runtime-Mode header)
   const mode = dataSource.resolveFromRequest(req);
   
-  if (mode === 'cloud') {
+  if (mode === 'CLOUD') {
     // Chargement lazy de SupabaseNotificationRepository
     const { SupabaseNotificationRepository } = require('../notifications/repositories/SupabaseNotificationRepository');
     return new SupabaseNotificationRepository();

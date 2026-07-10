@@ -183,15 +183,15 @@ router.get('/vouchers', requirePlatformAuth, async (req: Request, res: Response)
     const vouchers = db.prepare(`
       SELECT vr.*, t.name as tenant_name, t.id as tenant_id, pl.name as plan_name, pl.code as plan_code
       FROM voucher_requests vr
-      JOIN tenants t ON vr.tenant_id = t.id
-      JOIN plans pl ON vr.plan_id = pl.id
+      LEFT JOIN tenants t ON vr.tenant_id = t.id
+      LEFT JOIN plans pl ON vr.plan_id = pl.id
       ${whereClause}
       ORDER BY vr.created_at DESC LIMIT ? OFFSET ?
     `).all(...params, limit, offset);
 
     const totalRow = db.prepare(`
       SELECT COUNT(*) as count FROM voucher_requests vr
-      JOIN tenants t ON vr.tenant_id = t.id ${whereClause}
+      LEFT JOIN tenants t ON vr.tenant_id = t.id ${whereClause}
     `).get(...params) as any;
 
     res.json({
@@ -363,6 +363,169 @@ router.post('/vouchers/:id/reject', requirePlatformAuth, async (req: Request, re
   } catch (error) {
     console.error('[Platform] Error rejecting voucher:', error);
     res.status(500).json({ error: 'INTERNAL_ERROR', message: 'Erreur rejet voucher' });
+  }
+});
+
+// =============================================================================
+// Voucher Codes (CRUD) — gestion du pool de codes voucher pré-générés
+// =============================================================================
+
+function generateVoucherCode(): string {
+  const rand = Math.random().toString(36).substring(2, 8).toUpperCase();
+  return `VCH-${rand}`;
+}
+
+function auditVoucherCode(adminUser: any, action: string, entityId: number, metadata: any) {
+  try {
+    db.prepare(`
+      INSERT INTO platform_audit_logs (admin_id, admin_email, admin_role, action, entity_type, entity_id, metadata, success, created_at)
+      VALUES (?, ?, ?, ?, 'voucher_code', ?, ?, 1, datetime('now'))
+    `).run(
+      adminUser?.id || 0,
+      adminUser?.email || 'unknown',
+      adminUser?.role || 'admin',
+      entityId,
+      JSON.stringify(metadata)
+    );
+  } catch (e) {
+    console.error('[Platform] audit log error (voucher code):', e);
+  }
+}
+
+// Lister les codes voucher (pool)
+router.get('/voucher-codes', requirePlatformAuth, async (req: Request, res: Response) => {
+  try {
+    const page = parseInt((req.query.page as string) || '1');
+    const limit = Math.min(parseInt((req.query.limit as string) || '50'), 200);
+    const offset = (page - 1) * limit;
+    const planId = req.query.planId ? parseInt(req.query.planId as string) : null;
+    const active = (req.query.active as string) || '';
+    const search = (req.query.search as string) || '';
+
+    const where: string[] = [];
+    const params: any[] = [];
+    if (planId) { where.push('v.plan_id = ?'); params.push(planId); }
+    if (active === 'true') { where.push('v.is_active = 1'); }
+    else if (active === 'false') { where.push('v.is_active = 0'); }
+    if (search) { where.push('v.code LIKE ?'); params.push(`%${search}%`); }
+    const whereClause = where.length ? `WHERE ${where.join(' AND ')}` : '';
+
+    const codes = db.prepare(`
+      SELECT v.*, p.name as plan_name, p.code as plan_code
+      FROM vouchers v
+      LEFT JOIN plans p ON v.plan_id = p.id
+      ${whereClause}
+      ORDER BY v.created_at DESC LIMIT ? OFFSET ?
+    `).all(...params, limit, offset);
+
+    const totalRow = db.prepare(`SELECT COUNT(*) as count FROM vouchers v ${whereClause}`).get(...params) as any;
+
+    res.json({
+      success: true, voucherCodes: codes,
+      pagination: { page, limit, total: totalRow?.count || 0, pages: Math.ceil((totalRow?.count || 0) / limit) },
+    });
+  } catch (error) {
+    console.error('[Platform] Error fetching voucher codes:', error);
+    res.status(500).json({ error: 'INTERNAL_ERROR', message: 'Erreur récupération codes voucher' });
+  }
+});
+
+// Créer un code voucher
+router.post('/voucher-codes', requirePlatformAuth, async (req: Request, res: Response) => {
+  try {
+    const adminUser = (req as any).user;
+    const { code, plan_id, amount_cents, currency, max_uses, expires_at, is_active } = req.body || {};
+
+    if (!plan_id) return res.status(400).json({ error: 'VALIDATION', message: 'plan_id est requis' });
+    const plan = db.prepare('SELECT id FROM plans WHERE id = ?').get(plan_id);
+    if (!plan) return res.status(404).json({ error: 'PLAN_NOT_FOUND', message: 'Plan introuvable' });
+
+    const finalCode = (code || '').toString().trim().toUpperCase() || generateVoucherCode();
+    const finalMaxUses = max_uses != null ? parseInt(max_uses) : 1;
+    const finalAmount = amount_cents != null ? parseInt(amount_cents) : 0;
+    const finalCurrency = (currency || 'ZMW').toString();
+    const finalActive = (is_active === false || is_active === 0) ? 0 : 1;
+    const finalExpires = expires_at || null;
+
+    const existing = db.prepare('SELECT id FROM vouchers WHERE code = ?').get(finalCode);
+    if (existing) return res.status(409).json({ error: 'DUPLICATE_CODE', message: 'Ce code existe déjà' });
+
+    const result = db.prepare(`
+      INSERT INTO vouchers (code, plan_id, amount_cents, currency, max_uses, used_count, expires_at, is_active, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, 0, ?, ?, datetime('now'), datetime('now'))
+    `).run(finalCode, plan_id, finalAmount, finalCurrency, finalMaxUses, finalExpires, finalActive);
+
+    const id = Number(result.lastInsertRowid);
+    auditVoucherCode(adminUser, 'VOUCHER_CODE_CREATED', id, { code: finalCode, plan_id });
+
+    res.json({ success: true, message: 'Code voucher créé', voucherCode: { id, code: finalCode } });
+  } catch (error: any) {
+    console.error('[Platform] Error creating voucher code:', error);
+    res.status(500).json({ error: 'INTERNAL_ERROR', message: 'Erreur création code voucher' });
+  }
+});
+
+// Mettre à jour un code voucher (modifier / activer / désactiver)
+router.put('/voucher-codes/:id', requirePlatformAuth, async (req: Request, res: Response) => {
+  try {
+    const adminUser = (req as any).user;
+    const id = parseInt(req.params.id as string);
+    const { code, plan_id, amount_cents, currency, max_uses, expires_at, is_active } = req.body || {};
+
+    const existing = db.prepare('SELECT * FROM vouchers WHERE id = ?').get(id) as any;
+    if (!existing) return res.status(404).json({ error: 'NOT_FOUND', message: 'Code voucher introuvable' });
+
+    const finalCode = code != null ? code.toString().trim().toUpperCase() : existing.code;
+    const finalPlan = plan_id != null ? parseInt(plan_id) : existing.plan_id;
+    const finalAmount = amount_cents != null ? parseInt(amount_cents) : existing.amount_cents;
+    const finalCurrency = currency != null ? currency.toString() : existing.currency;
+    const finalMaxUses = max_uses != null ? parseInt(max_uses) : existing.max_uses;
+    const finalExpires = expires_at !== undefined ? (expires_at || null) : existing.expires_at;
+    const finalActive = is_active != null ? ((is_active === false || is_active === 0) ? 0 : 1) : existing.is_active;
+
+    if (finalMaxUses < existing.used_count) {
+      return res.status(400).json({ error: 'INVALID_MAX_USES', message: `max_uses (${finalMaxUses}) ne peut être inférieur aux utilisations (${existing.used_count})` });
+    }
+    if (finalPlan !== existing.plan_id) {
+      const plan = db.prepare('SELECT id FROM plans WHERE id = ?').get(finalPlan);
+      if (!plan) return res.status(404).json({ error: 'PLAN_NOT_FOUND', message: 'Plan introuvable' });
+    }
+    if (finalCode !== existing.code) {
+      const dup = db.prepare('SELECT id FROM vouchers WHERE code = ? AND id != ?').get(finalCode, id);
+      if (dup) return res.status(409).json({ error: 'DUPLICATE_CODE', message: 'Ce code existe déjà' });
+    }
+
+    db.prepare(`
+      UPDATE vouchers
+      SET code = ?, plan_id = ?, amount_cents = ?, currency = ?, max_uses = ?, expires_at = ?, is_active = ?, updated_at = datetime('now')
+      WHERE id = ?
+    `).run(finalCode, finalPlan, finalAmount, finalCurrency, finalMaxUses, finalExpires, finalActive, id);
+
+    auditVoucherCode(adminUser, 'VOUCHER_CODE_UPDATED', id, { code: finalCode, changes: Object.keys(req.body || {}) });
+
+    res.json({ success: true, message: 'Code voucher mis à jour', voucherCode: { id, code: finalCode } });
+  } catch (error: any) {
+    console.error('[Platform] Error updating voucher code:', error);
+    res.status(500).json({ error: 'INTERNAL_ERROR', message: 'Erreur mise à jour code voucher' });
+  }
+});
+
+// Supprimer un code voucher (uniquement si non utilisé)
+router.delete('/voucher-codes/:id', requirePlatformAuth, async (req: Request, res: Response) => {
+  try {
+    const adminUser = (req as any).user;
+    const id = parseInt(req.params.id as string);
+    const existing = db.prepare('SELECT * FROM vouchers WHERE id = ?').get(id) as any;
+    if (!existing) return res.status(404).json({ error: 'NOT_FOUND', message: 'Code voucher introuvable' });
+    if (existing.used_count > 0) {
+      return res.status(409).json({ error: 'CODE_IN_USE', message: 'Impossible de supprimer un code déjà utilisé' });
+    }
+    db.prepare('DELETE FROM vouchers WHERE id = ?').run(id);
+    auditVoucherCode(adminUser, 'VOUCHER_CODE_DELETED', id, { code: existing.code });
+    res.json({ success: true, message: 'Code voucher supprimé' });
+  } catch (error: any) {
+    console.error('[Platform] Error deleting voucher code:', error);
+    res.status(500).json({ error: 'INTERNAL_ERROR', message: 'Erreur suppression code voucher' });
   }
 });
 
@@ -715,6 +878,57 @@ router.post('/tenants', requirePlatformAuth, async (req: Request, res: Response)
         INSERT INTO tenant_users (tenant_id, user_id, role, is_active, created_at)
         VALUES (?, ?, 'owner', 1, datetime('now'))
       `).run(tenantId, userResult.lastInsertRowid);
+    }
+
+    // ── Seed d'un abonnement par défaut pour le nouveau tenant ──────────────────
+    // Chaque tenant démarre avec un plan (celui fourni, sinon l'essai gratuit,
+    // sinon le premier plan actif). Cela garantit qu'aucun tenant ne reste
+    // sans abonnement (sinon l'application le bloquerait à l'accès).
+    try {
+      const requestedPlanId = Number(plan_id) || null;
+      let plan = requestedPlanId
+        ? (db.prepare('SELECT * FROM plans WHERE id = ?').get(requestedPlanId) as any)
+        : null;
+      if (!plan) {
+        plan =
+          (db.prepare("SELECT * FROM plans WHERE code = 'trial_7d' AND is_active = 1").get() as any) ||
+          (db.prepare('SELECT * FROM plans WHERE is_active = 1 ORDER BY sort_order ASC').get() as any);
+      }
+
+      if (plan) {
+        const now = new Date();
+        const durationDays = Number(plan.duration_days) || 30;
+        const periodEnd = new Date(now.getTime() + durationDays * 86_400_000);
+        const nowISO = now.toISOString();
+        const periodEndISO = periodEnd.toISOString();
+        const status = plan.period === 'trial' ? 'trial' : 'active';
+        const existing = db
+          .prepare('SELECT id FROM subscriptions WHERE tenant_id = ? LIMIT 1')
+          .get(tenantId) as any;
+        if (!existing) {
+          db.prepare(
+            `INSERT INTO subscriptions (
+              tenant_id, plan_id, status, started_at, current_period_start, current_period_end,
+              trial_started_at, trial_ends_at, auto_renew, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          ).run(
+            tenantId,
+            plan.id,
+            status,
+            nowISO,
+            nowISO,
+            periodEndISO,
+            plan.period === 'trial' ? nowISO : null,
+            plan.period === 'trial' ? periodEndISO : null,
+            plan.period === 'trial' ? 0 : 1,
+            nowISO,
+            nowISO
+          );
+        }
+      }
+    } catch (subErr: any) {
+      // Non bloquant : la création du tenant reste valide même si le seed échoue.
+      console.error('[Platform] Seed subscription error (non bloquant):', subErr?.message || subErr);
     }
 
     res.json({ success: true, message: 'Tenant créé', tenantId });

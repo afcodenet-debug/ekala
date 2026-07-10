@@ -1,6 +1,6 @@
 /// <reference path="./nodemailer.d.ts" />
 /**
- * Email Notification Service — Great Olive POS/ERP
+ * Email Notification Service — EKALA POS/ERP
  *
  * Triggers
  * ───────
@@ -92,6 +92,180 @@ function asBool(v: any, def: boolean): boolean {
   return !!v;
 }
 
+/* ── Settings fallback (currency / language) ──────────────────────────────
+ * Some tenants have NO rows in the `settings` table. To keep behaviour
+ * consistent and driven by configuration, we merge tenant settings over a
+ * baseline of the seeded default values (ZMW / English). This guarantees the
+ * currency is never an accidental 'USD' and the notification language always
+ * resolves to a known value.
+ */
+export const DEFAULT_SETTINGS: Record<string, string> = {
+  app_currency: 'ZMW',
+  currency_symbol: 'ZK',
+  app_language: 'en',
+  tax_percentage: '0',
+};
+
+export function withDefaultSettings(raw: SettingsReader): SettingsReader {
+  return { ...DEFAULT_SETTINGS, ...(raw || {}) };
+}
+
+/** Get the current tenant's business name from the tenants table */
+export function getTenantName(tenantId: number): string {
+  try {
+    const tenant = db.prepare('SELECT name FROM tenants WHERE id = ?').get(tenantId) as any;
+    return tenant?.name || 'EKALA';
+  } catch (error) {
+    console.error('[Notification] Failed to load tenant name:', error);
+    return 'EKALA';
+  }
+}
+
+/* ── Email i18n ──────────────────────────────────────────────────────────
+ * Notification emails are localized using the tenant's `app_language`
+ * (from the settings table). Supported: en / fr / pt.
+ */
+export type EmailLang = 'en' | 'fr' | 'pt';
+
+export function normalizeEmailLang(v: any): EmailLang {
+  const l = String(v || '').toLowerCase();
+  if (l === 'fr' || l === 'fr-fr' || l.startsWith('fr')) return 'fr';
+  if (l === 'pt' || l === 'pt-pt' || l === 'pt-br' || l.startsWith('pt')) return 'pt';
+  return 'en';
+}
+
+type EmailDict = Record<EmailLang, Record<string, string>>;
+
+const EMAIL_I18N: EmailDict = {
+  en: {
+    greatOlive: 'EKALA',
+    restaurantBar: 'RESTAURANT · BAR',
+    stockAlert: 'STOCK ALERT',
+    outOfStock: 'OUT OF STOCK',
+    lowStock: 'LOW STOCK',
+    table: 'TABLE',
+    subtotal: 'Subtotal',
+    vat: 'VAT',
+    totalPaid: 'TOTAL PAID',
+    cash: 'CASH',
+    automatedNotification: 'Automatic notification',
+    newProductTitle: 'New Product Added',
+    product: 'Product',
+    buyingPrice: 'Buying Price',
+    sellingPrice: 'Selling Price',
+    initialStock: 'Initial Stock',
+    subjectNewProduct: '[{tenant}] New Product — {name}',
+    newProductBody: 'Automatic notification',
+    stockAlertTitle: 'Stock Alert',
+    stockAdjustmentTitle: 'Stock Adjusted — {name}',
+    stockAdjustmentEventType: 'STOCK ADJUSTMENT',
+    stockChangeLabel: 'STOCK CHANGE',
+    actionRequired: 'Action required',
+    minimum_stock: 'Min. stock:',
+    remaining: 'remaining',
+    reorderText: '⚡ Reorder immediately to avoid service disruption. Contact your supplier or update stock via the dashboard.',
+  },
+fr: {
+    greatOlive: 'EKALA',
+    restaurantBar: 'RESTAURANT · BAR',
+    stockAlert: 'ALERTE STOCK',
+    outOfStock: 'RUPTURE DE STOCK',
+    lowStock: 'STOCK FAIBLE',
+    table: 'TABLE',
+    subtotal: 'Sous-total',
+    vat: 'TVA',
+    totalPaid: 'TOTAL PAYÉ',
+    cash: 'LIQUIDE',
+    automatedNotification: 'Notification automatique',
+    newProductTitle: 'Nouveau Produit Ajouté',
+    product: 'Produit',
+    buyingPrice: "Prix d'achat",
+    sellingPrice: 'Prix de vente',
+    initialStock: 'Stock initial',
+    subjectNewProduct: '[{tenant}] Nouveau Produit — {name}',
+    newProductBody: 'Notification automatique',
+    stockAlertTitle: 'Alerte Stock',
+    stockAdjustmentTitle: 'Ajustement Stock — {name}',
+    stockAdjustmentEventType: 'AJUSTEMENT STOCK',
+    stockChangeLabel: 'MODIFICATION STOCK',
+    actionRequired: 'Action requise',
+    minimum_stock: 'Stock min. :',
+    remaining: 'restant(s)',
+    reorderText: '⚡ Réapprovisionnez immédiatement pour éviter toute perturbation du service. Contactez votre fournisseur ou mettez à jour le stock via le tableau de bord.',
+  },
+  pt: {
+    greatOlive: 'EKALA',
+    restaurantBar: 'RESTAURANTE · BAR',
+    stockAlert: 'ALERTA DE STOCK',
+    outOfStock: 'ESgotado',
+    lowStock: 'STOCK BAIXO',
+    table: 'MESA',
+    subtotal: 'Subtotal',
+    vat: 'IVA',
+    totalPaid: 'TOTAL PAGO',
+    cash: 'DINHEIRO',
+    automatedNotification: 'Notificação automática',
+    newProductTitle: 'Novo Produto Adicionado',
+    product: 'Produto',
+    buyingPrice: 'Preço de Compra',
+    sellingPrice: 'Preço de Venda',
+    initialStock: 'Stock Inicial',
+    subjectNewProduct: '[{tenant}] Novo Produto — {name}',
+    newProductBody: 'Notificação automática',
+    stockAlertTitle: 'Alerta de Stock',
+    stockAdjustmentTitle: 'Ajuste de Stock — {name}',
+    stockAdjustmentEventType: 'AJUSTE DE STOCK',
+    stockChangeLabel: 'ALTERAÇÃO DE STOCK',
+    actionRequired: 'Ação necessária',
+    minimum_stock: 'Stock mín.:',
+    remaining: 'restante(s)',
+    reorderText: '⚡ Reabasteça imediatamente para evitar interrupção do serviço. Contacte o seu fornecedor ou atualize o stock no painel.',
+  },
+};
+
+export function emailT(lang: EmailLang, key: string, vars?: Record<string, string | number>): string {
+  const dict = EMAIL_I18N[lang] || EMAIL_I18N.en;
+  let str = dict[key] ?? EMAIL_I18N.en[key] ?? key;
+  if (vars) {
+    for (const [k, v] of Object.entries(vars)) {
+      str = str.replace(new RegExp(`\\{${k}\\}`, 'g'), String(v));
+    }
+  }
+  return str;
+}
+
+/**
+ * Centralized email context resolver.
+ *
+ * Previously the email *branding* (business name) was derived from
+ * `getCurrentTenantId()` (AsyncLocalStorage) while the *language* and
+ * *currency* were derived from a `settingsRaw` object passed by the caller.
+ * When those two sources disagreed (e.g. across async boundaries such as
+ * `setImmediate`, or when a route read settings for a different tenant),
+ * emails ended up with a mixed locale — e.g. "[Great Olive]" branding in
+ * French but an English body (or vice-versa).
+ *
+ * This helper guarantees that the business name, language and currency ALL
+ * resolve from a SINGLE tenant id, eliminating mixed-language emails.
+ */
+export function resolveEmailContext(
+  settingsRaw: SettingsReader,
+  explicitTenantId?: number,
+  fallbackCurrency?: string,
+): { businessName: string; emailLang: EmailLang; actualCurrency: string; settings: SettingsReader } {
+  const tid = explicitTenantId ?? getCurrentTenantId();
+  const settings =
+    settingsRaw && Object.keys(settingsRaw).length > 0
+      ? settingsRaw
+      : loadRawSettings(tid);
+  const businessName = getTenantName(tid);
+  const emailLang = normalizeEmailLang(settings.app_language);
+  const actualCurrency = String(
+    (settings.app_currency as string) || fallbackCurrency || 'ZMW',
+  ).trim().toUpperCase().slice(0, 3) || 'ZMW';
+  return { businessName, emailLang, actualCurrency, settings };
+}
+
 /** Minimal read-access interface so the service doesn't import Zustand client-side. */
 export interface SettingsReader {
   [key: string]: string | number | boolean | null | undefined;
@@ -119,7 +293,7 @@ export function readEmailSettings(raw: SettingsReader): EmailSettings {
 }
 
 /** Robust mapper: incoming event type → settings boolean property (used for legacy top-level flags and diagnostics) */
-function mapNotificationTypeToSettingKey(type: string): keyof EmailSettings | null {
+function _mapNotificationTypeToSettingKey(type: string): keyof EmailSettings | null {
   const m: Record<string, keyof EmailSettings> = {
     stockAdj: 'notifyStockAdjustment',
     stockAdjustment: 'notifyStockAdjustment',
@@ -218,12 +392,7 @@ async function getTransporter(settings: EmailSettings): Promise<any> {
  * Palette: Charcoal #1a1a1f · Gold #c9a84c · Warm white #f7f4ef
  * ══════════════════════════════════════════════════════════════════════════ */
 
-/* ══════════════════════════════════════════════════════════════════════════
- * Design system — Premium dark restaurant aesthetic
- * Palette: Charcoal #1a1a1f · Gold #c9a84c · Warm white #f7f4ef
- * ══════════════════════════════════════════════════════════════════════════ */
-
-const EMAIL_BASE_STYLE = `
+const _EMAIL_BASE_STYLE = `
   *{box-sizing:border-box;margin:0;padding:0}
   body{font-family:'Helvetica Neue',Arial,sans-serif;
     background:#f0ede8;padding:32px 16px}
@@ -420,7 +589,7 @@ function safeMoney(value: unknown): number {
 /** Bulletproof currency formatter */
 function formatMoney(value: unknown, currency: string): string {
   const num = safeMoney(value);
-  const safeCurrency = currency && currency.length === 3 ? currency.toUpperCase() : 'USD';
+  const safeCurrency = currency && currency.length === 3 ? currency.toUpperCase() : 'ZMW';
 
   try {
     const formatted = new Intl.NumberFormat('en-US', {
@@ -444,7 +613,7 @@ function formatMoney(value: unknown, currency: string): string {
  * - normalizes any accidental "ZMWNaN" => "ZMW 0.00"
  */
 function formatMoneyHtml(value: unknown, currency: string): string {
-  const safeCur = (currency && currency.length === 3) ? currency.toUpperCase() : 'USD';
+  const safeCur = (currency && currency.length === 3) ? currency.toUpperCase() : 'ZMW';
   const num = safeMoney(value);
 
   // Debug log for stock movement NaN investigation
@@ -464,7 +633,7 @@ function formatMoneyHtml(value: unknown, currency: string): string {
 }
 
 /** Robust numeric parser — production grade for monetary data from any source (SQLite strings, formatted currency, nulls, etc.) */
-function parseNumericValue(v: any): number {
+function _parseNumericValue(v: any): number {
   if (v === null || v === undefined) return 0;
   if (typeof v === 'boolean') return v ? 1 : 0;
   if (typeof v === 'number') return Number.isFinite(v) ? v : 0;
@@ -487,22 +656,22 @@ function parseNumericValue(v: any): number {
  * REUSABLE EMAIL COMPONENT BUILDERS (table-based for compatibility)
  * ══════════════════════════════════════════════════════════════════════════ */
 
-function buildHeader(businessName: string, eventType: string): string {
+function buildHeader(businessName: string, eventType: string, lang: EmailLang = 'en'): string {
   return `
   <div style="background:#1a1a1f;border-radius:16px 16px 0 0;padding:22px 28px;display:flex;justify-content:space-between;align-items:center">
     <div>
       <div style="font-size:18px;font-weight:700;color:#c9a84c;letter-spacing:.04em">${businessName}</div>
-      <div style="font-size:10px;color:#6a6a80;letter-spacing:.14em;margin-top:3px;font-weight:500">RESTAURANT · BAR</div>
+      <div style="font-size:10px;color:#6a6a80;letter-spacing:.14em;margin-top:3px;font-weight:500">${emailT(lang, 'restaurantBar')}</div>
     </div>
     <div style="background:#c9a84c;color:#1a1a1f;font-size:9px;font-weight:700;letter-spacing:.12em;padding:5px 12px;border-radius:999px">${eventType}</div>
   </div>`;
 }
 
-function buildFooter(businessName: string): string {
+function buildFooter(businessName: string, lang: EmailLang = 'en'): string {
   return `
   <div style="background:#f7f4ef;border-radius:0 0 16px 16px;padding:14px 28px;border:1px solid #e8e2d9;border-top:none;display:flex;justify-content:space-between;align-items:center">
-    <div style="font-size:10px;color:#bbb;letter-spacing:.08em">${businessName} · NDOLA</div>
-    <div style="font-size:10px;color:#bbb; margin-left: 90px">Automated notification</div>
+    <div style="font-size:10px;color:#bbb;letter-spacing:.08em">${businessName}</div>
+    <div style="font-size:10px;color:#bbb; margin-left: 90px">${emailT(lang, 'automatedNotification')}</div>
   </div>`;
 }
 
@@ -532,20 +701,21 @@ function buildTotalSection(
   totals: { label: string; value: number } | undefined,
   paymentMethod: string | undefined,
   currency: string,
+  lang: EmailLang = 'en',
 ): string {
   let html = `<table width="100%" cellpadding="0" cellspacing="0" style="margin-top:16px;border-collapse:collapse">`;
 
   if (subtotal !== undefined) {
     html += `
       <tr>
-        <td style="font-size:12px;color:#888;padding:5px 0;border-bottom:1px solid #f4f0eb">Subtotal</td>
+        <td style="font-size:12px;color:#888;padding:5px 0;border-bottom:1px solid #f4f0eb">${emailT(lang, 'subtotal')}</td>
         <td align="right" style="font-size:12px;color:#888;padding:5px 0;border-bottom:1px solid #f4f0eb;min-width:110px;font-variant-numeric:tabular-nums">${formatMoneyHtml(subtotal, currency)}</td>
       </tr>`;
   }
   if (tax) {
     html += `
       <tr>
-        <td style="font-size:12px;color:#888;padding:5px 0">VAT ${tax.percent}%</td>
+        <td style="font-size:12px;color:#888;padding:5px 0">${emailT(lang, 'vat')} ${tax.percent}%</td>
         <td align="right" style="font-size:12px;color:#888;padding:5px 0;min-width:110px;font-variant-numeric:tabular-nums">${formatMoneyHtml(tax.amount, currency)}</td>
       </tr>`;
   }
@@ -555,8 +725,8 @@ function buildTotalSection(
     html += `
       <div style="background:#1a1a1f;border-radius:10px;padding:14px 16px;margin-top:14px;display:flex;justify-content:space-between;align-items:center">
         <div>
-          <div style="font-size:10px;color:#6a6a80;letter-spacing:.1em;margin-bottom:2px">TOTAL PAID</div>
-          <div style="font-size:10px;color:#6a6a80;letter-spacing:.05em">${paymentMethod || 'CASH'}</div>
+          <div style="font-size:10px;color:#6a6a80;letter-spacing:.1em;margin-bottom:2px">${emailT(lang, 'totalPaid')}</div>
+          <div style="font-size:10px;color:#6a6a80;letter-spacing:.05em">${paymentMethod || emailT(lang, 'cash')}</div>
         </div>
         <div style="font-size:26px;font-weight:700;color:#c9a84c;letter-spacing:-.02em">${formatMoneyHtml(totals.value, currency)}</div>
       </div>`;
@@ -589,10 +759,9 @@ function buildStaffSection(note?: string): string {
 }
 
 function buildEmailHTML(opts: EmailBody): string {
-  const { subject, eventType, product, businessName, changes, totals, subtotal, tax, paymentMethod, note, currency } = opts;
+  const { subject, eventType, product, businessName, changes, totals, subtotal, tax, paymentMethod, note, currency, lang = 'en' } = opts;
 
-  console.log('currency: ', currency)
-  const actualCurrency = currency || 'USD';
+  const actualCurrency = currency || 'ZMW';
 
   const now = new Date();
   const day = now.getDate();
@@ -605,7 +774,7 @@ function buildEmailHTML(opts: EmailBody): string {
   const displayInvoice = invoiceNum ? `Invoice #${invoiceNum}` : subject;
 
   const lineItemsHTML = buildLineItems(changes, actualCurrency);
-  const totalSectionHTML = buildTotalSection(subtotal, tax, totals, paymentMethod, actualCurrency);
+  const totalSectionHTML = buildTotalSection(subtotal, tax, totals, paymentMethod, actualCurrency, lang);
   const staffHTML = buildStaffSection(note);
 
   return `<!DOCTYPE html>
@@ -614,7 +783,7 @@ function buildEmailHTML(opts: EmailBody): string {
 <body style="font-family:'Helvetica Neue',Arial,sans-serif;background:#f0ede8;padding:32px 16px;margin:0">
 <div style="max-width:480px;margin:0 auto">
 
-  ${buildHeader(businessName || 'GREAT OLIVE', eventType)}
+  ${buildHeader(businessName || emailT(lang, 'greatOlive'), eventType, lang)}
 
   <div style="background:#fff;padding:28px;border-left:1px solid #e8e2d9;border-right:1px solid #e8e2d9">
 
@@ -626,7 +795,7 @@ function buildEmailHTML(opts: EmailBody): string {
           <div style="font-size:10px;color:#888;margin-top:4px">${time}</div>
         </td>
         <td align="right" style="padding-left:20px">
-          <div style="font-size:10px;color:#888;letter-spacing:.08em;margin-bottom:3px">TABLE</div>
+          <div style="font-size:10px;color:#888;letter-spacing:.08em;margin-bottom:3px">${emailT(lang, 'table')}</div>
           <div style="font-size:17px;font-weight:700;color:#111">${product || '—'}</div>
         </td>
       </tr>
@@ -644,7 +813,7 @@ function buildEmailHTML(opts: EmailBody): string {
 
   </div>
 
-  ${buildFooter(businessName || 'GREAT OLIVE')}
+  ${buildFooter(businessName || emailT(lang, 'greatOlive'), lang)}
 
 </div>
 </body>
@@ -772,7 +941,7 @@ function buildInventorySummaryHTML(summary: InventorySummary, businessName: stri
 </html>`;
 }
 
-function buildStockAlertHTML(products: LowStockProduct[], businessName: string): string {
+function _buildStockAlertHTML(products: LowStockProduct[], businessName: string): string {
   const time = new Date().toLocaleString('en-US', {
     year: 'numeric', month: 'short', day: 'numeric',
     hour: '2-digit', minute: '2-digit',
@@ -835,7 +1004,7 @@ function buildStockAlertHTML(products: LowStockProduct[], businessName: string):
     ${lowSection}
 
     <div style="margin-top:20px;background:#1a1a1f;border-radius:10px;padding:14px 16px;font-size:12px;color:#c9a84c;line-height:1.6">
-      ⚡ Reorder immediately to avoid service disruption. Contact your supplier or update stock via the Great Olive dashboard.
+      ⚡ Reorder immediately to avoid service disruption. Contact your supplier or update stock via the ${businessName} dashboard.
     </div>
 
   </div>
@@ -866,6 +1035,7 @@ export interface EmailBody {
   paymentMethod?: string;
   note?:          string;
   currency?:      string;
+  lang?:          EmailLang;
 }
 
 interface ChangeLine {
@@ -881,6 +1051,7 @@ async function sendEmail(
   body: string,
   settings: EmailSettings,
   recipients?: string[],
+  businessName?: string,
 ): Promise<boolean> {
   const toList = recipients && recipients.length > 0 
     ? recipients 
@@ -893,7 +1064,7 @@ async function sendEmail(
   const primaryTo = toList[0];
   const bccList = toList.slice(1);
 
-  const fromName = 'Great Olive Notifications';
+  const fromName = businessName || 'EKALA';
   const fromAddr = settings.smtpUser || 'afcodenet@gmail.com'; // SMTP sender ONLY
 
   try {
@@ -929,11 +1100,12 @@ export async function sendEmailDirect(
   settingsRaw: SettingsReader = {},
   to: string,
   bcc?: string,
+  businessName?: string,
 ): Promise<boolean> {
   const settings = readEmailSettings(settingsRaw);
   if (!settings.emailNotificationsEnabled) return false;
 
-  const fromName = 'Great Olive Notifications';
+  const fromName = businessName || 'EKALA';
   const fromAddr = settings.smtpUser || 'afcodenet@gmail.com';
 
   try {
@@ -966,21 +1138,29 @@ export interface LowStockProduct {
 export async function notifyLowStockAlert(
   products: LowStockProduct[],
   settingsRaw: SettingsReader,
+  tenantId?: number,
 ): Promise<void> {
   const s = readEmailSettings(settingsRaw);
   if (!s.emailNotificationsEnabled) return;
 
+  const { businessName, emailLang: lang } = resolveEmailContext(settingsRaw, tenantId);
   const outOfStock = products.filter(p => p.is_out_of_stock);
   const lowStock   = products.filter(p => !p.is_out_of_stock);
 
+  const outOfStockLabel = emailT(lang, 'outOfStock');
+  const lowStockLabel = emailT(lang, 'lowStock');
+  const minStockLabel = emailT(lang, 'minimum_stock', { min: '' }) || 'Min. stock:';
+  const remainingLabel = emailT(lang, 'remaining', { count: '' }) || 'remaining';
+  const actionText = emailT(lang, 'reorderText') || '⚡ Reorder immediately to avoid service disruption. Contact your supplier or update stock via the ' + businessName + ' dashboard.';
+
   const outOfStockHTML = outOfStock.length ? `
     <div style="background:#fef2f2;border:1px solid #fecaca;border-radius:10px;padding:16px;margin-bottom:14px">
-      <div style="font-size:10px;font-weight:700;color:#ef4444;letter-spacing:.12em;margin-bottom:12px">OUT OF STOCK</div>
+      <div style="font-size:10px;font-weight:700;color:#ef4444;letter-spacing:.12em;margin-bottom:12px">${outOfStockLabel}</div>
       ${outOfStock.map(p => `
         <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid #fee2e2">
           <div>
             <div style="font-size:13px;font-weight:600;color:#222">${p.name}</div>
-            <div style="font-size:11px;color:#f87171;margin-top:2px">Min. stock: ${p.minimum_stock}</div>
+            <div style="font-size:11px;color:#f87171;margin-top:2px">${minStockLabel} ${p.minimum_stock}</div>
           </div>
           <div style="background:#ef4444;color:#fff;font-size:11px;font-weight:700;padding:4px 10px;border-radius:999px">0</div>
         </div>
@@ -989,17 +1169,22 @@ export async function notifyLowStockAlert(
 
   const lowStockHTML = lowStock.length ? `
     <div style="background:#fffbeb;border:1px solid #fde68a;border-radius:10px;padding:16px">
-      <div style="font-size:10px;font-weight:700;color:#d97706;letter-spacing:.12em;margin-bottom:12px">LOW STOCK</div>
+      <div style="font-size:10px;font-weight:700;color:#d97706;letter-spacing:.12em;margin-bottom:12px">${lowStockLabel}</div>
       ${lowStock.map(p => `
         <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid #fef3c7">
           <div>
             <div style="font-size:13px;font-weight:600;color:#222">${p.name}</div>
-            <div style="font-size:11px;color:#d97706;margin-top:2px">Min. ${p.minimum_stock} · ${p.stock_quantity} remaining</div>
+            <div style="font-size:11px;color:#d97706;margin-top:2px">Min. ${p.minimum_stock} · ${p.stock_quantity} ${remainingLabel}</div>
           </div>
           <div style="background:#fef3c7;border:1px solid #fde68a;color:#92400e;font-size:11px;font-weight:700;padding:4px 10px;border-radius:999px">${p.stock_quantity}</div>
         </div>
       `).join('')}
     </div>` : '';
+
+  const stockAlertLabel = emailT(lang, 'stockAlert');
+  const actionRequiredLabel = emailT(lang, 'actionRequired') || 'ACTION REQUIRED';
+  const stockAlertTitle = emailT(lang, 'stockAlertTitle') || 'Stock Alert';
+  const automatedNotification = emailT(lang, 'automatedNotification');
 
   const emailHTML = `
   <div style="font-family:'Helvetica Neue',Arial,sans-serif;background:#f0ede8;padding:32px 16px">
@@ -1008,31 +1193,31 @@ export async function notifyLowStockAlert(
       <!-- Header -->
       <div style="background:#1a1a1f;border-radius:16px 16px 0 0;padding:22px 28px;display:flex;justify-content:space-between;align-items:center">
         <div>
-          <div style="font-size:18px;font-weight:700;color:#c9a84c;letter-spacing:.04em">GREAT OLIVE</div>
-          <div style="font-size:10px;color:#6a6a80;letter-spacing:.14em;margin-top:3px;font-weight:500">STOCK ALERT</div>
+          <div style="font-size:18px;font-weight:700;color:#c9a84c;letter-spacing:.04em">${businessName.toUpperCase()}</div>
+          <div style="font-size:10px;color:#6a6a80;letter-spacing:.14em;margin-top:3px;font-weight:500">${stockAlertLabel}</div>
         </div>
-        <div style="background:#ef4444;color:#fff;font-size:9px;font-weight:700;letter-spacing:.12em;padding:5px 12px;border-radius:999px">ACTION REQUIRED</div>
+        <div style="background:#ef4444;color:#fff;font-size:9px;font-weight:700;letter-spacing:.12em;padding:5px 12px;border-radius:999px">${actionRequiredLabel}</div>
       </div>
 
       <!-- Body -->
       <div style="background:#fff;padding:28px;border-left:1px solid #e8e2d9;border-right:1px solid #e8e2d9">
 
-        <div style="font-size:22px;font-weight:700;color:#111;margin-bottom:6px">Stock Alert</div>
+        <div style="font-size:22px;font-weight:700;color:#111;margin-bottom:6px">${stockAlertTitle}</div>
         <div style="font-size:12px;color:#888;margin-bottom:24px">${new Date().toLocaleDateString('en-US', { day: 'numeric', month: 'short', year: 'numeric' })} • ${new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false })} · ${products.length} item${products.length > 1 ? 's' : ''} need attention</div>
 
         ${outOfStockHTML}
         ${lowStockHTML}
 
         <div style="margin-top:20px;background:#1a1a1f;border-radius:10px;padding:14px 16px;font-size:12px;color:#c9a84c;line-height:1.6">
-          ⚡ Reorder immediately to avoid service disruption. Contact your supplier or update stock via the Great Olive dashboard.
+          ${actionText}
         </div>
 
       </div>
 
       <!-- Footer -->
       <div style="background:#f7f4ef;border-radius:0 0 16px 16px;padding:14px 28px;border:1px solid #e8e2d9;border-top:none;display:flex;justify-content:space-between;align-items:center">
-        <div style="font-size:10px;color:#bbb;letter-spacing:.08em">GREAT OLIVE · LUSAKA</div>
-        <div style="font-size:10px;color:#bbb">Automated notification</div>
+        <div style="font-size:10px;color:#bbb;letter-spacing:.08em">${businessName.toUpperCase()} · LUSAKA</div>
+        <div style="font-size:10px;color:#bbb">${automatedNotification}</div>
       </div>
 
     </div>
@@ -1040,9 +1225,10 @@ export async function notifyLowStockAlert(
 
   await broadcastNotification(
     NOTIFICATION_TYPES.LOW_STOCK,
-    `[Great Olive] Stock Alert — ${products.length} item${products.length > 1 ? 's' : ''} need attention`,
+    `[${businessName}] Stock Alert — ${products.length} item${products.length > 1 ? 's' : ''} need attention`,
     emailHTML,
     settingsRaw,
+    businessName,
   );
 }
 
@@ -1051,33 +1237,42 @@ export async function notifyNewProduct(
   productName: string,
   productData: Record<string, any>,
   settingsRaw: SettingsReader = {},
+  tenantId?: number,
 ): Promise<void> {
   console.log('[Notification] notifyNewProduct called for:', productName);
 
-  const actualCurrency = asStr(settingsRaw.app_currency, 'USD');
+  const { businessName, emailLang: lang, actualCurrency } = resolveEmailContext(settingsRaw, tenantId);
+
+  const title = emailT(lang, 'newProductTitle', { name: productName });
+  const productLabel = emailT(lang, 'product');
+  const buyingPriceLabel = emailT(lang, 'buyingPrice');
+  const sellingPriceLabel = emailT(lang, 'sellingPrice');
+  const initialStockLabel = emailT(lang, 'initialStock');
+  const footerText = emailT(lang, 'newProductBody');
 
   const html = `
     <div style="font-family: Helvetica, Arial, sans-serif; max-width: 480px; margin: 0 auto; background: #f8f5f0; padding: 32px 24px;">
       <div style="background: #1a1a1f; color: #c9a84c; padding: 20px; border-radius: 12px 12px 0 0; text-align: center;">
-        <h2 style="margin:0; font-size: 20px;">Nouveau Produit Ajouté</h2>
+        <h2 style="margin:0; font-size: 20px;">${title}</h2>
       </div>
       <div style="background: white; padding: 24px; border: 1px solid #e8e2d9;">
-        <p><strong>Produit :</strong> ${productName}</p>
-        <p><strong>Prix d'achat :</strong> ${productData.buying_price || 0} ${actualCurrency}</p>
-        <p><strong>Prix de vente :</strong> ${productData.selling_price} ${actualCurrency}</p>
-        <p><strong>Stock initial :</strong> ${productData.stock_quantity || 0} ${productData.unit || 'pcs'}</p>
+        <p><strong>${productLabel} :</strong> ${productName}</p>
+        <p><strong>${buyingPriceLabel} :</strong> ${productData.buying_price || 0} ${actualCurrency}</p>
+        <p><strong>${sellingPriceLabel} :</strong> ${productData.selling_price} ${actualCurrency}</p>
+        <p><strong>${initialStockLabel} :</strong> ${productData.stock_quantity || 0} ${productData.unit || 'pcs'}</p>
       </div>
       <div style="background: #f7f4ef; padding: 14px 24px; border-radius: 0 0 12px 12px; font-size: 12px; color: #666;">
-        Great Olive • Notification automatique
+        ${businessName} • ${footerText}
       </div>
     </div>
   `;
 
   await broadcastNotification(
     NOTIFICATION_TYPES.NEW_PRODUCT,
-    `[Great Olive] Nouveau Produit — ${productName}`,
+    `[${businessName}] ${title} — ${productName}`,
     html,
-    settingsRaw
+    settingsRaw,
+    businessName,
   );
 }
 
@@ -1093,63 +1288,76 @@ export async function notifyStockAdjustment(
   performedBy:   string | undefined,
   currency:      string | undefined,
   settingsRaw:   SettingsReader,
+  tenantId?:     number,
 ): Promise<void> {
-  const actualCurrency = currency || asStr(settingsRaw.app_currency, 'USD');
+  const { businessName, emailLang, actualCurrency } = resolveEmailContext(settingsRaw, tenantId, currency);
 
   await broadcastNotification(
     NOTIFICATION_TYPES.STOCK_ADJUSTMENT,
-    `[Great Olive] Stock Adjusted — ${productName}`,
+    emailT(emailLang, 'stockAdjustmentTitle', { name: productName }),
     buildEmailHTML({
-      subject:    `Stock Adjusted — ${productName}`,
-      eventType:  'STOCK ADJUSTMENT',
+      subject:    emailT(emailLang, 'stockAdjustmentTitle', { name: productName }),
+      eventType:  emailT(emailLang, 'stockAdjustmentEventType'),
       product:    productName,
-      businessName: 'Great Olive',
+      businessName: businessName,
       changes:    [],
       totals: {
-        label: 'STOCK CHANGE',
+        label: emailT(emailLang, 'stockChangeLabel'),
         value: qtyAfter,
       },
       note: `Previous: ${qtyBefore}\nChange: ${qtyChanged >= 0 ? '+' : ''}${qtyChanged}\nCurrent: ${qtyAfter}\nReason: ${reason}${performedBy ? `\nPerformed by: ${performedBy}` : ''}`,
       currency: actualCurrency,
+      lang: emailLang,
     }),
     settingsRaw,
+    businessName,
   );
 }
 
-export async function loadRawSettingsAsync(): Promise<SettingsReader> {
-  const tenantId = getCurrentTenantId();
+export async function loadRawSettingsAsync(tenantId?: number): Promise<SettingsReader> {
+  const tid = tenantId ?? getCurrentTenantId();
   if (!db) {
     try {
       const { getSupabaseClient } = require('../database/supabase.client');
       const supabase = getSupabaseClient();
-      const { data, error } = await supabase.from('settings').select('key, value').eq('tenant_id', tenantId);
+      const { data, error } = await supabase.from('settings').select('key, value').eq('tenant_id', tid);
       if (error) throw error;
-      return (data || []).reduce((acc: any, row: any) => {
+      return withDefaultSettings((data || []).reduce((acc: any, row: any) => {
         acc[row.key] = row.value;
         return acc;
-      }, {} as SettingsReader);
+      }, {} as SettingsReader));
     } catch (e) {
       console.warn('[Notification] Failed to load settings from Supabase, using defaults', e);
-      return {};
+      return withDefaultSettings({});
     }
   }
-  const rows = db.prepare('SELECT key, value FROM settings WHERE tenant_id = ?').all(tenantId) as Array<{ key: string; value: string }>;
-  return rows.reduce((acc, row) => {
+  const read = (id: number) =>
+    db.prepare('SELECT key, value FROM settings WHERE tenant_id = ?').all(id) as Array<{ key: string; value: string }>;
+  let rows = read(tid);
+  // Fall back to the primary tenant's settings if this tenant has none, so
+  // notifications still reflect the configured locale/currency/branding.
+  if (rows.length === 0 && tid !== 1) rows = read(1);
+  return withDefaultSettings(rows.reduce((acc, row) => {
     acc[row.key] = row.value;
     return acc;
-  }, {} as SettingsReader);
+  }, {} as SettingsReader));
 }
 
-export function loadRawSettings(): SettingsReader {
-  const tenantId = getCurrentTenantId();
+export function loadRawSettings(tenantId?: number): SettingsReader {
+  const tid = tenantId ?? getCurrentTenantId();
   if (!db) {
-    return {}; // Synchronous version returns empty in cloud mode; callers should use loadRawSettingsAsync if possible
+    return withDefaultSettings({}); // Synchronous version returns empty in cloud mode; callers should use loadRawSettingsAsync if possible
   }
-  const rows = db.prepare('SELECT key, value FROM settings WHERE tenant_id = ?').all(tenantId) as Array<{ key: string; value: string }>;
-  return rows.reduce((acc, row) => {
+  const read = (id: number) =>
+    db.prepare('SELECT key, value FROM settings WHERE tenant_id = ?').all(id) as Array<{ key: string; value: string }>;
+  let rows = read(tid);
+  // Fall back to the primary tenant's settings if this tenant has none, so
+  // notifications still reflect the configured locale/currency/branding.
+  if (rows.length === 0 && tid !== 1) rows = read(1);
+  return withDefaultSettings(rows.reduce((acc, row) => {
     acc[row.key] = row.value;
     return acc;
-  }, {} as SettingsReader);
+  }, {} as SettingsReader));
 }
 
 /** Professional role-based recipient resolver */
@@ -1184,7 +1392,7 @@ function normalizeNotificationTypeKey(type: string): string[] {
   return Array.from(new Set([camel, lower, snake, kebab]));
 }
 
-function isNotificationEnabled(roleCfg: any, notificationType: string): boolean {
+function _isNotificationEnabled(roleCfg: any, notificationType: string): boolean {
   if (!roleCfg?.notifications) return false;
   const keysToTry = normalizeNotificationTypeKey(notificationType);
 
@@ -1304,6 +1512,7 @@ export async function broadcastNotification(
   subject: string,
   htmlBody: string,
   settingsRaw: SettingsReader,
+  businessName?: string,
 ): Promise<void> {
   // Ensure we don't accidentally use default email settings when caller passes an empty object.
   const effectiveSettingsRaw =
@@ -1329,7 +1538,7 @@ export async function broadcastNotification(
     return;
   }
 
-  await sendEmail(subject, htmlBody, s, recipients);
+  await sendEmail(subject, htmlBody, s, recipients, businessName);
 }
 
 function msUntilNextRun(hour: number, minute: number): number {
@@ -1344,16 +1553,17 @@ async function notifyInventorySummary(settingsRaw: SettingsReader): Promise<void
   const s = readEmailSettings(settingsRaw);
   if (!s.emailNotificationsEnabled) return;
 
-  const currency = asStr(settingsRaw.app_currency, 'USD');
-  const businessName = asStr(settingsRaw.app_name, 'Great Olive');
-
   const tenantId = getCurrentTenantId();
+  const businessName = getTenantName(tenantId);
+  const currency = asStr(settingsRaw.app_currency, 'ZMW');
+
+  const tenantId2 = getCurrentTenantId();
 
   const rows = db.prepare(`
     SELECT id, name, stock_quantity, minimum_stock, unit, buying_price
     FROM products
     WHERE is_available = 1 AND tenant_id = ?
-  `).all(tenantId) as Array<{
+  `).all(tenantId2) as Array<{
     name: string;
     stock_quantity: number;
     minimum_stock: number;
@@ -1386,7 +1596,7 @@ async function notifyInventorySummary(settingsRaw: SettingsReader): Promise<void
   const formattedTotalInventoryValue = formatMoneyHtml(totalInventoryValue, currency);
 
   await sendEmail(
-    `[Great Olive] Inventory Summary — ${generatedAt}`,
+    `[${businessName}] Inventory Summary — ${generatedAt}`,
     buildInventorySummaryHTML({
       generatedAt,
       totalProducts,
@@ -1405,10 +1615,11 @@ export async function notifyInventoryUpdate(
   eventName: string,
   items: Array<{ name: string; qty: number; unitPrice: number; total?: number | string }>,
   note: string,
-  currency = 'USD',
+  currency = 'ZMW',
   settingsRaw: SettingsReader = {},
+  tenantId?: number,
 ): Promise<void> {
-  const actualCurrency = String(currency || asStr(settingsRaw.app_currency, 'USD')).trim().toUpperCase().slice(0, 3) || 'USD';
+  const { businessName, emailLang, actualCurrency } = resolveEmailContext(settingsRaw, tenantId, currency);
   const lineItems = items.map(item => {
     const qty = safeMoney(item.qty);
     const unitPrice = safeMoney(item.unitPrice);
@@ -1423,7 +1634,7 @@ export async function notifyInventoryUpdate(
   const emailHTML = `
   <div style="font-family:'Helvetica Neue',Arial,sans-serif;background:#f0ede8;padding:32px 16px">
     <div style="max-width:480px;margin:0 auto">
-      ${buildHeader('GREAT OLIVE', 'INVENTORY UPDATE')}
+      ${buildHeader(businessName.toUpperCase(), 'INVENTORY UPDATE')}
       <div style="background:#fff;padding:28px;border-left:1px solid #e8e2d9;border-right:1px solid #e8e2d9">
         <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:24px">
           <tr>
@@ -1452,15 +1663,16 @@ export async function notifyInventoryUpdate(
 
         ${noteSection}
       </div>
-      ${buildFooter('GREAT OLIVE')}
+      ${buildFooter(businessName.toUpperCase())}
     </div>
   </div>`;
 
   await broadcastNotification(
     NOTIFICATION_TYPES.INVENTORY,
-    `[Great Olive] Inventory Update — ${eventName}`,
+    `[${businessName}] Inventory Update — ${eventName}`,
     emailHTML,
     settingsRaw,
+    businessName,
   );
 }
 
@@ -1498,13 +1710,13 @@ export async function notifySale(
   tableLabel: string,
   waiterName?: string,
   cashierName?: string,
-  currency = 'USD',
+  currency = 'ZMW',
   settingsRaw: SettingsReader = {},
+  tenantId?: number,
 ): Promise<void> {
+  const { businessName, emailLang, actualCurrency } = resolveEmailContext(settingsRaw, tenantId, currency);
   const invoiceDigits = String(invoiceNumber || '').replace(/\D/g, '');
   const invoiceDisplay = invoiceDigits ? invoiceDigits.slice(-6) : String(invoiceNumber).slice(0, 6);
-
-  const actualCurrency = String(currency || asStr(settingsRaw.app_currency, 'USD')).trim().toUpperCase().slice(0, 3) || 'USD';
   const now = new Date();
   const day = now.getDate();
   const month = now.toLocaleString('en-US', { month: 'short' });
@@ -1545,7 +1757,7 @@ export async function notifySale(
   <div style="font-family:'Helvetica Neue',Arial,sans-serif;background:#f0ede8;padding:32px 16px">
     <div style="max-width:480px;margin:0 auto">
 
-      ${buildHeader('GREAT OLIVE', 'SALE')}
+      ${buildHeader(businessName.toUpperCase(), 'SALE')}
 
       <div style="background:#fff;padding:28px;border-left:1px solid #e8e2d9;border-right:1px solid #e8e2d9">
 
@@ -1606,16 +1818,17 @@ export async function notifySale(
 
       </div>
 
-      ${buildFooter('GREAT OLIVE')}
+      ${buildFooter(businessName.toUpperCase())}
 
     </div>
   </div>`;
 
   await broadcastNotification(
     NOTIFICATION_TYPES.SALES,
-    `[Great Olive] Sale ${invoiceNumber} — ${formatMoneyHtml(safeGrand, actualCurrency)}`,
+    `[${businessName}] Sale ${invoiceNumber} — ${formatMoneyHtml(safeGrand, actualCurrency)}`,
     emailHTML,
     settingsRaw,
+    businessName,
   );
 }
 
@@ -1627,11 +1840,12 @@ export async function notifyOrderCheckout(
   tableLabel: string,
   waiterName?: string,
   cashierName?: string,
-  currency = 'USD',
+  currency = 'ZMW',
   settingsRaw: SettingsReader = {},
+  tenantId?: number,
 ): Promise<void> {
+  const { businessName, emailLang, actualCurrency } = resolveEmailContext(settingsRaw, tenantId, currency);
   const orderDisplay = String(orderId).slice(-6);
-  const actualCurrency = String(currency || asStr(settingsRaw.app_currency, 'USD')).trim().toUpperCase().slice(0, 3) || 'USD';
   const now = new Date();
   const day = now.getDate();
   const month = now.toLocaleString('en-US', { month: 'short' });
@@ -1672,7 +1886,7 @@ export async function notifyOrderCheckout(
   <div style="font-family:'Helvetica Neue',Arial,sans-serif;background:#f0ede8;padding:32px 16px">
     <div style="max-width:480px;margin:0 auto">
 
-      ${buildHeader('GREAT OLIVE', 'ORDER CHECKOUT')}
+      ${buildHeader(businessName.toUpperCase(), 'ORDER CHECKOUT')}
 
       <div style="background:#fff;padding:28px;border-left:1px solid #e8e2d9;border-right:1px solid #e8e2d9">
 
@@ -1733,16 +1947,17 @@ export async function notifyOrderCheckout(
 
       </div>
 
-      ${buildFooter('GREAT OLIVE')}
+      ${buildFooter(businessName.toUpperCase())}
 
     </div>
   </div>`;
 
   await broadcastNotification(
     NOTIFICATION_TYPES.ORDER_CONFIRM,
-    `[Great Olive] Order Checkout #${orderDisplay} — ${formatMoneyHtml(safeGrand, actualCurrency)}`,
+    `[${businessName}] Order Checkout #${orderDisplay} — ${formatMoneyHtml(safeGrand, actualCurrency)}`,
     emailHTML,
     settingsRaw,
+    businessName,
   );
 }
 
@@ -1775,9 +1990,9 @@ export interface StockMovementEmailRow {
 export async function notifyStockMovement(
   movement: StockMovementEmailRow,
   settingsRaw: SettingsReader = {},
+  tenantId?: number,
 ): Promise<void> {
-  const currency = asStr(settingsRaw.app_currency, 'USD');
-  const actualCurrency = String(currency || 'USD').trim().toUpperCase().slice(0, 3) || 'USD';
+  const { businessName, emailLang, actualCurrency } = resolveEmailContext(settingsRaw, tenantId);
 
   const createdAt = movement.created_at ? new Date(movement.created_at) : new Date();
   const formattedDateTime = createdAt.toLocaleString('en-US', {
@@ -1807,7 +2022,7 @@ export async function notifyStockMovement(
   <div style="font-family:'Helvetica Neue',Arial,sans-serif;background:#f0ede8;padding:32px 16px">
     <div style="max-width:480px;margin:0 auto">
 
-      ${buildHeader('GREAT OLIVE', 'STOCK MOVEMENT')}
+      ${buildHeader(businessName.toUpperCase(), 'STOCK MOVEMENT')}
 
       <div style="background:#fff;padding:28px;border-left:1px solid #e8e2d9;border-right:1px solid #e8e2d9">
 
@@ -1859,16 +2074,17 @@ export async function notifyStockMovement(
 
       </div>
 
-      ${buildFooter('GREAT OLIVE')}
+      ${buildFooter(businessName.toUpperCase())}
 
     </div>
   </div>`;
 
    await broadcastNotification(
     NOTIFICATION_TYPES.STOCK_ADJUSTMENT,
-    `[Great Olive] Stock Movement — ${movement.product_name} (${movementCode})`,
+    `[${businessName}] Stock Movement — ${movement.product_name} (${movementCode})`,
     emailHTML,
     settingsRaw,
+    businessName,
   );
 }
 
@@ -1946,7 +2162,7 @@ export function scheduleStockMovementEmails(): void {
 
       for (const mv of rows) {
         try {
-          await notifyStockMovement(mv, settingsRaw);
+          await notifyStockMovement(mv, settingsRaw, tenantId);
           if (mv.id > maxId) maxId = mv.id;
         } catch (err: any) {
           console.error('[Notification] Stock movement email failed for id=', mv.id, err?.message || err);

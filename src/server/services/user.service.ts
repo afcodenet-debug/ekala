@@ -126,6 +126,55 @@ export class UserService {
   }
 
   /**
+   * Get a single user by ID.
+   * @param tenantId - The tenant ID (required)
+   * @param id - The user ID to fetch
+   */
+  static async getById(tenantId: number, id: number): Promise<User | null> {
+    if (!tenantId) {
+      throw new Error('tenantId is required');
+    }
+
+    if (!db) {
+      // Cloud mode: read from Supabase directly
+      if (!env.SUPABASE_URL || !env.SUPABASE_SERVICE_ROLE_KEY) {
+        console.warn('[UserService] No db and no Supabase configured. Returning null.');
+        return null;
+      }
+      try {
+        const { getSupabaseClient } = require('../database/supabase.client');
+        const supabase = getSupabaseClient();
+        const { data, error } = await supabase
+          .from('users')
+          .select('id, full_name, username, phone, role, email, pin_code, is_active, created_at, password_hash, has_setup_pin, remote_id, tenant_id')
+          .eq('id', id)
+          .eq('tenant_id', tenantId)
+          .single();
+        if (error) throw error;
+        return data as User | null;
+      } catch (err: any) {
+        console.error('[UserService] Supabase getById failed:', err?.message || err);
+        throw new Error('Failed to fetch user via Supabase');
+      }
+    }
+
+    // Local mode: read from SQLite
+    try {
+      const row = db.prepare(`
+        SELECT id, full_name, username, phone, role, email, pin_code, is_active,
+               password_hash, has_setup_pin, remote_id, tenant_id,
+               created_at, updated_at
+        FROM users
+        WHERE id = ? AND tenant_id = ?
+      `).get(id, tenantId) as User | undefined;
+      return row || null;
+    } catch (error) {
+      console.error('[UserService] getById error:', error);
+      throw new Error('Failed to fetch user');
+    }
+  }
+
+  /**
    * Create a new user.
    *
    * Behavior is CONSISTENT across modes:
@@ -134,13 +183,13 @@ export class UserService {
    *    SyncOrchestrator pushes it to Supabase. The local write is durable,
    *    the Supabase write is retried automatically.
    */
-/**
-    * Create a new user for a specific tenant.
-    * @param tenantId - The tenant ID (required)
-    * @param input - User creation data
-    * @param requesterRole - The role of the user making the request (for owner-only restrictions)
-    */
-static async create(tenantId: number, input: UserCreateInput, requesterRole?: UserRole): Promise<User> {
+  /**
+      * Create a new user for a specific tenant.
+      * @param tenantId - The tenant ID (required)
+      * @param input - User creation data
+      * @param requesterRole - The role of the user making the request (for owner-only restrictions)
+      */
+  static async create(tenantId: number, input: UserCreateInput, requesterRole?: UserRole): Promise<User> {
      if (!tenantId) {
        throw new Error('tenantId is required');
      }

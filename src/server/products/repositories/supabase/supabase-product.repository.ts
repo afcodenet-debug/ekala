@@ -3,6 +3,7 @@ import { env } from '../../../config/env';
 import { IProductRepository } from '../product.repository.interface';
 import { ProductEntity } from '../../types/product.types';
 import { getRequestId, logTrace } from '../../../utils/trace-utils';
+import { WriteInterceptor } from '../../../infrastructure/synchronization/write-interceptor';
 
 export class SupabaseProductRepository implements IProductRepository {
   private supabase = createClient(env.SUPABASE_URL!, env.SUPABASE_SERVICE_ROLE_KEY!, {
@@ -109,6 +110,13 @@ export class SupabaseProductRepository implements IProductRepository {
     };
 
     logTrace('ENTER Supabase INSERT products');
+    const writeInterceptor = WriteInterceptor.getInstance();
+    writeInterceptor.verifyWritePermission({
+      operation: 'insert',
+      table: 'products',
+      caller: 'supabase-product.repository.ts/create'
+    });
+    
     let data: any, error: any;
     try {
       const result = await this.supabase.from('products').insert(payload).select('*').single();

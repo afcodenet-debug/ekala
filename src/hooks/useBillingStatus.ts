@@ -6,6 +6,7 @@
 // =============================================================================
 
 import { useState, useEffect } from 'react';
+import { RuntimeContext } from '../core/runtime/runtime-context';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -49,6 +50,22 @@ export function useBillingStatus(tenantId: string | null): UseBillingStatusResul
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    // LOCAL mode: billing disabled, always active
+    if (RuntimeContext.getInstance().isLocal) {
+      setLoading(false);
+      setStatus({
+        active: true,
+        plan: null,
+        expiresAt: null,
+        daysUntilRenewal: null,
+        state: 'active',
+        graceDaysRemaining: null,
+        isExpired: false,
+        isGracePeriod: false,
+      });
+      return;
+    }
+
     if (!tenantId) {
       setLoading(false);
       setStatus({

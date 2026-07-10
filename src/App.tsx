@@ -38,7 +38,7 @@ const SetupAccountPage = lazy(() => import('./pages/saas/SetupAccountPage'));
 const AdminPaymentsPage = lazy(() => import('./pages/saas/AdminPaymentsPage'));
 const GlobalQrOrderNotifier = lazy(() => import('./components/GlobalQrOrderNotifier'));
 const BillingPageV2 = lazy(() => import('./pages/saas/BillingPageV2'));
-const SubscriptionPremiumPage = lazy(() => import('./pages/settings/SubscriptionPremiumPage'));
+const SubscriptionStudioPage = lazy(() => import('./pages/settings/SubscriptionStudioPage'));
 const AdminVouchersPage = lazy(() => import('./pages/admin/AdminVouchersPage'));
 const SettingsPage = lazy(() => import('./pages/SettingsPage'));
 const PlatformLayout = lazy(() => import('./pages/platform/PlatformLayout'));
@@ -51,6 +51,7 @@ const VouchersPage = lazy(() => import('./pages/platform/VouchersPage'));
 const AuditLogsPage = lazy(() => import('./pages/platform/AuditLogsPage'));
 const SyncCenterPage = lazy(() => import('./pages/platform/SyncCenterPage'));
 const PlatformLoginPage = lazy(() => import('./pages/platform/PlatformLoginPage'));
+const PlansPage = lazy(() => import('./pages/platform/PlansPage'));
 
 // Loading fallback component
 const PageLoader = () => (
@@ -293,7 +294,7 @@ function App() {
                             } />
                             <Route path="/settings/subscription" element={
                               <ProtectedRoute roles={['owner', 'admin']}>
-                                <SubscriptionPremiumPage />
+                                <SubscriptionStudioPage />
                               </ProtectedRoute>
                             } />
                             <Route path="/billing" element={<BillingPageV2 />} />
@@ -364,6 +365,11 @@ function App() {
               <Route path="settings" element={
                 <Suspense fallback={<PageLoader />}>
                   <SettingsPage />
+                </Suspense>
+              } />
+              <Route path="plans" element={
+                <Suspense fallback={<PageLoader />}>
+                  <PlansPage />
                 </Suspense>
               } />
             </Route>

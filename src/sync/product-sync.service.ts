@@ -348,11 +348,18 @@ export class ProductSyncService {
     const currentRemoteId = this.getRemoteId(table, recordId);
     const effectiveRemoteId = payload.remote_id || currentRemoteId;
 
-    // RÈGLE STRICTE: Pas de fallback "find by name"
-    // Si pas de remote_id et c'est un update → SKIP (ne pas synchroniser)
+    // LOCAL-FIRST: si un update n'a pas encore de remote_id, on le pousse quand
+    // même en tant que nouvel enregistrement (upsert sans id). Cela évite qu'un
+    // élément reste bloqué indéfiniment dans l'outbox et garantit que la source
+    // de vérité locale (SQLite) est bien propagée vers Supabase.
     if (!effectiveRemoteId && item.operation === 'update') {
-      console.warn(`[SYNC CORE] SKIP update ${entity} #${recordId} tenant=${tenantId}: no remote_id (strict mode)`);
-      return;
+      if (entity === 'product' || entity === 'category') {
+        console.warn(`[SYNC CORE] update ${entity} #${recordId} (tenant=${tenantId}) sans remote_id — push en tant qu'insert (local-first)`);
+        item = { ...item, operation: 'insert' };
+      } else {
+        console.warn(`[SYNC CORE] SKIP update ${entity} #${recordId}: no remote_id`);
+        return;
+      }
     }
 
     // Supabase utilise des UUID (strings) pour les IDs

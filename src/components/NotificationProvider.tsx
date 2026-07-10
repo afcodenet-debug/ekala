@@ -1,7 +1,5 @@
 // Notification System V3 - Provider Component
 // Initializes notification polling and provides context to the app
-
-import React, { useEffect } from 'react';
 import { useNotifications } from '../hooks/useNotifications';
 import { useAuthStore } from '../stores/useAuthStore';
 import { NotificationCenter } from './NotificationCenter';

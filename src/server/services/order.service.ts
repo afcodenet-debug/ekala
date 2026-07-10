@@ -1,6 +1,6 @@
 import db from '../db/database';
 import { notifyOrderCheckout, loadRawSettings } from '../services/notification.service';
-import { getOrderSyncService, getProductSyncService, withOutboxTransaction } from '../../sync';
+import { getOrderSyncService, getProductSyncService, withOutboxTransaction, isSyncEnabled } from '../../sync';
 import { getCurrentTenantId } from '../db/tenant-context';
 import { dataSource } from '../infrastructure/data-source-manager';
 
@@ -153,13 +153,19 @@ export class OrderService {
 
     for (const item of items as any[]) {
       const productId = item.productId ?? item.product_id;
+      const unitPrice =
+        Number(item.price) ||
+        Number(item.unit_price) ||
+        Number(item.unitPrice) ||
+        0;
+      const quantity = Number(item.quantity) || 0;
 
       itemStmt.run(
         orderId,
         productId,
-        Number(item.quantity),
-        Number(item.price),
-        Number(item.price) * Number(item.quantity),
+        quantity,
+        unitPrice,
+        unitPrice * quantity,
         item.notes ?? null,
         tenantId
       );
@@ -173,8 +179,10 @@ export class OrderService {
     try {
       const oldItems = db.prepare('SELECT id FROM order_items WHERE order_id = ? AND tenant_id = ?').all(orderId, tenantId) as { id: number }[];
       const sync = getProductSyncService();
-      for (const item of oldItems) {
-        sync.queueChangeInsideTransaction('order_item', 'delete', { id: item.id });
+      if (sync) {
+        for (const item of oldItems) {
+          sync.queueChangeInsideTransaction('order_item', 'delete', { id: item.id });
+        }
       }
     } catch (e) {
       console.warn('[OrderService] Failed to queue item deletions for sync:', e);
@@ -534,8 +542,8 @@ export class OrderService {
             `).get(existingOrder.id, tenantId) as any;
 
             const finalOrder = { ...updatedOrder, items: mergedItems };
-            getOrderSyncService().queueOrderChange('update', finalOrder, String(tenantId));
-            getOrderSyncService().pushPendingOrders(String(tenantId)).catch(e => console.warn('[OrderService] Sync push failed:', e));
+            getOrderSyncService()?.queueOrderChange('update', finalOrder, String(tenantId));
+            if (isSyncEnabled()) getOrderSyncService()?.pushPendingOrders(String(tenantId)).catch(e => console.warn('[OrderService] Sync push failed:', e));
 
             return finalOrder;
           }
@@ -573,8 +581,8 @@ export class OrderService {
           items: this.getItemsForOrder(orderId, JSON.stringify(normalizedItems))
         };
         
-        getOrderSyncService().queueOrderChange('insert', finalOrder, String(tenantId));
-        getOrderSyncService().pushPendingOrders(String(tenantId)).catch(e => console.warn('[OrderService] Sync push failed:', e));
+        getOrderSyncService()?.queueOrderChange('insert', finalOrder, String(tenantId));
+        if (isSyncEnabled()) getOrderSyncService()?.pushPendingOrders(String(tenantId)).catch(e => console.warn('[OrderService] Sync push failed:', e));
 
         return finalOrder;
       } catch (error) {
@@ -674,7 +682,7 @@ export class OrderService {
           items: normalizedItems
         };
 
-        getOrderSyncService().queueOrderChange('update', result, String(tenantId));
+        getOrderSyncService()?.queueOrderChange('update', result, String(tenantId));
 
         return result;
       } catch (error) {
@@ -804,8 +812,8 @@ export class OrderService {
 
         // Queue for sync - CRITICAL for real-time status consistency
         console.log(`[OrderService] Queuing sync for order ${id} with status ${status}`);
-        getOrderSyncService().queueOrderChange('update', result, String(tenantId));
-        getOrderSyncService().pushPendingOrders(String(tenantId)).catch(e => console.warn('[OrderService] Sync push failed:', e));
+        getOrderSyncService()?.queueOrderChange('update', result, String(tenantId));
+        if (isSyncEnabled()) getOrderSyncService()?.pushPendingOrders(String(tenantId)).catch(e => console.warn('[OrderService] Sync push failed:', e));
 
         if (!wasPaid && status === 'paid') {
           const saleExists = db.prepare('SELECT 1 FROM sales WHERE order_id = ? AND tenant_id = ? LIMIT 1').get(id, tenantId);
@@ -914,7 +922,7 @@ export class OrderService {
           throw new Error('Order not found');
         }
 
-        getOrderSyncService().queueOrderChange('delete', { id } as any, String(tenantId));
+        getOrderSyncService()?.queueOrderChange('delete', { id } as any, String(tenantId));
       } catch (error) {
         throw error;
       }

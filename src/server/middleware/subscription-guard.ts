@@ -12,8 +12,8 @@
 // =============================================================================
 
 import { Request, Response, NextFunction } from 'express';
-import { createClient, SupabaseClient } from '@supabase/supabase-js';
-import { env } from '../config/env';
+import { runtime } from '../infrastructure/data-source-manager';
+import { getCurrentTrace } from '../services/trace-manager.service';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -79,20 +79,10 @@ function setCache(tenantId: number, result: SubscriptionGuardResult): void {
   subscriptionCache.set(tenantId, { result, expiresAt: Date.now() + CACHE_TTL_MS });
 }
 
-// ── Supabase helper ────────────────────────────────────────────────────────────
-
-function getSupabase(): SupabaseClient | null {
-  if (!env.SUPABASE_URL || !env.SUPABASE_SERVICE_ROLE_KEY) return null;
-  return createClient(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, {
-    auth: { persistSession: false },
-    db: { schema: 'public' },
-  });
-}
-
 // ── Core: resolve subscription state ───────────────────────────────────────────
 
 async function checkSubscriptionStatus(tenantId: number): Promise<SubscriptionGuardResult> {
-  const supabase = getSupabase();
+  const supabase = runtime.getSupabase();
   const fallback: SubscriptionGuardResult = {
     state: 'active', tenantId, planName: null, daysUntilRenewal: null,
     isExpired: false, isGracePeriod: false, graceDaysRemaining: null,
@@ -317,7 +307,16 @@ async function checkSubscriptionStatus(tenantId: number): Promise<SubscriptionGu
 export const requireActiveSubscription = async (
   req: AuthenticatedRequest, res: Response, next: NextFunction
 ) => {
+  const trace = getCurrentTrace();
   const requestId = (req as any).requestId || 'unknown';
+  
+  // FORENSIC TRACE — DECIDE step
+  trace.enter('DECIDE', { 
+    tenantId: req.user?.tenant_id, 
+    path: req.path, 
+    method: req.method 
+  });
+  
   // Skip garanti pour les flows de paiement / voucher / billing
   const PAYMENT_FLOW =
     req.path.startsWith('/checkout') ||
@@ -390,6 +389,8 @@ export const requireActiveSubscription = async (
   const BLOCKED_STATES = ['pending', 'expired', 'suspended', 'cancelled', 'no_plan', 'past_due'];
 
   if (BLOCKED_STATES.includes(result.state)) {
+    trace.fail('DECIDE', { state: result.state, reason: 'subscription_blocked' });
+    
     console.log(JSON.stringify({
       middleware: 'requireActiveSubscription',
       file: 'src/server/middleware/subscription-guard.ts',
@@ -452,6 +453,9 @@ export const requireActiveSubscription = async (
     res.setHeader('X-Subscription-Warning', 'grace_period');
     res.setHeader('X-Subscription-Grace-Days', String(result.graceDaysRemaining || 0));
   }
+  
+  trace.exit('DECIDE', { state: result.state, planName: result.planName });
+  
   console.log(JSON.stringify({
     middleware: 'requireActiveSubscription',
     file: 'src/server/middleware/subscription-guard.ts',

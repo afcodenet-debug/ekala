@@ -24,11 +24,13 @@ try {
   // Package not installed — feature disabled
 }
 import { db } from '../db/database';
+import { getCurrentTenantId } from '../db/tenant-context';
 import {
   broadcastNotification,
   loadRawSettings,
   getDefaultEmailSettings,
   readEmailSettings,
+  getTenantName,
 } from './notification.service';
 import { NOTIFICATION_TYPES } from '../../constants/notificationTypes';
 
@@ -139,9 +141,11 @@ async function sendMorningInventorySummary() {
 
   const html = buildInventorySummaryHTML(lowStock, outOfStock, topYesterday);
 
+  const tenantId = getCurrentTenantId();
+  const businessName = getTenantName(tenantId);
   await broadcastNotification(
     'inventory_summary',
-    'Morning Inventory Summary — Great Olive',
+    `Morning Inventory Summary — ${businessName}`,
     html,
     settings
   );
@@ -179,9 +183,11 @@ async function sendMiddayOperationsSummary() {
 
   const html = buildMiddayHTML(salesToday, pendingQr, activeTables, criticalStock);
 
+  const tenantId = getCurrentTenantId();
+  const businessName = getTenantName(tenantId);
   await broadcastNotification(
     'midday_ops',
-    'Midday Operations Snapshot — Great Olive',
+    `Midday Operations Snapshot — ${businessName}`,
     html,
     settings
   );
@@ -225,9 +231,11 @@ async function sendEndOfDayClosureReport() {
 
   const html = buildEodHTML(revenue, expenses, topProducts);
 
+  const tenantId = getCurrentTenantId();
+  const businessName = getTenantName(tenantId);
   await broadcastNotification(
     'eod_closure',
-    'End of Day Closure Report — Great Olive',
+    `End of Day Closure Report — ${businessName}`,
     html,
     settings
   );

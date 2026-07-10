@@ -1,6 +1,7 @@
 import type { RealtimeChannel } from '@supabase/supabase-js';
 import { getSupabaseClient } from '../database/supabase.client';
 import { db } from '../db/database';
+import { dataSource } from '../infrastructure/data-source-manager';
 
 const REALTIME_TABLES = [
   'tenants',
@@ -86,6 +87,7 @@ let realtimeStatus: RealtimeStatus = {
 };
 
 function isEnabled(): boolean {
+  if (dataSource.isLocal()) return false;
   return process.env.ENABLE_SUPABASE_REALTIME_PULL !== 'false';
 }
 

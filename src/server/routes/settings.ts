@@ -123,8 +123,14 @@ router.patch('/', requireAdminOrManager, async (req: any, res) => {
   }
 
   try {
-    // Always use the real schema present in database.db: settings(key, value, tenant_id, updated_at)
-    const stmt = db.prepare(`INSERT OR REPLACE INTO settings (key, value, tenant_id) VALUES (?, ?, ?)`);
+    // Per-tenant settings: the table uses a composite primary key (key, tenant_id),
+    // so each tenant owns its own independent copy of every key. We upsert scoped
+    // to (key, tenant_id) to avoid clobbering another tenant's row and to preserve
+    // the `remote_id`/sync metadata on the existing row.
+    const stmt = db.prepare(
+      `INSERT INTO settings (key, value, tenant_id) VALUES (?, ?, ?)
+       ON CONFLICT(key, tenant_id) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP`
+    );
 
     // Avoid long-lived sqlite write transactions; improves resilience under DB lock.
     const entries = Object.entries(updates || {});
@@ -132,27 +138,78 @@ router.patch('/', requireAdminOrManager, async (req: any, res) => {
 
     // Map frontend camelCase/snake_case/legacy keys -> DB keys (old schema: settings(key,value))
     const keyMap: Record<string, string> = {
+      // Locale / currency
+      appLanguage: 'app_language',
+      app_language: 'app_language',
+      appCurrency: 'app_currency',
+      app_currency: 'app_currency',
+      currencySymbol: 'currency_symbol',
+      currency_symbol: 'currency_symbol',
+
       // Business
       businessName: 'business_name',
+      business_name: 'business_name',
       address: 'address',
       phone: 'phone',
       email: 'email',
       operatingCountry: 'operating_country',
+      operating_country: 'operating_country',
       taxRate: 'tax_rate',
+      tax_rate: 'tax_rate',
+      taxPercentage: 'tax_percentage',
+      tax_percentage: 'tax_percentage',
       serviceCharge: 'service_charge',
+      service_charge: 'service_charge',
       receiptFooter: 'receipt_footer',
+      receipt_footer: 'receipt_footer',
       autoPrint: 'auto_print',
+      auto_print: 'auto_print',
       showLogo: 'show_logo',
+      show_logo: 'show_logo',
+      offlineMode: 'offline_mode',
+      offline_mode: 'offline_mode',
 
-      // Email notifications
+      // Email transport / notifications
       notificationEmail: 'email_forward_to',
       emailForwardTo: 'email_forward_to',
+      email_forward_to: 'email_forward_to',
       emailNotificationsEnabled: 'email_notifications_enabled',
+      email_notifications_enabled: 'email_notifications_enabled',
+      emailProvider: 'email_provider',
+      email_provider: 'email_provider',
       additionalForwardEmail: 'additional_forward_email',
+      additional_forward_email: 'additional_forward_email',
+      smtpHost: 'smtp_host',
+      smtp_host: 'smtp_host',
+      smtpPort: 'smtp_port',
+      smtp_port: 'smtp_port',
+      smtpSecure: 'smtp_secure',
+      smtp_secure: 'smtp_secure',
+      smtpUser: 'smtp_user',
+      smtp_user: 'smtp_user',
+      smtpPass: 'smtp_pass',
+      smtp_pass: 'smtp_pass',
 
       notifyAdmin: 'notify_admin',
+      notify_admin: 'notify_admin',
       notifyManager: 'notify_manager',
+      notify_manager: 'notify_manager',
       notifyServer: 'notify_server',
+      notify_server: 'notify_server',
+      notifyStockAdjustment: 'notify_stock_adjustment',
+      notify_stock_adjustment: 'notify_stock_adjustment',
+      notifyInventoryUpdate: 'notify_inventory_update',
+      notify_inventory_update: 'notify_inventory_update',
+      notifyLowStock: 'notify_low_stock',
+      notify_low_stock: 'notify_low_stock',
+      notifyOutOfStock: 'notify_out_of_stock',
+      notify_out_of_stock: 'notify_out_of_stock',
+      notifyNewProduct: 'notify_new_product',
+      notify_new_product: 'notify_new_product',
+      notifyProductDeleted: 'notify_product_deleted',
+      notify_product_deleted: 'notify_product_deleted',
+      notifySales: 'notify_sales',
+      notify_sales: 'notify_sales',
 
       // Role config
       roleNotificationConfig: 'role_notification_config',
@@ -162,39 +219,52 @@ router.patch('/', requireAdminOrManager, async (req: any, res) => {
       // Rates
       exchangeRates: 'exchange_rates',
       exchange_rates: 'exchange_rates',
-
-      // Some legacy keys may come already in snake_case
-      business_name: 'business_name',
-      operating_country: 'operating_country',
-      tax_rate: 'tax_rate',
-      service_charge: 'service_charge',
-      receipt_footer: 'receipt_footer',
-      auto_print: 'auto_print',
-      show_logo: 'show_logo',
-      email_forward_to: 'email_forward_to',
-      email_notifications_enabled: 'email_notifications_enabled',
     };
 
     const ALLOWED_DB_KEYS = new Set<string>([
+      // Locale / currency
+      'app_language',
+      'app_currency',
+      'currency_symbol',
+
+      // Business
       'business_name',
       'address',
       'phone',
       'email',
       'operating_country',
       'tax_rate',
+      'tax_percentage',
       'service_charge',
       'receipt_footer',
       'auto_print',
       'show_logo',
+      'offline_mode',
+
+      // Email transport
+      'email_provider',
+      'smtp_host',
+      'smtp_port',
+      'smtp_secure',
+      'smtp_user',
+      'smtp_pass',
 
       // Email notifications
       'email_forward_to',
       'additional_forward_email',
       'email_notifications_enabled',
 
+      // Notification toggles
       'notify_admin',
       'notify_manager',
       'notify_server',
+      'notify_stock_adjustment',
+      'notify_inventory_update',
+      'notify_low_stock',
+      'notify_out_of_stock',
+      'notify_new_product',
+      'notify_product_deleted',
+      'notify_sales',
 
       // Role-based config
       'role_notification_config',
@@ -225,6 +295,16 @@ router.patch('/', requireAdminOrManager, async (req: any, res) => {
       if (mappedKey === 'exchange_rates') {
         dbValue =
           typeof incomingValue === 'object' ? JSON.stringify(incomingValue) : incomingValue;
+      }
+
+      // Locale: normalize and validate against supported languages.
+      if (mappedKey === 'app_language') {
+        const lang = String(incomingValue || '').toLowerCase().slice(0, 2);
+        dbValue = ['en', 'fr', 'pt'].includes(lang) ? lang : 'en';
+      }
+      // Currency codes are uppercase (ISO 4217).
+      if (mappedKey === 'app_currency' || mappedKey === 'currency_symbol') {
+        dbValue = String(incomingValue || '').toUpperCase();
       }
 
       if (typeof dbValue === 'boolean') dbValue = dbValue ? '1' : '0';

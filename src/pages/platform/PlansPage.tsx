@@ -91,6 +91,17 @@ const PlansPage: React.FC = () => {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
+  // ── Premium toast + confirmation (replaces native browser dialogs) ──
+  const [toast, setToast] = useState<{ type: 'success' | 'error' | 'info'; message: string } | null>(null);
+  const toastTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const showToast = (type: 'success' | 'error' | 'info', message: string) => {
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    setToast({ type, message });
+    toastTimer.current = setTimeout(() => setToast(null), 3800);
+  };
+
+  const [confirmDelete, setConfirmDelete] = useState<{ id: number; name: string } | null>(null);
+
   function defaultForm(data?: Partial<PlanFormData>): PlanFormData {
     return {
       code: data?.code || '',
@@ -178,35 +189,41 @@ const PlansPage: React.FC = () => {
       }
       await loadPlans();
       setShowForm(false);
+      showToast('success', editing ? 'Plan modifié avec succès' : 'Plan créé avec succès');
     } catch (e: any) {
       setError(e.message || 'Erreur lors de la sauvegarde');
+      showToast('error', e.message || 'Erreur lors de la sauvegarde');
     } finally {
       setSaving(false);
     }
   };
 
-  const handleDelete = async (planId: number, planName: string) => {
-    if (!window.confirm(`Supprimer le plan "${planName}" ? Cette action est irréversible.`)) return;
+  const requestDelete = (planId: number, planName: string) => {
+    setConfirmDelete({ id: planId, name: planName });
+  };
+
+  const confirmDeletePlan = async () => {
+    if (!confirmDelete) return;
     try {
-      await requestPlatform<any>(`/platform/plans/${planId}`, {
-        method: 'DELETE',
-      });
+      await requestPlatform<any>(`/platform/plans/${confirmDelete.id}`, { method: 'DELETE' });
       await loadPlans();
-    } catch (e) {
-      console.error('[PlansPage] Error deleting:', e);
+      showToast('success', `Plan « ${confirmDelete.name} » supprimé`);
+    } catch (e: any) {
+      showToast('error', e.message || 'Erreur lors de la suppression');
+    } finally {
+      setConfirmDelete(null);
     }
   };
 
   const getPlanColor = (code: string) => {
-    const colors: Record<string, { primary: string; bg: string; border: string }> = {
-      trial_7d: { primary: '#6b7280', bg: 'rgba(107,114,128,0.12)', border: 'rgba(107,114,128,0.25)' },
-      starter_weekly: { primary: '#3b82f6', bg: 'rgba(59,130,246,0.12)', border: 'rgba(59,130,246,0.25)' },
-      starter_monthly: { primary: '#3b82f6', bg: 'rgba(59,130,246,0.12)', border: 'rgba(59,130,246,0.25)' },
-      starter_annual: { primary: '#3b82f6', bg: 'rgba(59,130,246,0.12)', border: 'rgba(59,130,246,0.25)' },
-      pro_monthly: { primary: '#D4AF37', bg: 'rgba(212,175,55,0.12)', border: 'rgba(212,175,55,0.25)' },
-      pro_annual: { primary: '#D4AF37', bg: 'rgba(212,175,55,0.12)', border: 'rgba(212,175,55,0.25)' },
+    const prefix = code.split('_')[0];
+    const tierColors: Record<string, { primary: string; bg: string; border: string }> = {
+      BASIC: { primary: '#3b82f6', bg: 'rgba(59,130,246,0.12)', border: 'rgba(59,130,246,0.25)' },
+      STANDARD: { primary: '#D4AF37', bg: 'rgba(212,175,55,0.12)', border: 'rgba(212,175,55,0.25)' },
+      PREMIUM: { primary: '#8b5cf6', bg: 'rgba(139,92,246,0.12)', border: 'rgba(139,92,246,0.25)' },
+      TRIAL: { primary: '#6b7280', bg: 'rgba(107,114,128,0.12)', border: 'rgba(107,114,128,0.25)' },
     };
-    return colors[code] || { primary: '#6b7280', bg: 'rgba(107,114,128,0.12)', border: 'rgba(107,114,128,0.25)' };
+    return tierColors[prefix] || { primary: '#6b7280', bg: 'rgba(107,114,128,0.12)', border: 'rgba(107,114,128,0.25)' };
   };
 
   const formatAmount = (cents: number, currency = 'ZMW') =>
@@ -278,7 +295,7 @@ const PlansPage: React.FC = () => {
                 }}>
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" /><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" /></svg>
                 </button>
-                <button onClick={() => handleDelete(plan.id, plan.name)} style={{
+                 <button onClick={() => requestDelete(plan.id, plan.name)} style={{
                   width: 32, height: 32, borderRadius: 8,
                   border: '1px solid rgba(239,68,68,0.2)', background: 'rgba(239,68,68,0.1)',
                   color: '#ef4444', cursor: 'pointer',
@@ -523,7 +540,86 @@ const PlansPage: React.FC = () => {
         </div>
       )}
 
-      <style>{`@keyframes sp-spin { to { transform: rotate(360deg); } }`}</style>
+      {/* ── Premium confirmation modal (replaces native window.confirm) ── */}
+      {confirmDelete && (
+        <div style={{
+          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+          background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(8px)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          zIndex: 1100, padding: 24,
+        }}>
+          <div style={{
+            background: 'linear-gradient(135deg, rgba(30,30,35,0.98), rgba(20,20,25,0.98))',
+            border: '1px solid rgba(239,68,68,0.25)', borderRadius: 18,
+            padding: '28px 28px 24px', maxWidth: 420, width: '100%',
+            boxShadow: '0 20px 60px rgba(0,0,0,0.5)',
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
+              <div style={{ width: 40, height: 40, borderRadius: 10, background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.25)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#ef4444' }}>
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" /><line x1="12" y1="9" x2="12" y2="13" /><line x1="12" y1="17" x2="12.01" y2="17" /></svg>
+              </div>
+              <h2 style={{ fontSize: 18, fontWeight: 700, color: '#eeeef5', margin: 0 }}>Supprimer le plan</h2>
+            </div>
+            <p style={{ fontSize: 13.5, color: 'rgba(255,255,255,0.6)', lineHeight: 1.6, margin: '0 0 24px' }}>
+              Êtes-vous sûr de vouloir supprimer le plan <strong style={{ color: '#eeeef5' }}>« {confirmDelete.name} »</strong> ? Cette action est irréversible.
+            </p>
+            <div style={{ display: 'flex', gap: 12 }}>
+              <button
+                onClick={() => setConfirmDelete(null)}
+                style={{ ...S.btn, flex: 1, padding: '12px 20px', background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', color: '#eeeef5' }}
+              >
+                Annuler
+              </button>
+              <button
+                onClick={confirmDeletePlan}
+                style={{ ...S.btn, ...S.btnDanger, flex: 1, padding: '12px 20px' }}
+              >
+                Supprimer
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Premium toast (replaces native browser alerts) ── */}
+      {toast && (
+        <div style={{
+          position: 'fixed', bottom: 24, right: 24, zIndex: 1200,
+          display: 'flex', alignItems: 'center', gap: 12,
+          minWidth: 300, maxWidth: 400, padding: '14px 16px',
+          borderRadius: 14,
+          background: 'linear-gradient(135deg, rgba(30,30,35,0.98), rgba(20,20,25,0.98))',
+          border: `1px solid ${toast.type === 'success' ? 'rgba(212,175,55,0.35)' : toast.type === 'error' ? 'rgba(239,68,68,0.35)' : 'rgba(255,255,255,0.12)'}`,
+          boxShadow: '0 12px 40px rgba(0,0,0,0.45)',
+          color: '#eeeef5', fontSize: 13.5, fontWeight: 500,
+          animation: 'plans-toast-in 0.35s cubic-bezier(0.16,1,0.3,1)',
+        }}>
+          <div style={{
+            width: 32, height: 32, borderRadius: 9, flexShrink: 0,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            background: toast.type === 'success' ? 'rgba(212,175,55,0.15)' : toast.type === 'error' ? 'rgba(239,68,68,0.15)' : 'rgba(96,165,250,0.15)',
+            color: toast.type === 'success' ? '#D4AF37' : toast.type === 'error' ? '#ef4444' : '#60a5fa',
+          }}>
+            {toast.type === 'success'
+              ? <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="20 6 9 17 4 12" /></svg>
+              : toast.type === 'error'
+              ? <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><circle cx="12" cy="12" r="10" /><line x1="12" y1="8" x2="12" y2="12" /><line x1="12" y1="16" x2="12.01" y2="16" /></svg>
+              : <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><circle cx="12" cy="12" r="10" /><line x1="12" y1="16" x2="12" y2="12" /><line x1="12" y1="8" x2="12.01" y2="8" /></svg>}
+          </div>
+          <span style={{ flex: 1, lineHeight: 1.4 }}>{toast.message}</span>
+          <button onClick={() => setToast(null)} style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,0.4)', cursor: 'pointer', padding: 2, display: 'flex' }}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
+          </button>
+        </div>
+      )}
+
+      <style>{`
+        @keyframes sp-spin { to { transform: rotate(360deg); } }
+        @keyframes plans-toast-in {
+          from { transform: translateX(120%); opacity: 0; }
+          to { transform: translateX(0); opacity: 1; }
+        }
+      `}</style>
     </div>
   );
 };

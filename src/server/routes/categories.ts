@@ -15,7 +15,7 @@ router.get('/', async (req, res) => {
     return res.status(401).json({ error: 'TENANT_REQUIRED', message: 'tenant_id requis' });
   }
   try {
-    if (dataSource.resolveFromRequest(req) === 'cloud') {
+    if (dataSource.resolveFromRequest(req) === 'CLOUD') {
       const supabase = createClient(env.SUPABASE_URL!, env.SUPABASE_SERVICE_ROLE_KEY!, {
         auth: { persistSession: false },
       });
@@ -69,7 +69,7 @@ router.post('/', requireRole(['admin', 'manager']), (req, res) => {
       const cat = db.prepare('SELECT id, name, description, created_at, updated_at FROM categories WHERE id = ? AND tenant_id = ?').get(result.lastInsertRowid, (req as any).tenant_id) as any;
       
       try {
-        getProductSyncService().queueChangeInsideTransaction('category', 'insert', {
+        getProductSyncService()?.queueChangeInsideTransaction('category', 'insert', {
           ...cat,
           tenant_id: (req as any).tenant_id
         });
@@ -130,7 +130,7 @@ router.patch('/:id', requireRole(['admin', 'manager']), (req, res) => {
       if (!cat) throw new Error('Category not found');
       
       try {
-        getProductSyncService().queueChangeInsideTransaction('category', 'update', {
+        getProductSyncService()?.queueChangeInsideTransaction('category', 'update', {
           ...cat,
           tenant_id: (req as any).tenant_id
         });
@@ -182,7 +182,7 @@ router.delete('/:id', requireRole(['admin', 'manager']), (req, res) => {
       const result = db.prepare('DELETE FROM categories WHERE id = ? AND tenant_id = ?').run(categoryId, (req as any).tenant_id);
       if (result.changes > 0) {
         try {
-          getProductSyncService().queueChangeInsideTransaction('category', 'delete', {
+          getProductSyncService()?.queueChangeInsideTransaction('category', 'delete', {
             id: categoryId,
             remote_id: catToDelete?.remote_id || null,
             tenant_id: (req as any).tenant_id

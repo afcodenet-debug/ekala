@@ -25,7 +25,6 @@
   "exclude": [
     "node_modules",
     "dist",
-    "src/lib",
     "src/components",
     "src/pages",
     "src/features",
@@ -34,6 +33,8 @@
     "src/sync/test/**/*",
     "src/server/**/__tests__/**/*",
     "src/server/**/*.test.ts",
-    "src/server/saas/repositories/supabase/saas-supabase-extras.repository.ts"
+    "src/server/saas/repositories/supabase/saas-supabase-extras.repository.ts",
+    "src/lib/app-mode.ts",
+    "src/lib/app-mode.server.ts"
   ]
 }

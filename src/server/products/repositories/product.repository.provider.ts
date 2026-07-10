@@ -1,13 +1,13 @@
 import { IProductRepository } from './product.repository.interface';
 import { SupabaseProductRepository } from './supabase/supabase-product.repository';
-import { env } from '../../config/env';
+import { dataSource } from '../../infrastructure/data-source-manager';
 import { getRequestId, logTrace } from '../../utils/trace-utils';
 
 let legacyProductAdapter: any = null;
 
 export function getProductRepository(): IProductRepository {
   const requestId = getRequestId();
-  const isSupabaseMode = env.USE_SUPABASE_PRODUCTS;
+  const isSupabaseMode = dataSource.isCloud();
   logTrace('ENTER getProductRepository', { isSupabaseMode });
   
   if (isSupabaseMode) {

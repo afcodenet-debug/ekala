@@ -1,6 +1,6 @@
 import express from 'express';
 import db from '../db/database';
-import { notifyStockAdjustment } from '../services/notification.service';
+import { notifyStockAdjustment, loadRawSettings } from '../services/notification.service';
 import { env } from '../config/env';
 import { createClient } from '@supabase/supabase-js';
 
@@ -162,7 +162,7 @@ router.patch('/:id/stock', (req: any, res) => {
 
     try {
       const { getProductSyncService } = require('../../sync');
-      getProductSyncService().queueChangeInsideTransaction('product', 'update', {
+      getProductSyncService()?.queueChangeInsideTransaction('product', 'update', {
         id: Number(id),
         stock_quantity: qtyAfter,
         updated_at: new Date().toISOString(),
@@ -224,19 +224,17 @@ router.patch('/:id/stock', (req: any, res) => {
 
     setImmediate(async () => {
       try {
-        const settingsRows = db.prepare(
-          "SELECT key, value FROM settings WHERE tenant_id = ?"
-        ).all(tenantId) as { key: string; value: string }[];
-        const rawSettings = Object.fromEntries(
-          settingsRows.map(r => [r.key, r.value])
-        );
+        // Use loadRawSettings so defaults (app_language, app_currency) and
+        // the tenant fallback are applied consistently with the rest of the app.
+        const rawSettings = loadRawSettings(tenantId);
         await notifyStockAdjustment(
           notifyPayload.productName, Number(id),
           notifyPayload.qtyBefore, notifyPayload.qtyChanged, notifyPayload.qtyAfter,
           notifyPayload.reason,
           notifyPayload.performedBy,
-          String(rawSettings.app_currency || 'USD'),
+          String(rawSettings.app_currency || 'ZMW'),
           rawSettings,
+          tenantId,
         );
       } catch (notifyErr) {
         console.error('[Notification] email failed:', notifyErr);
@@ -260,12 +258,18 @@ router.get('/movements', async (req: any, res) => {
     const productId = req.query.product_id ? parseInt(req.query.product_id as string) : null;
     const limit = Math.min(1000, Math.max(1, parseInt(req.query.limit as string) || 50));
 
-    if (env.RENDER_CLOUD_MODE || env.USE_SUPABASE_PRODUCTS) {
-      if (!env.SUPABASE_URL || !env.SUPABASE_SERVICE_ROLE_KEY) {
-        return res.status(500).json({ error: 'Supabase not configured' });
+    // Prefer the local SQLite database (the source of truth in local /
+    // runtime mode). Stock adjustments live there and may not yet be
+    // mirrored to Supabase, so reading from Supabase alone hides
+    // adjustment movements from the Stock History view.
+    // Only fall back to Supabase when the local DB is unavailable
+    // (pure cloud mode).
+    if (!db) {
+      if (!(env.RENDER_CLOUD_MODE || env.USE_SUPABASE_PRODUCTS) || !env.SUPABASE_URL || !env.SUPABASE_SERVICE_ROLE_KEY) {
+        return res.json([]);
       }
       const supabase = createClient(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false } });
-      
+
       let queryBuilder = supabase
         .from('inventory_movements')
         .select('*, products(name, barcode)')
@@ -278,21 +282,17 @@ router.get('/movements', async (req: any, res) => {
       }
 
       const { data, error } = await queryBuilder;
-      
+
       if (error) throw error;
-      
+
       const movements = (data || []).map((m: any) => ({
         ...m,
         product_name: m.products?.name,
         barcode: m.products?.barcode,
         products: undefined
       }));
-      
-      return res.json(movements);
-    }
 
-    if (!db) {
-      return res.json([]);
+      return res.json(movements);
     }
 
     let query = `

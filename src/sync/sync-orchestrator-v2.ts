@@ -112,6 +112,28 @@ export class SyncOrchestratorV2 {
     }
   }
 
+  /**
+   * Lightweight probe: true if Supabase is currently reachable.
+   * Used by the server to avoid running a sync cycle while offline.
+   */
+  async isSupabaseReachable(): Promise<boolean> {
+    return this.checkSupabaseConnectivity();
+  }
+
+  /**
+   * Triggers a full sync cycle only if Supabase is reachable.
+   * Perfect for the LOCAL mode "sync when online" requirement: a boot-time or
+   * manually-triggered sync is silently skipped when there is no connectivity.
+   */
+  async triggerSyncIfOnline(): Promise<void> {
+    const reachable = await this.isSupabaseReachable();
+    if (!reachable) {
+      console.log('[SyncV2] Sync skipped — Supabase not reachable (offline)');
+      return;
+    }
+    return this.triggerSync();
+  }
+
   /* ==================================================================
    *  SCHEDULER
    * ================================================================== */
@@ -336,16 +358,18 @@ export class SyncOrchestratorV2 {
     try {
       // Vérifier que les users ont des tenant_users
       const usersWithoutTU = this.db.prepare(`
-        SELECT u.id FROM users u
+        SELECT u.id, u.role FROM users u
         WHERE u.tenant_id = ?
         AND NOT EXISTS (SELECT 1 FROM tenant_users tu WHERE tu.tenant_id = u.tenant_id AND tu.user_id = u.id)
-      `).all(Number(tenantId)) as { id: number }[];
+      `).all(Number(tenantId)) as { id: number; role?: string }[];
 
       for (const user of usersWithoutTU) {
+        const VALID_ROLES = ['owner', 'admin', 'manager', 'cashier', 'waiter', 'staff'];
+        const role = (user.role && VALID_ROLES.includes(user.role)) ? user.role : 'staff';
         this.db.prepare(`
           INSERT INTO tenant_users (tenant_id, user_id, role, is_default, is_active, joined_at)
-          VALUES (?, ?, 'staff', false, true, datetime('now'))
-        `).run(Number(tenantId), user.id);
+          VALUES (?, ?, ?, 0, 1, datetime('now'))
+        `).run(Number(tenantId), user.id, role);
         fixed++;
       }
 

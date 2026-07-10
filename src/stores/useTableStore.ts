@@ -1,19 +1,19 @@
 import { create } from 'zustand';
 import { api } from '../lib/api-client';
 import { useAuthStore } from './useAuthStore';
+import type { RestaurantTable } from '../shared/tablesStore';
 
-export type TableStatus = 'available' | 'active' | 'reserved' | 'cleaning' | 'out_of_service';
+export type TableStatus = 'available' | 'occupied' | 'reserved' | 'cleaning';
 
-export interface Table {
-  id: number;
-  table_number: string | number;
-  capacity: number;
-  status: TableStatus;
-  assigned_waiter_id: number | null;
+// Extend RestaurantTable with additional fields for sync
+export interface Table extends RestaurantTable {
   waiter_name?: string;
   qr_token?: string | null;
-  created_at: string;
-  updated_at: string;
+  created_at?: string;
+  updated_at?: string;
+  tenant_id?: number;
+  remote_id?: number;
+  assigned_waiter_id?: number | null;
 }
 
 interface TableStore {
@@ -29,9 +29,9 @@ interface TableStore {
   createTable: (tableData: Omit<Table, 'id' | 'created_at' | 'updated_at'>) => Promise<any | null>;
   updateTable: (id: number, updates: Partial<Table>) => Promise<void>;
   deleteTable: (id: number) => Promise<boolean>;
-  openTable: (tableId: number, waiterId: number) => Promise<boolean>;
+  openTable: (tableId: number, waiterCanonicalId: string) => Promise<boolean>;
   closeTable: (tableId: number) => Promise<boolean>;
-  assignWaiter: (tableId: number, waiterId: number | null) => Promise<void>;
+  assignWaiter: (tableId: number, waiterCanonicalId: string | null) => Promise<void>;
   updateTableStatus: (tableId: number, status: TableStatus) => Promise<void>;
   reserveTable: (tableId: number) => Promise<void>;
   markCleaning: (tableId: number) => Promise<void>;
@@ -108,9 +108,13 @@ export const useTableStore = create<TableStore>((set, get) => ({
     }
   },
 
-  openTable: async (tableId, waiterId) => {
+  openTable: async (tableId, waiterCanonicalId) => {
     try {
-      await api.tables.open(tableId, waiterId);
+      // Guard: canonical_id must be a valid UUID
+      if (!waiterCanonicalId || typeof waiterCanonicalId !== 'string' || !waiterCanonicalId.includes('-')) {
+        throw new Error('waiterCanonicalId must be a valid canonical_id (UUID)');
+      }
+      await api.tables.open(tableId, waiterCanonicalId);
       // Re-fetch to get the waiter_name and updated status correctly
       await get().fetchTables(true);
       return true;
@@ -138,7 +142,29 @@ export const useTableStore = create<TableStore>((set, get) => ({
 
   assignWaiter: async (tableId, waiterId) => {
     try {
-      await api.tables.update(tableId, { assigned_waiter_id: waiterId }, get().role);
+      // Get the current table to check if we need to resolve remote_id
+      const currentTable = get().tables.find(t => t.id === tableId);
+      
+      // If in cloud mode (Supabase), resolve the waiter's remote_id
+      let cloudWaiterId = waiterId;
+      if (waiterId && currentTable?.tenant_id) {
+        try {
+          // Try to get the waiter's remote_id via API
+          const waiter = await api.users.getById(waiterId);
+          
+          // Use remote_id if available, otherwise use local ID
+          if (waiter?.remote_id) {
+            cloudWaiterId = waiter.remote_id;
+            console.log(`[TableStore] Resolved waiter remote_id: ${waiterId} → ${cloudWaiterId}`);
+          } else {
+            console.warn(`[TableStore] Waiter ${waiterId} has no remote_id, using local ID (may fail in cloud mode)`);
+          }
+        } catch (err) {
+          console.warn('[TableStore] Could not resolve waiter remote_id, using local ID:', err);
+        }
+      }
+      
+      await api.tables.update(tableId, { assigned_waiter_id: cloudWaiterId }, get().role);
       // Re-fetch to get the waiter_name joined from the users table
       await get().fetchTables(true);
     } catch (err: any) {

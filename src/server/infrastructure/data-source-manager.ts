@@ -1,75 +1,130 @@
 /**
- * DataSourceManager - Centralise la détection d'environnement et le routage
- * des opérations CRUD entre SQLite (local) et Supabase (production).
+ * RuntimeModeResolver - UNIQUE source de vérité pour le mode d'exécution.
  *
  * Architecture :
- * - Local (development) : SQLite est la source de vérité
- * - Production (Render) : Supabase est la source de vérité
- * - La synchronisation SQLite → Supabase se fait via l'outbox pattern
+ * - Electron : SQLite est TOUJOURS la source de vérité. Supabase = sync uniquement.
+ * - Web (Vercel/Render) : Supabase est la source de vérité.
+ *
+ * TOUTE décision concernant le mode d'exécution doit passer par ce resolver.
+ * Aucun service ne peut créer directement un client Supabase.
  *
  * Usage :
- *   import { dataSource } from '../infrastructure/data-source-manager';
- *   if (dataSource.isCloudMode()) { ... Supabase ... }
+ *   import { runtime } from '../infrastructure/data-source-manager';
+ *   if (runtime.isCloud()) { ... Supabase ... }
  *   else { ... SQLite ... }
+ *
+ *   const supabase = runtime.getSupabase(req);  // Retourne null si mode local
+ *   const db = runtime.getSQLite();              // Retourne null si mode cloud
  */
 
+import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { env } from '../config/env';
 import { resolveRuntimeMode } from '../../shared/runtime-mode';
 
-export type EnvironmentMode = 'local' | 'cloud';
+export type EnvironmentMode = 'LOCAL' | 'CLOUD';
 
-class DataSourceManager {
+class RuntimeModeResolver {
   private _mode: EnvironmentMode;
+  private _supabaseClient: SupabaseClient | null = null;
+  private _sqliteClient: any = null;
 
   constructor() {
-    this._mode = this.detectMode();
+    this._mode = this.detectModeInternal();
+    console.log(`[RuntimeMode] Mode: ${this._mode === 'CLOUD' ? '☁️ CLOUD' : '💻 LOCAL'} | Electron: ${this.isElectron()}`);
   }
 
   /**
-   * Détecte automatiquement l'environnement :
-   * - X-Runtime-Mode header (from frontend) → prioritaire
-   * - RENDER_CLOUD_MODE=true → cloud (Supabase)
-   * - usage de Supabase explicite via variables d'env → cloud
-   * - origine localhost/127.0.0.1/localhost.* → local (SQLite)
-   * - sinon → cloud par défaut pour les déploiements Vercel/Render
+   * Détecte l'environnement actuel (n'appelle PAS les consumers)
+   * Electron → toujours local. Web → détection automatique.
    */
-  private detectMode(value?: string | null): EnvironmentMode {
-    // 1. X-Runtime-Mode header is the most authoritative if present
-    if (value === 'local' || value === 'cloud') {
-      return value;
+  private detectModeInternal(): EnvironmentMode {
+    // Étape 0 : VITE_APP_MODE a la priorité absolue (défini par l'utilisateur dans .env)
+    const viteAppMode = process.env.VITE_APP_MODE;
+    if (viteAppMode === 'local') {
+      console.log('[RuntimeModeResolver] VITE_APP_MODE=local → forcing LOCAL mode');
+      return 'LOCAL';
+    }
+    if (viteAppMode === 'cloud') {
+      console.log('[RuntimeModeResolver] VITE_APP_MODE=cloud → forcing CLOUD mode');
+      return 'CLOUD';
+    }
+    if (viteAppMode === 'hybrid') {
+      console.log('[RuntimeModeResolver] VITE_APP_MODE=hybrid → forcing HYBRID mode');
+      return 'CLOUD'; // HYBRID not supported yet, fallback to CLOUD
     }
 
-    // 2. Environment variables override
-    if (env.RENDER_CLOUD_MODE || env.USE_SUPABASE_PRODUCTS || env.USE_SUPABASE_TABLES || env.USE_SUPABASE_ORDERS) {
-      return 'cloud';
+    // Étape 1 : Electron détecté → TOUJOURS local
+    if (this.isElectron()) {
+      console.log('[RuntimeModeResolver] Electron detected → LOCAL mode');
+      return 'LOCAL';
     }
 
-    // 3. URL-based detection (origin, host, referer)
-    if (value) {
-      return resolveRuntimeMode(value);
+    // Étape 2 : Variables d'environnement (avec logs de diagnostic)
+    const renderCloudMode = env.RENDER_CLOUD_MODE;
+    const useSupabaseProducts = env.USE_SUPABASE_PRODUCTS;
+    const useSupabaseTables = env.USE_SUPABASE_TABLES;
+    const useSupabaseOrders = env.USE_SUPABASE_ORDERS;
+    
+    console.log('[RuntimeModeResolver] Diagnostic:', {
+      RENDER_CLOUD_MODE: renderCloudMode,
+      USE_SUPABASE_PRODUCTS: useSupabaseProducts,
+      USE_SUPABASE_TABLES: useSupabaseTables,
+      USE_SUPABASE_ORDERS: useSupabaseOrders,
+      NODE_ENV: env.NODE_ENV,
+      VITE_APP_MODE: viteAppMode
+    });
+
+    if (renderCloudMode || useSupabaseProducts || useSupabaseTables || useSupabaseOrders) {
+      console.log('[RuntimeModeResolver] Cloud mode detected via env vars → CLOUD mode');
+      return 'CLOUD';
     }
 
-    // 4. NODE_ENV fallback
+    // Étape 3 : NODE_ENV
     if (env.NODE_ENV === 'development') {
-      return 'local';
+      console.log('[RuntimeModeResolver] NODE_ENV=development → LOCAL mode');
+      return 'LOCAL';
     }
 
-    // 5. Default to cloud for production
-    return 'cloud';
+    // Étape 4 : Défaut → cloud (Render/Vercel)
+    console.log('[RuntimeModeResolver] No specific mode detected → default CLOUD mode');
+    return 'CLOUD';
   }
 
   /**
-   * Résout le mode d'exécution à partir d'une requête Express.
-   * Vérifie d'abord l'en-tête X-Runtime-Mode, puis les en-têtes standard.
+   * Détecte si l'application tourne dans Electron
+   */
+  private isElectron(): boolean {
+    if (typeof navigator !== 'undefined' && navigator.userAgent?.includes('Electron')) {
+      return true;
+    }
+    if (typeof process !== 'undefined' && process.versions?.electron) {
+      return true;
+    }
+    return false;
+  }
+
+  /**
+   * Résout le mode à partir d'une requête HTTP.
+   * Vérifie X-Runtime-Mode header en priorité.
    */
   resolveFromRequest(req: { headers?: Record<string, any> }): EnvironmentMode {
     const runtimeHeader = req?.headers?.['x-runtime-mode'];
-    if (runtimeHeader === 'local' || runtimeHeader === 'cloud') {
+    if (runtimeHeader === 'LOCAL' || runtimeHeader === 'CLOUD') {
+      console.log(`[RuntimeMode] resolveFromRequest: X-Runtime-Mode header = ${runtimeHeader}`);
       return runtimeHeader;
     }
 
+    // ⭐ CRITICAL: Re-detect mode from request origin (for dynamic detection)
     const host = req?.headers?.host || req?.headers?.origin || req?.headers?.referer;
-    return this.detectMode(host ? String(host) : null);
+    if (host) {
+      const detectedMode = resolveRuntimeMode(String(host));
+      console.log(`[RuntimeMode] resolveFromRequest: host=${host} → ${detectedMode}`);
+      return detectedMode;
+    }
+
+    // Fallback to static mode
+    console.log(`[RuntimeMode] resolveFromRequest: no host detected, using static mode = ${this._mode}`);
+    return this._mode;
   }
 
   /** Retourne le mode actuel */
@@ -77,87 +132,64 @@ class DataSourceManager {
     return this._mode;
   }
 
-  /** Vrai si on est en mode cloud (Supabase) */
-  isCloudMode(value?: string | null): boolean {
-    return this.detectMode(value) === 'cloud';
+  /** Vrai si on est en mode cloud (Supabase source de vérité) */
+  isCloud(value?: string | null): boolean {
+    if (this._mode === 'LOCAL') return false;
+    if (value === 'LOCAL' || value === 'CLOUD') return value === 'CLOUD';
+    return this._mode === 'CLOUD';
   }
 
-  /** Vrai si on est en mode local (SQLite) */
-  isLocalMode(value?: string | null): boolean {
-    return this.detectMode(value) === 'local';
-  }
-
-  /**
-   * Vérifie si une table spécifique doit utiliser Supabase.
-   * Permet un contrôle granulaire par table.
-   */
-  isTableCloud(tableName: string, value?: string | null): boolean {
-    if (this.isCloudMode(value)) return true;
-    
-    // Tables spécifiques qui peuvent être en mode Supabase même en local
-    const tableOverrides: Record<string, boolean> = {
-      products: env.USE_SUPABASE_PRODUCTS,
-      tables: env.USE_SUPABASE_TABLES,
-      orders: env.USE_SUPABASE_ORDERS,
-      restaurant_tables: env.USE_SUPABASE_TABLES,
-    };
-    
-    return tableOverrides[tableName] === true;
+  /** Vrai si on est en mode local (SQLite source de vérité) */
+  isLocal(value?: string | null): boolean {
+    return !this.isCloud(value);
   }
 
   /**
-   * Retourne le nom de la table SQLite pour une entité donnée
+   * Retourne le client Supabase SI on est en mode cloud.
+   * Retourne null en mode local (Electron).
+   * TOUS les consumers doivent passer par cette méthode.
    */
-  getSQLiteTable(entity: string): string {
-    const tableMap: Record<string, string> = {
-      product: 'products',
-      category: 'categories',
-      customer: 'customers',
-      supplier: 'suppliers',
-      table: 'tables',
-      expense: 'expenses',
-      sale: 'sales',
-      inventory_movement: 'inventory_movements',
-      user: 'users',
-      order: 'orders',
-      order_item: 'order_items',
-    };
-    return tableMap[entity] || entity;
+  getSupabase(req?: { headers?: Record<string, any> }): SupabaseClient | null {
+    if (!env.SUPABASE_URL || !env.SUPABASE_SERVICE_ROLE_KEY) return null;
+
+    const mode = req ? this.resolveFromRequest(req) : this._mode;
+    if (mode !== 'CLOUD') return null;
+
+    if (!this._supabaseClient) {
+      this._supabaseClient = createClient(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, {
+        auth: { persistSession: false },
+        db: { schema: 'public' },
+      });
+    }
+    return this._supabaseClient;
   }
 
   /**
-   * Retourne le nom de la table Supabase pour une entité donnée
+   * Retourne la base SQLite locale.
+   * Retourne null si SQLite n'est pas disponible (mode cloud web).
    */
-  getSupabaseTable(entity: string): string {
-    const tableMap: Record<string, string> = {
-      product: 'products',
-      category: 'categories',
-      customer: 'customers',
-      supplier: 'suppliers',
-      table: 'tables',
-      expense: 'expenses',
-      sale: 'sales',
-      inventory_movement: 'inventory_movements',
-      user: 'users',
-      order: 'orders',
-      order_item: 'order_items',
-    };
-    return tableMap[entity] || entity;
+  getSQLite(): any {
+    if (this._mode === 'CLOUD') return null;
+    if (this._sqliteClient) return this._sqliteClient;
+    try {
+      this._sqliteClient = require('../db/database').default;
+    } catch {
+      this._sqliteClient = null;
+    }
+    return this._sqliteClient;
   }
 
-  /**
-   * Log le mode actuel (utile au démarrage)
-   */
-  logStatus(): void {
-    console.log('══════════════════════════════════════════════');
-    console.log(`📊 DataSourceManager: ${this._mode === 'cloud' ? '☁️ CLOUD (Supabase)' : '💻 LOCAL (SQLite)'}`);
-    console.log(`   RENDER_CLOUD_MODE: ${env.RENDER_CLOUD_MODE}`);
-    console.log(`   USE_SUPABASE_PRODUCTS: ${env.USE_SUPABASE_PRODUCTS}`);
-    console.log(`   USE_SUPABASE_TABLES: ${env.USE_SUPABASE_TABLES}`);
-    console.log(`   USE_SUPABASE_ORDERS: ${env.USE_SUPABASE_ORDERS}`);
-    console.log('══════════════════════════════════════════════');
-  }
+  // ── Alias de rétrocompatibilité ──────────────────────────────────────────────
+  /** @deprecated Utiliser isCloud() */
+  isCloudMode(value?: string | null): boolean { return this.isCloud(value); }
+  /** @deprecated Utiliser isLocal() */
+  isLocalMode(value?: string | null): boolean { return this.isLocal(value); }
+  /** @deprecated Utiliser directement le constructeur */
+  logStatus(): void { console.log(`[RuntimeMode] Mode: ${this._mode}`); }
+  /** @deprecated Utiliser getSupabase() */
+  getSupabaseClient(req?: { headers?: Record<string, any> }): SupabaseClient | null { return this.getSupabase(req); }
 }
 
-// Singleton exporté
-export const dataSource = new DataSourceManager();
+// Singleton exporté (rétrocompatibilité : dataSource alias vers runtime)
+export const runtime = new RuntimeModeResolver();
+export const dataSource = runtime;

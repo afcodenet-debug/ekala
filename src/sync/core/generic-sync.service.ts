@@ -2,6 +2,8 @@
  * src/sync/core/generic-sync.service.ts
  * Service générique de synchronisation qui utilise le registre d'entités
  * pour synchroniser TOUTES les tables de manière uniforme.
+ * 
+ * V2.3.2: Migration progressive avec dual-write et feature flags
  */
 import type Database from 'better-sqlite3';
 import type { SupabaseClient } from '@supabase/supabase-js';
@@ -12,6 +14,10 @@ import { ConflictResolver } from './conflict-resolver';
 import { DeadLetterQueue } from './dead-letter-queue';
 
 import { getRequestId, logTrace } from '../../server/utils/trace-utils';
+
+// V2.3.2: Feature flags for progressive migration
+import { SyncEngineModeManager } from '../../server/infrastructure/synchronization/sync-engine-mode';
+import { RetryPolicy } from '../../server/infrastructure/synchronization/retry-policy';
 
 export interface SyncResult {
   pushed: number;
@@ -26,6 +32,11 @@ export class GenericSyncService {
   private conflictResolver: ConflictResolver;
   private dlq: DeadLetterQueue;
 
+  // V2.3.2: Optional components for dual-write mode
+  private outboxRepo?: any;
+  private retryPolicy?: RetryPolicy;
+  private modeManager: SyncEngineModeManager;
+
   constructor(
     db: Database.Database,
     supabase: SupabaseClient,
@@ -38,6 +49,31 @@ export class GenericSyncService {
     this.cursor = cursor;
     this.conflictResolver = conflictResolver;
     this.dlq = dlq;
+
+    // V2.3.2: Initialize feature flag manager
+    this.modeManager = SyncEngineModeManager.getInstance();
+    this.modeManager.logMode();
+
+    // V2.3.2: Initialize components if enabled
+    if (this.modeManager.isIdempotencyEnabled() || this.modeManager.isRetryPolicyEnabled()) {
+      try {
+        const { SqliteOutboxRepositoryFactory } = require('../../server/infrastructure/synchronization/outbox-repository');
+        // Self-healing: the V2.3.2 repository requires extra columns on sync_outbox
+        // (idempotency_key, next_retry_at, max_retries, sequence, error). If they are
+        // missing (legacy/migrated DB), we MUST fall back to the legacy outbox path
+        // instead of crashing every push with "no such column: next_retry_at".
+        const cols = (this.db.prepare("PRAGMA table_info(sync_outbox)").all() as Array<{ name: string }>).map(c => c.name);
+        if (cols.includes('idempotency_key')) {
+          this.outboxRepo = SqliteOutboxRepositoryFactory.create();
+          this.retryPolicy = new RetryPolicy();
+          console.log('[GenericSyncV2] ✓ OutboxRepository and RetryPolicy initialized');
+        } else {
+          console.warn('[GenericSyncV2] sync_outbox missing V2 columns (idempotency_key) — falling back to LEGACY outbox path');
+        }
+      } catch (err: any) {
+        console.warn('[GenericSyncV2] Failed to initialize V2.3.2 components:', err?.message);
+      }
+    }
   }
 
   /* ==================================================================
@@ -229,7 +265,7 @@ export class GenericSyncService {
    *  QUEUE HELPERS
    * ================================================================== */
 
-  queueChange(entity: string, operation: 'insert' | 'update' | 'delete', record: any) {
+  async queueChange(entity: string, operation: 'insert' | 'update' | 'delete', record: any): Promise<void> {
     const requestId = getRequestId();
     logTrace('ENTER GenericSyncService.queueChange', { entity, operation, recordId: record.id });
     const def = getEntityDef(entity);
@@ -246,13 +282,18 @@ export class GenericSyncService {
       ? this.normalizeTenantId(record.id)
       : this.normalizeTenantId(record.tenant_id);
 
+    // ============================================
+    // V2.3.2: DUAL WRITE - Legacy + OutboxRepository
+    // ============================================
+    
+    // 1. LEGACY WRITE (toujours actif)
     try {
       const stmt = this.db.prepare(`
         INSERT INTO sync_outbox (id, entity, operation, record_id, payload, version, tenant_id)
         VALUES (?, ?, ?, ?, ?, ?, ?)
       `);
       const result = stmt.run(id, entity, operation, String(record.id), payload, version, tenantId);
-      logTrace('EXIT GenericSyncService.queueChange', { result });
+      logTrace('EXIT GenericSyncService.queueChange (legacy)', { result });
     } catch (err: any) {
       console.error(JSON.stringify({
         requestId,
@@ -267,6 +308,34 @@ export class GenericSyncService {
         recordId: record.id
       }));
       throw err;
+    }
+
+    // 2. V2.3.2 WRITE (si activé)
+    if (this.modeManager.isIdempotencyEnabled() && this.outboxRepo) {
+      try {
+        const idempotencyKey = `${entity}:${record.id}:${operation}:${Date.now()}`;
+        
+        await this.outboxRepo.save({
+          eventType: operation,
+          entity,
+          recordId: record.id,
+          payload,
+          idempotencyKey,
+          status: 'pending', // OutboxStatus.PENDING
+          retryCount: 0,
+          maxRetries: 3,
+          nextRetryAt: new Date(Date.now() + 1000),
+          error: null,
+          createdAt: new Date(),
+          processedAt: null
+        });
+
+        console.log('[OutboxV2] Event saved with idempotency_key:', idempotencyKey);
+        logTrace('EXIT GenericSyncService.queueChange (V2.3.2)', { idempotencyKey });
+      } catch (err: any) {
+        console.warn('[OutboxV2] Failed to save event (non-critical):', err?.message);
+        // NE PAS throw - le legacy write a réussi
+      }
     }
   }
 
@@ -354,12 +423,26 @@ export class GenericSyncService {
     }
     
     logTrace('ENTER db.prepare SELECT outbox items');
-    const items = this.db.prepare(`
-      SELECT * FROM sync_outbox
-      WHERE entity = ? AND status = 'pending' AND (tenant_id IS NULL OR CAST(tenant_id AS INTEGER) = ?)
-      ORDER BY created_at ASC
-      LIMIT 50
-    `).all(entity, tenantIdNum) as any[];
+    
+    // V2.3.2: Use OutboxRepository if enabled
+    let items: any[] = [];
+    if (this.modeManager.isIdempotencyEnabled() && this.outboxRepo) {
+      // V2.3.2: Get pending events from OutboxRepository
+      const pendingEvents = await this.outboxRepo.findPendingOrdered();
+      items = pendingEvents
+        .filter((e: any) => e.entity === entity && (e.tenantId === tenantIdNum || e.tenantId === null))
+        .slice(0, 50);
+      console.log('[OutboxV2] Using OutboxRepository, found', items.length, 'pending events');
+    } else {
+      // Legacy: Get from sync_outbox directly
+      items = this.db.prepare(`
+        SELECT * FROM sync_outbox
+        WHERE entity = ? AND status = 'pending' AND (tenant_id IS NULL OR CAST(tenant_id AS INTEGER) = ?)
+        ORDER BY created_at ASC
+        LIMIT 50
+      `).all(entity, tenantIdNum) as any[];
+    }
+    
     logTrace('EXIT db.prepare SELECT outbox items', { count: items.length });
     
     // Log detail pour diagnostic
@@ -418,6 +501,25 @@ export class GenericSyncService {
       } catch (err: any) {
         const errorMsg = err?.message ?? String(err);
         
+        // V2.3.2: Use RetryPolicy if enabled
+        let newRetryCount = (item.retry_count || 0) + 1;
+        let shouldMoveToDLQ = false;
+
+        if (this.modeManager.isRetryPolicyEnabled() && this.retryPolicy) {
+          const errorType = this.retryPolicy.classifyError(err);
+          const maxRetries = this.retryPolicy.getMaxRetries(errorType);
+          const nextRetry = this.retryPolicy.calculateRetryDelay(newRetryCount);
+
+          console.log(`[RetryPolicy] Classified error: ${errorType}, maxRetries: ${maxRetries}, nextRetry: ${nextRetry}ms`);
+
+          if (newRetryCount >= maxRetries) {
+            shouldMoveToDLQ = true;
+          }
+        } else {
+          // Legacy: hardcoded 5 retries
+          shouldMoveToDLQ = newRetryCount >= 5;
+        }
+        
         // Special handling for duplicate key errors - mark as done since data already exists
         if (errorMsg.includes('duplicate key') || errorMsg.includes('unique constraint')) {
           console.log(`[GenericSync] ✓ ${def.entity} #${item.record_id} synced (duplicate detected in catch)`);
@@ -430,7 +532,6 @@ export class GenericSyncService {
         
         console.error(`[GenericSync] ✗ ${def.entity} #${item.record_id} failed:`, errorMsg);
         
-        const newRetryCount = (item.retry_count || 0) + 1;
         logTrace('ENTER db.prepare UPDATE outbox failed');
         this.db.prepare(`
           UPDATE sync_outbox 
@@ -439,8 +540,29 @@ export class GenericSyncService {
         `).run(newRetryCount, errorMsg, item.id);
         logTrace('EXIT db.prepare UPDATE outbox failed');
 
-        if (newRetryCount >= 5) {
-          this.dlq.archiveFailedItem(item.id, errorMsg, newRetryCount);
+        // V2.3.2: Move to DLQ if max retries reached
+        if (shouldMoveToDLQ) {
+          if (this.modeManager.isDLQEnabled() && this.outboxRepo) {
+            try {
+              // V2.3.2 DLQ
+              const { SqliteDLQRepositoryFactory } = require('../../server/infrastructure/synchronization/dead-letter-queue.repository');
+              const dlqRepo = SqliteDLQRepositoryFactory.create();
+              await dlqRepo.add(
+                item.eventType || item.operation,
+                '1',
+                item.payload,
+                item.idempotencyKey || item.id,
+                errorMsg
+              );
+              console.log('[DLQ] Event moved to DLQ:', item.id);
+            } catch (dlqErr) {
+              console.warn('[DLQ] Failed to move to V2.3.2 DLQ, using legacy DLQ');
+              this.dlq.archiveFailedItem(item.id, errorMsg, newRetryCount);
+            }
+          } else {
+            // Legacy DLQ
+            this.dlq.archiveFailedItem(item.id, errorMsg, newRetryCount);
+          }
         }
       }
     }
@@ -475,6 +597,13 @@ export class GenericSyncService {
       const existingRemote = await this.findExistingRemoteRecord(def, payload, tenantId);
       if (existingRemote) safeUpdate.id = String(existingRemote.id);
       else if (item.operation === 'update') return true;
+    }
+
+    // Tenants: preserve the local id when creating a brand-new tenant in Supabase so
+    // that all child entities (products, users, ...) keep consistent foreign keys.
+    if (def.entity === 'tenant' && !safeUpdate.id && recordId) {
+      const tid = Number(recordId);
+      if (Number.isInteger(tid)) safeUpdate.id = String(tid);
     }
 
     // IMPORTANT:
@@ -536,6 +665,16 @@ export class GenericSyncService {
       if (!safeUpdate.updated_at) safeUpdate.updated_at = new Date().toISOString();
       if (!safeUpdate.created_at && payload.created_at) safeUpdate.created_at = payload.created_at;
       if (!safeUpdate.created_at) safeUpdate.created_at = safeUpdate.updated_at;
+    }
+
+    if (def.entity === 'user') {
+      // Supabase trigger `fn_validate_platform_user_tenant` forbids platform
+      // users (is_platform_user = true) from carrying a tenant_id. Drop it so
+      // the upsert is accepted and the user syncs as a platform user.
+      const isPlatform = safeUpdate.is_platform_user === true || safeUpdate.is_platform_user === 1;
+      if (isPlatform) {
+        delete safeUpdate.tenant_id;
+      }
     }
 
     if (fieldMappings) {
@@ -624,12 +763,20 @@ export class GenericSyncService {
     }
 
     if (def.hasTenantId && tenantId) {
-      if (def.entity === 'product') safeUpdate.tenant_id = String(tenantId);
-      else safeUpdate.tenant_id = Number(tenantId);
+      // Platform users must NOT carry a tenant_id (Supabase trigger rejects it)
+      const isPlatformUser = def.entity === 'user' && (safeUpdate.is_platform_user === true || safeUpdate.is_platform_user === 1);
+      if (!isPlatformUser) {
+        if (def.entity === 'product') safeUpdate.tenant_id = String(tenantId);
+        else safeUpdate.tenant_id = Number(tenantId);
+      }
     }
 
     if (def.entity === 'setting') {
-      const existingSetting = await this.supabase.from(remoteTable).select('id').eq('key', safeUpdate.key).maybeSingle();
+      // Supabase `settings` is tenant-scoped: look up the row for THIS tenant only,
+      // otherwise we could reuse another tenant's remote id and corrupt sync.
+      const query = this.supabase.from(remoteTable).select('id').eq('key', safeUpdate.key);
+      if (tenantId) query.eq('tenant_id', tenantId);
+      const existingSetting = await query.maybeSingle();
       if (existingSetting.data?.id) safeUpdate.id = existingSetting.data.id;
       else delete safeUpdate.id;
     }
@@ -942,9 +1089,13 @@ export class GenericSyncService {
       }
 
       if (def.entity === 'setting' && remote.key) {
-        return this.db
-          .prepare(`SELECT key as id, updated_at, created_at, version FROM settings WHERE key = ?`)
-          .get(remote.key) as any;
+        const params: any[] = [remote.key];
+        let sql = `SELECT key as id, updated_at, created_at, version FROM settings WHERE key = ?`;
+        if (remote.tenant_id !== undefined && remote.tenant_id !== null) {
+          sql += ` AND tenant_id = ?`;
+          params.push(remote.tenant_id);
+        }
+        return this.db.prepare(sql).get(...params) as any;
       }
 
       return undefined;
@@ -1040,9 +1191,16 @@ export class GenericSyncService {
     const params = updateFields.map((k) => sanitize(fields[k]));
 
     if (def.entity === 'setting') {
-      const existingSetting = this.db.prepare('SELECT key FROM settings WHERE key = ?').get(fields.key) as any;
+      // Settings are per-tenant: the primary key is (key, tenant_id). Always scope
+      // by both so a remote row can never overwrite a *different* tenant's setting.
+      const tenantId = fields.tenant_id;
+      const existingSetting = this.db
+        .prepare('SELECT key FROM settings WHERE key = ? AND tenant_id = ?')
+        .get(fields.key, tenantId) as any;
       if (existingSetting) {
-        this.db.prepare(`UPDATE settings SET ${setClauses} WHERE key = ?`).run(...params, fields.key);
+        this.db
+          .prepare(`UPDATE settings SET ${setClauses} WHERE key = ? AND tenant_id = ?`)
+          .run(...params, fields.key, tenantId);
       } else {
         this.db
           .prepare(
@@ -1079,7 +1237,7 @@ export class GenericSyncService {
           } else {
             throw insertErr;
           }
-} else if (String(insertErr?.code || '').includes('UNIQUE')) {
+        } else if (String(insertErr?.code || '').includes('UNIQUE')) {
           if (def.entity === 'tenant' && remote?.slug) {
             const existing = this.db.prepare(`SELECT id, remote_id FROM tenants WHERE slug = ?`).get(remote.slug) as { id: number; remote_id: number | null } | undefined;
             if (existing) {

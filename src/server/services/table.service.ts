@@ -246,7 +246,7 @@ export class TableService {
         }
 
         try {
-          getProductSyncService().queueChangeInsideTransaction('restaurant_table', 'insert', {
+          getProductSyncService()?.queueChangeInsideTransaction('restaurant_table', 'insert', {
             ...inserted,
             tenant_id: resolvedTenantId
           });
@@ -377,7 +377,7 @@ export class TableService {
           }
 
           try {
-            getProductSyncService().queueChangeInsideTransaction('restaurant_table', 'update', {
+            getProductSyncService()?.queueChangeInsideTransaction('restaurant_table', 'update', {
               ...updated,
               tenant_id: resolvedTenantId
             });
@@ -432,11 +432,22 @@ export class TableService {
 
   /**
    * Open table (assign waiter and set active).
+   * @param waiterId - Can be SQLite ID, Supabase ID, or canonical_id
    */
-  static async openTable(id: number, waiterId: number, tenantId: number): Promise<Table> {
+  static async openTable(id: number, waiterId: number | string, tenantId: number): Promise<Table> {
     const existing = await this.getById(id, tenantId);
+    
+    // Resolve waiter ID to canonical + Supabase IDs
+    const { identityResolver } = await import('./identity-resolution.service');
+    const resolution = await identityResolver.resolveForTableAssignment(Number(waiterId), tenantId);
+    
+    if (!resolution) {
+      throw new Error(`Waiter ${waiterId} not found in identity map`);
+    }
+    
+    // Use canonical_id as source of truth
     return this.update(id, {
-      assigned_waiter_id: existing?.assigned_waiter_id ?? waiterId,
+      assigned_waiter_id: existing?.assigned_waiter_id ?? resolution.canonical_id,
       status: 'active',
     } as any, tenantId);
   }
@@ -485,7 +496,7 @@ export class TableService {
         if (deletedFromSqlite) {
           console.log(`[TableService] Deleted table ${id} from SQLite (tenant ${resolvedTenantId})`);
           try {
-            getProductSyncService().queueChangeInsideTransaction('restaurant_table', 'delete', {
+            getProductSyncService()?.queueChangeInsideTransaction('restaurant_table', 'delete', {
               id,
               tenant_id: resolvedTenantId
             });
@@ -560,7 +571,7 @@ export class TableService {
           }
 
           try {
-            getProductSyncService().queueChangeInsideTransaction('restaurant_table', 'update', {
+            getProductSyncService()?.queueChangeInsideTransaction('restaurant_table', 'update', {
               ...updated,
               tenant_id: resolvedTenantId
             });

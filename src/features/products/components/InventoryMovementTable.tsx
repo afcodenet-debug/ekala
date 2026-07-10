@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { ArrowUp, ArrowDown } from 'lucide-react';
 import { EnterpriseTokens } from '../../../lib/design-system';
 import { useI18n } from '../../../lib/i18n';
@@ -21,7 +21,23 @@ export const InventoryMovementTable: React.FC<InventoryMovementTableProps> = Rea
   const bp = useBreakpoint();
   const { isMobile, isTablet } = bp;
 
-  if (movements.length === 0) {
+  // ── Pagination (client-side over the provided movements) ─────────────
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
+
+  const totalItems = movements.length;
+  const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
+  const safePage = Math.min(Math.max(1, page), totalPages);
+  const pageStart = totalItems === 0 ? 0 : (safePage - 1) * pageSize + 1;
+  const pageEnd = Math.min(safePage * pageSize, totalItems);
+  const paginated = movements.slice((safePage - 1) * pageSize, safePage * pageSize);
+
+  // Reset to first page whenever the underlying dataset changes
+  useEffect(() => {
+    setPage(1);
+  }, [movements]);
+
+  if (totalItems === 0) {
     return (
       <div
         style={{
@@ -149,7 +165,7 @@ export const InventoryMovementTable: React.FC<InventoryMovementTableProps> = Rea
           gap: spacing.xs,
         }}
       >
-        {movements.map((movement) => {
+        {paginated.map((movement) => {
           const isInbound = (movement.quantity_changed ?? 0) >= 0;
           const date = new Date(movement.created_at || '');
           const formattedDate = date.toLocaleString();
@@ -343,7 +359,7 @@ export const InventoryMovementTable: React.FC<InventoryMovementTableProps> = Rea
                   textAlign: 'center',
                 }}
               >
-                {movement.previous_quantity ?? '—'}
+                {movement.quantity_before ?? '—'}
               </span>
 
               {/* New quantity */}
@@ -354,7 +370,7 @@ export const InventoryMovementTable: React.FC<InventoryMovementTableProps> = Rea
                   textAlign: 'center',
                 }}
               >
-                {movement.new_quantity ?? '—'}
+                {movement.quantity_after ?? '—'}
               </span>
 
               {/* Reason */}
@@ -373,6 +389,127 @@ export const InventoryMovementTable: React.FC<InventoryMovementTableProps> = Rea
           );
         })}
       </div>
+
+      {totalPages > 1 && (
+        <div
+          style={{
+            display: 'flex',
+            flexDirection: isMobile ? 'column' : 'row',
+            alignItems: isMobile ? 'stretch' : 'center',
+            justifyContent: 'space-between',
+            gap: spacing.sm,
+            padding: spacing.md,
+            borderTop: `1px solid ${colors.border}`,
+          }}
+        >
+          <span
+            style={{
+              fontSize: '12px',
+              color: colors.text3,
+              textAlign: isMobile ? 'center' : 'left',
+            }}
+          >
+            {t('products.showing')} {pageStart}–{pageEnd} {t('products.of')} {totalItems}
+          </span>
+
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: spacing.xs,
+              justifyContent: isMobile ? 'space-between' : 'flex-end',
+              flexWrap: 'wrap',
+            }}
+          >
+            <select
+              value={pageSize}
+              onChange={(e) => {
+                setPageSize(Number(e.target.value));
+                setPage(1);
+              }}
+              aria-label={t('products.rowsPerPage')}
+              style={{
+                appearance: 'none',
+                fontSize: '12px',
+                fontWeight: 600,
+                color: colors.text2,
+                background: colors.surface,
+                border: `1px solid ${colors.border}`,
+                borderRadius: radius.md,
+                padding: '6px 10px',
+                minHeight: touchTargets.min,
+                cursor: 'pointer',
+              }}
+            >
+              {[10, 25, 50].map((size) => (
+                <option key={size} value={size}>
+                  {size} / {t('products.page')}
+                </option>
+              ))}
+            </select>
+
+            <button
+              type="button"
+              onClick={() => setPage((p) => Math.max(1, p - 1))}
+              disabled={safePage <= 1}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                minWidth: touchTargets.min,
+                height: touchTargets.min,
+                padding: '0 12px',
+                fontSize: '13px',
+                fontWeight: 700,
+                color: colors.text2,
+                background: colors.surface,
+                border: `1px solid ${colors.border}`,
+                borderRadius: radius.md,
+                cursor: safePage <= 1 ? 'not-allowed' : 'pointer',
+                opacity: safePage <= 1 ? 0.5 : 1,
+              }}
+            >
+              {t('products.prev')}
+            </button>
+
+            <span
+              style={{
+                fontSize: '12px',
+                fontWeight: 700,
+                color: colors.text1,
+                padding: '0 6px',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              {safePage} / {totalPages}
+            </span>
+
+            <button
+              type="button"
+              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+              disabled={safePage >= totalPages}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                minWidth: touchTargets.min,
+                height: touchTargets.min,
+                padding: '0 12px',
+                fontSize: '13px',
+                fontWeight: 700,
+                color: colors.text2,
+                background: colors.surface,
+                border: `1px solid ${colors.border}`,
+                borderRadius: radius.md,
+                cursor: safePage >= totalPages ? 'not-allowed' : 'pointer',
+                opacity: safePage >= totalPages ? 0.5 : 1,
+              }}
+            >
+              {t('products.next')}
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 });

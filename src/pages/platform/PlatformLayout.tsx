@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Outlet, useNavigate, useLocation } from 'react-router-dom';
 import {
   LayoutDashboard, Building2, CreditCard, FileText,
-  Activity, RefreshCw, Settings, LogOut, User, ChevronDown, Bell
+  Activity, RefreshCw, Settings, LogOut, User, ChevronDown, Bell, Package
 } from 'lucide-react';
 
 const styles = `
@@ -150,8 +150,14 @@ const styles = `
 
 // RBAC Permissions Matrix
 const ROLE_PERMISSIONS: Record<string, string[]> = {
+  owner: [
+    'dashboard', 'tenants', 'subscriptions', 'vouchers', 'sync', 'audit-logs', 'settings', 'plans',
+  ],
   super_admin: [
-    'dashboard', 'tenants', 'subscriptions', 'vouchers', 'sync', 'audit-logs', 'settings',
+    'dashboard', 'tenants', 'subscriptions', 'vouchers', 'sync', 'audit-logs', 'settings', 'plans',
+  ],
+  admin: [
+    'dashboard', 'tenants', 'subscriptions', 'vouchers', 'sync', 'audit-logs', 'settings', 'plans',
   ],
   support_admin: [
     'dashboard', 'tenants', 'sync', 'audit-logs',
@@ -168,9 +174,10 @@ const NAV_ITEMS = [
   { path: '/platform', icon: LayoutDashboard, label: 'Dashboard', permission: 'dashboard' },
   { path: '/platform/tenants', icon: Building2, label: 'Tenants', permission: 'tenants' },
   { path: '/platform/subscriptions', icon: CreditCard, label: 'Abonnements', permission: 'subscriptions' },
+  { path: '/platform/plans', icon: Package, label: 'Plans', permission: 'plans' },
   { path: '/platform/vouchers', icon: FileText, label: 'Vouchers', permission: 'vouchers' },
   { path: '/platform/sync', icon: RefreshCw, label: 'Synchronisation', permission: 'sync' },
-  { path: '/platform/audit-logs', icon: Activity, label: 'Logs d\'audit', permission: 'audit-logs' },
+  { path: '/platform/audit-logs', icon: Activity, label: "Logs d'audit", permission: 'audit-logs' },
   { path: '/platform/settings', icon: Settings, label: 'Paramètres', permission: 'settings' },
 ];
 
@@ -216,6 +223,7 @@ const PlatformLayout = () => {
   
   // Get role display name
   const roleDisplay: Record<string, string> = {
+    owner: 'Owner',
     super_admin: 'Super Admin',
     support_admin: 'Support Admin',
     finance_admin: 'Finance Admin',

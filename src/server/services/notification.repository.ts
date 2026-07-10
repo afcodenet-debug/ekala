@@ -18,6 +18,23 @@ export interface CreateNotificationInput {
   user_id?: number;
   role?: string;
   tenant_id?: number;
+  language?: string;
+}
+
+/** Resolve the tenant's configured UI language (falls back to 'fr'). */
+function resolveTenantLanguage(tenantId: number): string {
+  if (db) {
+    try {
+      const row = db
+        .prepare("SELECT value FROM settings WHERE key = 'app_language' AND tenant_id = ?")
+        .get(tenantId) as { value?: string } | undefined;
+      const lang = (row?.value || '').toLowerCase();
+      if (lang === 'en' || lang === 'fr' || lang === 'pt') return lang;
+    } catch {
+      /* ignore */
+    }
+  }
+  return 'fr';
 }
 
 export function createNotification(input: CreateNotificationInput) {
@@ -27,10 +44,11 @@ export function createNotification(input: CreateNotificationInput) {
   const priority = input.priority || 'medium';
   const metadata = input.metadata ? JSON.stringify(input.metadata) : null;
   const tenantId = input.tenant_id || getCurrentTenantId();
+  const language = input.language || resolveTenantLanguage(tenantId);
 
   const stmt = db.prepare(`
-    INSERT INTO notifications (id, type, title, message, priority, notification_type, metadata, link, user_id, role, tenant_id)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO notifications (id, type, title, message, priority, notification_type, metadata, link, user_id, role, tenant_id, language)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   stmt.run(
@@ -44,7 +62,8 @@ export function createNotification(input: CreateNotificationInput) {
     input.link || null,
     input.user_id || null,
     input.role || null,
-    tenantId
+    tenantId,
+    language
   );
 
   return id;

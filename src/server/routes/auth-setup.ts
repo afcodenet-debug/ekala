@@ -11,12 +11,14 @@ import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { env } from '../config/env';
 import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
+// import { getCurrentTrace } from '../services/trace-manager.service';
 
 const router = Router();
 
 // Rate limiting simple en mémoire (par IP + route)
 const authHits = new Map<string, { count: number; expires: number }>();
 
+// Check if a given key (IP + route) is within the rate limit
 function checkRateLimit(key: string, windowMs: number, max: number): { allowed: boolean; remaining: number } {
   const now = Date.now();
   const entry = authHits.get(key);
@@ -30,6 +32,7 @@ function checkRateLimit(key: string, windowMs: number, max: number): { allowed: 
   return { allowed: true, remaining };
 }
 
+// Middleware for rate limiting
 function authRateLimit(req: Request, res: Response, next: Function) {
   const key = `${req.ip}:${req.method}:${req.originalUrl}`;
   const result = checkRateLimit(key, 60_000, 10);
@@ -187,7 +190,7 @@ router.post('/auth/login/email', async (req, res) => {
 
     const { data: users, error: uErr } = await supabase
       .from('user')
-      .select('*, tenants!inner(name, slug)')
+      .select('*')
       .eq('email', email.toLowerCase())
       .eq('is_active', true);
 
@@ -204,7 +207,16 @@ router.post('/auth/login/email', async (req, res) => {
       return res.status(401).json({ error: 'INVALID_CREDENTIALS', message: 'Email ou mot de passe incorrect.' });
     }
 
-    const tenant = user.tenants || {};
+    // Récupérer le tenant séparément (évite conflit de relations)
+    let tenant: any = {};
+    if (user.tenant_id) {
+      const { data: tenantData } = await supabase
+        .from('tenants')
+        .select('name, slug')
+        .eq('id', String(user.tenant_id))
+        .maybeSingle();
+      if (tenantData) tenant = tenantData;
+    }
 
     res.json({
       id: user.id,
@@ -240,7 +252,7 @@ router.post('/auth/login/pin', async (req, res) => {
     if (identity) {
       const { data, error } = await supabase
         .from('user')
-        .select('*, tenants!inner(name, slug)')
+        .select('*')
         .eq('is_active', true)
         .or(`username.eq.${identity},phone.eq.${identity}`);
       if (error) throw error;

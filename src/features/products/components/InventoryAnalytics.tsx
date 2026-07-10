@@ -361,14 +361,14 @@ export const InventoryAnalyticsPage: React.FC = () => {
 
   /* ════════════════════════════════════════════════════════════════════ */
   return (
-    <div className="ia-root ia-fade" style={{ paddingBottom:80 }}>
+    <div className="ia-root ia-fade" style={{ paddingBottom:80, padding: 30 }}>
 
       {/* ── Header ── */}
       <div className="ia-header-row">
         <div>
-          <p style={{ fontSize:11, fontWeight:600, color:'var(--text-3)', textTransform:'uppercase', letterSpacing:'0.12em', marginBottom:6 }}>
+          {/* <p style={{ fontSize:11, fontWeight:600, color:'var(--text-3)', textTransform:'uppercase', letterSpacing:'0.12em', marginBottom:6 }}>
             Inventaire
-          </p>
+          </p> */}
           <h2 style={{ fontSize:26, fontWeight:300, color:'var(--text-1)', margin:'0 0 4px', letterSpacing:'-0.01em' }}>
             {t('analytics.inventoryAnalytics') || 'Analytique Inventaire'}
           </h2>

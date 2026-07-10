@@ -196,28 +196,52 @@ export class UserTenantSyncService {
     }
 
     if (entity === 'user') {
-      const cols = ['full_name', 'username', 'pin_code', 'role', 'is_active', 'email', 'tenant_id', 'phone', 'password_hash', 'has_setup_pin'];
+      const cols = ['full_name', 'username', 'pin_code', 'role', 'is_active', 'email', 'tenant_id', 'phone', 'password_hash', 'has_setup_pin', 'is_super_admin', 'is_platform_user', 'status', 'revoked_at', 'revoked_by', 'locked_until'];
       cols.forEach(c => {
         if (payload[c] !== undefined) {
           let val = payload[c];
-          if ((c === 'is_active' || c === 'has_setup_pin') && typeof val === 'number') {
+          // INTEGER (0/1) stored locally → BOOLEAN expected by Supabase
+          if ((c === 'is_active' || c === 'has_setup_pin' || c === 'is_platform_user') && typeof val === 'number') {
             val = val === 1;
           }
           safeUpdate[c] = val;
         }
       });
+
+      // Resolve the self-referencing FK revoked_by → remote user id
+      if (safeUpdate.revoked_by) {
+        const remoteRevokedBy = this.getLocalId('users', safeUpdate.revoked_by);
+        if (remoteRevokedBy) safeUpdate.revoked_by = remoteRevokedBy;
+        else delete safeUpdate.revoked_by;
+      }
+
+      // Supabase trigger forbids platform users from having a tenant_id
+      const isPlatform = safeUpdate.is_platform_user === true || safeUpdate.is_platform_user === 1;
+      if (isPlatform) {
+        delete safeUpdate.tenant_id;
+      }
     } else if (entity === 'tenant') {
       const cols = ['slug', 'name', 'legal_name', 'owner_email', 'owner_phone', 'contact_email',
         'contact_phone', 'country', 'city', 'address', 'logo_url', 'primary_color',
-        'default_currency', 'default_locale', 'timezone', 'status'];
+        'default_currency', 'default_locale', 'timezone', 'status', 'is_provisioned', 'provisioned_at',
+        'internal_notes', 'tenant_id', 'suspended_at', 'suspension_reason', 'suspended_by',
+        'last_reactivated_at', 'last_reactivated_by', 'disabled_at', 'disabled_by'];
       cols.forEach(c => { if (payload[c] !== undefined) safeUpdate[c] = payload[c]; });
     } else if (entity === 'tenant_user') {
-      const cols = ['tenant_id', 'user_id', 'role', 'is_default', 'is_active'];
-      cols.forEach(c => { if (payload[c] !== undefined) safeUpdate[c] = payload[c]; });
+      const cols = ['tenant_id', 'user_id', 'role', 'is_default', 'is_active', 'invited_at', 'joined_at', 'created_at', 'updated_at'];
+      cols.forEach(c => {
+        if (payload[c] !== undefined) {
+          let val = payload[c];
+          if ((c === 'is_default' || c === 'is_active') && typeof val === 'number') val = val === 1;
+          safeUpdate[c] = val;
+        }
+      });
     }
 
     if (!payload.remote_id && item.operation === 'insert') {
-      delete safeUpdate.id;
+      // Tenants: preserve the local id so child-entity FKs stay consistent.
+      if (entity === 'tenant') safeUpdate.id = String(recordId);
+      else delete safeUpdate.id;
       if (tenantId && entity !== 'tenant') {
         // Vérifier si le tenant existe en remote avant de push
         const { data: remoteTenant } = await this.supabase.from('tenants').select('id').eq('id', tenantId).maybeSingle();
@@ -225,7 +249,11 @@ export class UserTenantSyncService {
           console.warn(`[Sync] Skipping ${entity} push: Tenant #${tenantId} does not exist in Supabase.`);
           return;
         }
-        safeUpdate.tenant_id = tenantId;
+        // Platform users must not carry a tenant_id (Supabase trigger rejects it)
+        const platformUser = safeUpdate.is_platform_user === true || safeUpdate.is_platform_user === 1;
+        if (!platformUser) {
+          safeUpdate.tenant_id = tenantId;
+        }
       }
     }
 
@@ -293,12 +321,14 @@ export class UserTenantSyncService {
         if (isNaN(remoteId)) continue;
 
         const cols = entity === 'user'
-          ? ['full_name', 'username', 'pin_code', 'role', 'is_active', 'email', 'tenant_id', 'phone', 'password_hash', 'has_setup_pin']
+          ? ['full_name', 'username', 'pin_code', 'role', 'is_active', 'email', 'tenant_id', 'phone', 'password_hash', 'has_setup_pin', 'is_super_admin', 'is_platform_user', 'status', 'revoked_at', 'revoked_by', 'locked_until']
           : entity === 'tenant'
           ? ['slug', 'name', 'legal_name', 'owner_email', 'owner_phone', 'contact_email',
             'contact_phone', 'country', 'city', 'address', 'logo_url', 'primary_color',
-            'default_currency', 'default_locale', 'timezone', 'status']
-          : ['tenant_id', 'user_id', 'role', 'is_default', 'is_active'];
+            'default_currency', 'default_locale', 'timezone', 'status', 'is_provisioned', 'provisioned_at',
+            'internal_notes', 'tenant_id', 'suspended_at', 'suspension_reason', 'suspended_by',
+            'last_reactivated_at', 'last_reactivated_by', 'disabled_at', 'disabled_by']
+          : ['tenant_id', 'user_id', 'role', 'is_default', 'is_active', 'invited_at', 'joined_at', 'created_at', 'updated_at'];
 
         const fields: Record<string, any> = {
           remote_id: remoteId,

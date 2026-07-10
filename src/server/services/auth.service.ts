@@ -16,6 +16,9 @@ import crypto from 'crypto';
 import { signJwt, verifyJwt, requireJwtAuth } from '../middleware/jwt-auth';
 import bcrypt from 'bcryptjs';
 import { dataSource } from '../infrastructure/data-source-manager';
+import { trace, getElapsedMs, type EvaluationCriterion, type Decision } from '../../lib/forensic-tracer';
+import { getCurrentTrace } from './trace-manager.service';
+import { WriteInterceptor } from '../infrastructure/synchronization/write-interceptor';
 
 const router = Router();
 
@@ -57,7 +60,7 @@ function getSupabase(req?: Request): SupabaseClient | null {
   // Utilise le nouveau resolveFromRequest qui vérifie d'abord l'en-tête X-Runtime-Mode
   // Envoyé par le frontend, puis les en-têtes standard (host, origin, referer)
   const mode = req ? dataSource.resolveFromRequest(req) : dataSource.mode;
-  if (mode !== 'cloud') return null;
+  if (mode !== 'CLOUD') return null;
 
   return createClient(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, {
     auth: { persistSession: false },
@@ -149,12 +152,17 @@ async function getTenantSubscription(supabase: SupabaseClient, tenantId: number 
 // ── Helper: Build user response with JWT ───────────────────────────────────────
 
 function buildAuthResponse(user: any, tenant: any, subscription: any = null) {
+  const tenantName = tenant?.name || user.tenant_name || null;
+  const tenantSlug = tenant?.slug || user.tenant_slug || null;
+
   const token = signJwt({
     sub: user.id,
     tenant_id: user.tenant_id,
     role: user.role,
     email: user.email,
     full_name: user.full_name,
+    tenant_name: tenantName,
+    tenant_slug: tenantSlug,
   });
 
   return {
@@ -168,9 +176,9 @@ function buildAuthResponse(user: any, tenant: any, subscription: any = null) {
       role: user.role,
       is_active: user.is_active,
       tenant_id: user.tenant_id,
-      tenant_name: tenant?.name || null,
-      tenant_slug: tenant?.slug || null,
-      status: subscription?.status || tenant?.status || null,
+      tenant_name: tenantName,
+      tenant_slug: tenantSlug,
+      status: subscription?.status || tenant?.status || user.status || null,
       plan_name: subscription?.plan_name || null,
       expires_at: subscription?.expires_at || null,
     },
@@ -248,35 +256,16 @@ router.post('/login/email', authRateLimit, async (req: Request, res: Response) =
 
     // ── Supabase path ──
     if (supabase) {
-      // Try with tenant join first, fall back without if table missing
-      let users: any[] | null = null;
-
-      const { data: withJoin, error: joinErr } = await supabase
+      // Récupérer les utilisateurs SANS jointure (évite conflit de relations Supabase)
+      const { data: users, error: uErr } = await supabase
         .from('users')
-        .select('*, tenants!inner(name, slug)')
+        .select('*')
         .eq('email', email.toLowerCase())
         .eq('is_active', true);
 
-      if (joinErr) {
-        console.warn('[Auth] Email query with tenants join failed, trying without:', joinErr.message);
-      }
-      
-      // Always try without join as primary or fallback
-      if (joinErr || !withJoin || withJoin.length === 0) {
-        const { data: withoutJoin, error: noJoinErr } = await supabase
-          .from('users')
-          .select('*')
-          .eq('email', email.toLowerCase())
-          .eq('is_active', true);
-        if (noJoinErr) {
-          console.error('[Auth] Email query without join also failed:', noJoinErr.message);
-          throw noJoinErr;
-        }
-        users = withoutJoin;
-        console.log(`[Auth] Email query without join: found ${users?.length || 0} user(s)`);
-      } else {
-        users = withJoin;
-        console.log(`[Auth] Email query with join: found ${users?.length || 0} user(s)`);
+      if (uErr) {
+        console.error('[Auth] Email query failed:', uErr.message);
+        throw uErr;
       }
 
       if (!users || users.length === 0) {
@@ -302,9 +291,9 @@ router.post('/login/email', authRateLimit, async (req: Request, res: Response) =
         });
       }
 
-      // Get tenant info - try from join first, then fetch separately
-      let tenant = user.tenants || {};
-      if (!tenant.name && user.tenant_id) {
+      // Récupérer le tenant séparément (évite conflit de relations)
+      let tenant: any = {};
+      if (user.tenant_id) {
         try {
           const { data: tenantData } = await supabase
             .from('tenants')
@@ -356,237 +345,414 @@ router.post('/login/email', authRateLimit, async (req: Request, res: Response) =
 // ── POST /api/auth/login/pin — Staff login by tenant_slug + PIN ────────────────
 // This is the CORE multi-tenant login: staff must identify their tenant first
 router.post('/login/pin', authRateLimit, async (req: Request, res: Response) => {
+  const correlationId = trace.begin();
+  // New v3 TraceManager — JSON structured logs alongside v2 forensic tracer
+  const trace3 = getCurrentTrace();
+  
+  // FORENSIC TRACE — BEGIN step
+  trace3.enter('BEGIN', {
+    path: req.path,
+    method: req.method,
+    ip: req.ip,
+    hasBody: !!req.body,
+  });
+  
   try {
     const { pin_code, identity, tenant_slug } = req.body || {};
+    
+    // FORENSIC TRACE — VALIDATION step
+    trace3.enter('VALIDATION', {
+      hasPinCode: !!pin_code,
+      pinLength: pin_code?.length,
+      hasIdentity: !!identity,
+      hasTenantSlug: !!tenant_slug,
+    });
+
+    trace.payload(correlationId, {
+      pinLength: pin_code?.length,
+      identity,
+      tenantSlug: tenant_slug,
+      headers: {
+        host: req.headers.host,
+        origin: req.headers.origin,
+        referer: req.headers.referer,
+        'x-runtime-mode': req.headers['x-runtime-mode'],
+      },
+    });
 
     if (!pin_code || pin_code.length < 4) {
+      trace3.fail('VALIDATION', { reason: 'pin_too_short' });
+      trace3.flush();
+      trace.end(correlationId);
       return res.status(400).json({
         error: 'INVALID_PIN',
         message: 'Code PIN requis (4 chiffres minimum).',
       });
     }
 
-    const supabase = getSupabase(req);
+    // VALIDATION passed
+    trace3.exit('VALIDATION', { pin_length: pin_code?.length });
 
-    // ── Supabase path ──
+    // FORENSIC TRACE — DATASRC step
+    trace3.enter('DATASRC', {});
+    
+    // ── DÉTECTION DU MODE ET SOURCE DE DONNÉES ──────────────────────────────
+    const supabase = getSupabase(req);
+    const detectedMode = supabase ? 'cloud' : 'local';
+    const datasource = supabase ? 'supabase' : 'sqlite';
+    
+    trace3.setDatasource(datasource, false);
+    trace3.exit('DATASRC', { datasource, mode: detectedMode });
+    
+    trace.stepStart(correlationId, 'Détection du mode');
+    trace.datasource(correlationId, {
+      source: supabase ? 'Supabase' : 'SQLite',
+      reason: supabase
+        ? 'getSupabase(req) a retourné un client Supabase (mode cloud)'
+        : 'getSupabase(req) a retourné null (mode local)',
+      hasSupabaseClient: supabase !== null,
+      mode: detectedMode,
+    });
+    trace.stepEnd(correlationId, 'Détection du mode', detectedMode);
+
+    // ── SUPABASE PATH ──
     if (supabase) {
+      trace.stepStart(correlationId, 'Recherche du tenant (Supabase)');
       let tenantFilter: any = {};
 
-      // If tenant_slug is provided, try to scope the search to that tenant
       if (tenant_slug) {
         try {
-          // Essayer d'abord une recherche exacte (case-sensitive)
           let tenant = null;
+          // Tentative 1
           const { data: tenantExact, error: tErr } = await supabase
-            .from('tenants')
-            .select('id, name, slug, tenant_id, logo_url, primary_color')
-            .eq('slug', tenant_slug)
-            .maybeSingle();
-
-          if (!tErr && tenantExact) {
-            tenant = tenantExact;
-          } else {
-            // 2. Essayer en case-insensitive sur le slug
+            .from('tenants').select('id, name, slug, tenant_id').eq('slug', tenant_slug).maybeSingle();
+          trace.tenantSearch(correlationId, 1, {
+            method: 'slug exact (case-sensitive)', field: 'slug', value: tenant_slug,
+            results: !tErr && tenantExact ? 1 : 0, found: !tErr && tenantExact !== null,
+            tenantId: tenantExact?.id, tenantName: tenantExact?.name,
+          });
+          if (!tErr && tenantExact) { tenant = tenantExact; }
+          else {
+            // Tentative 2
             const { data: tenantLower, error: tErrLower } = await supabase
-              .from('tenants')
-              .select('id, name, slug, tenant_id, logo_url, primary_color')
-              .eq('slug', tenant_slug.toLowerCase())
-              .maybeSingle();
-
-            if (!tErrLower && tenantLower) {
-              tenant = tenantLower;
-            } else {
-              // 3. Essayer par business_id (code entreprise)
+              .from('tenants').select('id, name, slug, tenant_id').eq('slug', tenant_slug.toLowerCase()).maybeSingle();
+            trace.tenantSearch(correlationId, 2, {
+              method: 'slug lowercase', field: 'slug', value: tenant_slug.toLowerCase(),
+              results: !tErrLower && tenantLower ? 1 : 0, found: !tErrLower && tenantLower !== null,
+              tenantId: tenantLower?.id, tenantName: tenantLower?.name,
+            });
+            if (!tErrLower && tenantLower) { tenant = tenantLower; }
+            else {
+              // Tentative 3
               const { data: tenantByBiz, error: tErrBiz } = await supabase
-                .from('tenants')
-                .select('id, name, slug, tenant_id, logo_url, primary_color')
-                .eq('business_id', tenant_slug)
-                .maybeSingle();
-
-              if (!tErrBiz && tenantByBiz) {
-                tenant = tenantByBiz;
-              } else {
-                // 4. Essayer avec le nom (case-insensitive)
+                .from('tenants').select('id, name, slug, tenant_id').eq('business_id', tenant_slug).maybeSingle();
+              trace.tenantSearch(correlationId, 3, {
+                method: 'business_id', field: 'business_id', value: tenant_slug,
+                results: !tErrBiz && tenantByBiz ? 1 : 0, found: !tErrBiz && tenantByBiz !== null,
+                tenantId: tenantByBiz?.id, tenantName: tenantByBiz?.name,
+              });
+              if (!tErrBiz && tenantByBiz) { tenant = tenantByBiz; }
+              else {
+                // Tentative 4
                 const { data: tenantByName, error: tErrByName } = await supabase
-                  .from('tenants')
-                  .select('id, name, slug, tenant_id, logo_url, primary_color')
-                  .ilike('name', tenant_slug)
-                  .maybeSingle();
-
-                if (!tErrByName && tenantByName) {
-                  tenant = tenantByName;
-                }
+                  .from('tenants').select('id, name, slug, tenant_id').ilike('name', tenant_slug).maybeSingle();
+                trace.tenantSearch(correlationId, 4, {
+                  method: 'name ILIKE', field: 'name', value: tenant_slug,
+                  results: !tErrByName && tenantByName ? 1 : 0, found: !tErrByName && tenantByName !== null,
+                  tenantId: tenantByName?.id, tenantName: tenantByName?.name,
+                });
+                if (!tErrByName && tenantByName) tenant = tenantByName;
               }
             }
           }
-
           if (tenant) {
-            // Utiliser tenant.id comme référence de scope principale
-            // Pour la rétro-compatibilité avec les données legacy où tout était sur tenant_id=5,
-            // on essaient les deux : d'abord tenant.id, puis tenant.tenant_id si aucun résultat
             tenantFilter.tenant_id = tenant.id;
             tenantFilter.legacy_tenant_id = tenant.tenant_id || 5;
+            trace.tenantResolved(correlationId, {
+              resolved: true, tenantId: tenant.id, tenantName: tenant.name,
+              tenantSlug: tenant.slug, filterApplied: true,
+            });
           } else {
-            console.warn(`[Auth] Tenant "${tenant_slug}" not found in tenants table — searching all users`);
+            trace.log(correlationId, 'TENANT', `Aucun tenant trouvé — recherche sans filtre tenant_id`);
+            trace.tenantResolved(correlationId, { resolved: false, filterApplied: false });
           }
-        } catch {
-          console.warn('[Auth] Tenants table not available — searching all users');
+        } catch (err: any) {
+          trace.error(correlationId, 'Recherche tenant Supabase', err);
+          trace.tenantResolved(correlationId, { resolved: false, filterApplied: false });
         }
+      } else {
+        trace.log(correlationId, 'TENANT', 'Aucun tenant_slug fourni — recherche globale');
+        trace.tenantResolved(correlationId, { resolved: false, filterApplied: false });
       }
+      trace.stepEnd(correlationId, 'Recherche du tenant (Supabase)');
 
-      // Build user query — try with tenant join, fall back without
-      // TENANT SCOPING : on cherche les users dont tenant_id correspond au tenant
-      let candidates: any[] | null = null;
+      // FORENSIC TRACE — USER step
+      trace3.enter('USER', { identity, tenantFilter });
       
-      // Essayer d'abord avec tenant.id (nouveau système)
+      // ── RECHERCHE DES UTILISATEURS ───────────────────────────────────────
+      trace.stepStart(correlationId, 'Recherche utilisateurs Supabase');
+      trace.log(correlationId, 'USER', `Recherche: identity="${identity}", tenantFilter=${JSON.stringify(tenantFilter)}`);
+      let candidates: any[] | null = null;
       const applyFilters = (q: any, useLegacy = false) => {
         const filterId = useLegacy && tenantFilter.legacy_tenant_id ? tenantFilter.legacy_tenant_id : tenantFilter.tenant_id;
-        if (filterId) {
-          q = q.eq('tenant_id', String(filterId));
-        }
-        if (identity) {
-          q = q.or(`username.eq.${identity},phone.eq.${identity}`);
-        }
+        trace.log(correlationId, 'USER', `applyFilters: filterId=${filterId}, useLegacy=${useLegacy}`);
+        if (filterId) q = q.eq('tenant_id', String(filterId));
+        if (identity) q = q.or(`username.eq.${identity},phone.eq.${identity}`);
         return q;
       };
-
-      // Essayer d'abord avec tenant.id (nouveau système)
-      const { data: withJoin, error: joinErr } = await applyFilters(
-        supabase.from('users').select('*, tenants!inner(name, slug)').eq('is_active', true),
-        false
+      // Toujours utiliser la recherche SANS jointure (évite conflit de relations Supabase)
+      // Les infos du tenant sont récupérées séparément plus bas
+      trace.log(correlationId, 'USER', 'Recherche utilisateurs sans join (primaire)');
+      const { data: usersNoJoin, error: noJoinErr } = await applyFilters(
+        supabase.from('users').select('*').eq('is_active', true), false
       );
-
-      if (joinErr) {
-        console.warn('[Auth] PIN query with tenants join failed, trying without:', joinErr.message);
-        const { data: withoutJoin, error: noJoinErr } = await applyFilters(
-          supabase.from('users').select('*').eq('is_active', true),
-          false
-        );
-        if (noJoinErr) throw noJoinErr;
-        candidates = withoutJoin;
-      } else {
-        candidates = withJoin;
+      if (noJoinErr) {
+        trace.log(correlationId, 'USER', `Erreur requête users: ${noJoinErr.message}`);
+        throw noJoinErr;
       }
-      
-      // Si aucun candidat trouvé et qu'on a un legacy_tenant_id, essayer avec celui-ci
+      trace.log(correlationId, 'USER', `Sans join: ${usersNoJoin?.length || 0} résultat(s)`);
+      candidates = usersNoJoin;
+
       if ((!candidates || candidates.length === 0) && tenantFilter.legacy_tenant_id && tenantFilter.legacy_tenant_id !== tenantFilter.tenant_id) {
-        console.log(`[Auth] No users found with tenant.id=${tenantFilter.tenant_id}, trying legacy tenant_id=${tenantFilter.legacy_tenant_id}`);
-        const { data: legacyWithJoin, error: legacyJoinErr } = await applyFilters(
-          supabase.from('users').select('*, tenants!inner(name, slug)').eq('is_active', true),
-          true
+        trace.log(correlationId, 'USER', `Fallback legacy tenant_id=${tenantFilter.legacy_tenant_id}`);
+        const { data: lNoJoin } = await applyFilters(
+          supabase.from('users').select('*').eq('is_active', true), true
         );
+        candidates = lNoJoin;
+      }
+      if (!candidates || candidates.length === 0) {
+        trace.log(correlationId, 'USER', 'Aucun utilisateur trouvé — recherche globale sans filtre tenant');
+        const { data: globalUsers, error: globalErr } = await supabase
+          .from('users')
+          .select('*')
+          .eq('is_active', true)
+          .or(`username.eq.${identity},phone.eq.${identity}`);
         
-        if (legacyJoinErr) {
-          const { data: legacyWithoutJoin, error: legacyNoJoinErr } = await applyFilters(
-            supabase.from('users').select('*').eq('is_active', true),
-            true
-          );
-          if (legacyNoJoinErr) throw legacyNoJoinErr;
-          candidates = legacyWithoutJoin;
+        if (globalErr) {
+          trace.log(correlationId, 'USER', `Recherche globale échouée: ${globalErr.message}`);
+        } else if (globalUsers && globalUsers.length > 0) {
+          trace.log(correlationId, 'USER', `Recherche globale: ${globalUsers.length} utilisateur(s) trouvé(s) sans filtre tenant`);
+          candidates = globalUsers;
         } else {
-          candidates = legacyWithJoin;
+          trace.log(correlationId, 'USER', 'Recherche globale: aucun résultat');
         }
       }
-
+      
       if (!candidates || candidates.length === 0) {
+        trace3.fail('USER', { reason: 'no_candidates_found' });
+        trace.log(correlationId, 'USER', 'Aucun utilisateur trouvé (définitif)');
+        trace.stepEnd(correlationId, 'Recherche utilisateurs Supabase', '0 trouvé');
+        trace.decision(correlationId, {
+          outcome: 'FAILURE', reason: 'Aucun utilisateur trouvé pour ce tenant',
+          tenantName: null, userId: null, userRole: null,
+        });
+        trace.end(correlationId);
+        trace3.flush();
         return res.status(401).json({
           error: 'INVALID_CREDENTIALS',
-          message: tenant_slug
-            ? 'Aucun utilisateur trouvé dans cet établissement.'
-            : 'Code PIN incorrect.',
+          message: tenant_slug ? 'Aucun utilisateur trouvé dans cet établissement.' : 'Code PIN incorrect.',
         });
       }
+      trace3.exit('USER', { candidatesCount: candidates.length });
+      trace.stepEnd(correlationId, 'Recherche utilisateurs Supabase', `${candidates.length} trouvé(s)`);
 
-      // Verify PIN against each candidate
-      console.log(`[Auth] Found ${candidates.length} user(s) for tenant filter. Checking PINs...`);
-      for (const user of candidates) {
-        if (user.pin_code && verifyPin(pin_code, user.pin_code)) {
-          // Get tenant info - try from join first, then fetch separately
+      // FORENSIC TRACE — PIN step
+      trace3.enter('PIN', { candidatesCount: candidates.length });
+      
+      // ── VÉRIFICATION DU PIN POUR CHAQUE CANDIDAT ─────────────────────────
+      for (let i = 0; i < candidates.length; i++) {
+        const user = candidates[i];
+        const idMatches = identity ? (user.username === identity || user.phone === identity) : true;
+        let pinFormat = 'inconnu';
+        let storedPinPrefix = '(null)';
+        if (user.pin_code) {
+          if (user.pin_code.startsWith('$2')) { pinFormat = 'bcrypt'; storedPinPrefix = user.pin_code.substring(0, 7) + '***'; }
+          else if (user.pin_code.includes(':')) { pinFormat = 'legacy_salt_hash'; storedPinPrefix = user.pin_code.split(':')[0] + ':***'; }
+          else { pinFormat = 'plain_text'; storedPinPrefix = '***'; }
+        }
+        const pinResult = user.pin_code ? verifyPin(pin_code, user.pin_code) : false;
+        const criteria: EvaluationCriterion[] = [
+          { name: 'identity_match', passed: idMatches },
+          { name: 'has_pin', passed: !!user.pin_code },
+          { name: 'is_active', passed: user.is_active === true || user.is_active === 1 },
+          { name: 'pin_verified', passed: pinResult },
+        ];
+        const decision: Decision = pinResult ? 'ACCEPTED' : 'REJECTED';
+        trace.userCandidate(correlationId, i + 1, {
+          userId: user.id, username: user.username, role: user.role,
+          tenantId: user.tenant_id, pinFormat, criteria, decision,
+          rejectReason: !user.pin_code ? 'pas de PIN stocké' : !pinResult ? 'PIN incorrect' : undefined,
+        });
+        if (user.pin_code) {
+          trace.pinVerify(correlationId, {
+            storedPrefix: storedPinPrefix,
+            verifyMethod: pinFormat === 'bcrypt' ? 'bcrypt.compareSync' : pinFormat === 'legacy_salt_hash' ? 'pbkdf2' : '=== (plain text)',
+            result: pinResult,
+          });
+        }
+        if (pinResult) {
+          // FORENSIC TRACE — DECIDE step
+          trace3.enter('DECIDE', { userId: user.id, tenantId: user.tenant_id });
+          
           let tenant = user.tenants || {};
           if (!tenant.name && user.tenant_id) {
             try {
-              const { data: tenantData } = await supabase
-                .from('tenants')
-                .select('name, slug, status')
-                .eq('id', String(user.tenant_id))
-                .maybeSingle();
-              if (tenantData) tenant = tenantData;
-            } catch (e) {
-              console.warn('[Auth] Could not fetch tenant separately:', e);
-            }
+              const { data: td } = await supabase.from('tenants').select('name, slug, status').eq('id', String(user.tenant_id)).maybeSingle();
+              if (td) tenant = td;
+            } catch (e) { trace.error(correlationId, 'Récupération tenant séparée', e); }
           }
-
           const subscription = await getTenantSubscription(supabase, user.tenant_id);
-          console.log(`[Auth] PIN login success: ${user.full_name} (${user.role}) → tenant #${tenant.id || user.tenant_id}`);
-          return res.json(buildAuthResponse(user, tenant, subscription));
+          const response = buildAuthResponse(user, tenant, subscription);
+          
+          trace.jwtGenerated(correlationId, {
+            generated: !!response.token, tokenPrefix: response.token?.substring(0, 20),
+            payloadSub: user.id, payloadTenantId: user.tenant_id, payloadRole: user.role,
+          });
+          trace.decision(correlationId, {
+            outcome: 'SUCCESS', reason: 'PIN vérifié avec succès',
+            tenantName: tenant?.name || null, userId: user.id, userRole: user.role,
+          });
+          trace.responseSent(correlationId, {
+            statusCode: 200, tenantName: tenant?.name || null, tenantSlug: tenant?.slug || null,
+            tenantId: user.tenant_id, userId: user.id, userRole: user.role,
+            mode: 'cloud', dataSource: 'Supabase', hasJwt: !!response.token,
+            elapsedMs: getElapsedMs(),
+          });
+          
+          // FORENSIC TRACE — RESPONSE step
+          trace3.enter('RESPONSE', { status: 200, hasToken: !!response.token });
+          trace3.exit('RESPONSE', { status: 200 });
+          trace3.flush();
+          
+          trace.end(correlationId);
+          return res.json(response);
         }
       }
-
-      return res.status(401).json({
-        error: 'INVALID_CREDENTIALS',
-        message: 'Code PIN incorrect.',
+      
+      trace3.fail('DECIDE', { reason: 'no_valid_pin' });
+      
+      trace.decision(correlationId, {
+        outcome: 'FAILURE', reason: 'Aucun candidat n\'a fourni un PIN valide',
+        tenantName: null, userId: null, userRole: null,
       });
+      trace.responseSent(correlationId, {
+        statusCode: 401, tenantName: null, tenantSlug: null, tenantId: null,
+        userId: null, userRole: null, mode: 'cloud', dataSource: 'Supabase', hasJwt: false,
+            elapsedMs: getElapsedMs(),
+      });
+      trace.end(correlationId);
+      trace3.flush();
+      return res.status(401).json({ error: 'INVALID_CREDENTIALS', message: 'Code PIN incorrect.' });
     }
 
-    // ── Local SQLite path ──
+    // ── LOCAL SQLITE PATH ───────────────────────────────────────────────────
+    trace.stepStart(correlationId, 'Recherche du tenant (SQLite)');
     let candidates: any[];
-
     if (tenant_slug) {
-      // Essayer de trouver le tenant avec plusieurs stratégies (case-insensitive)
       let tenant = getLocalTenantBySlug(tenant_slug);
-      
-      // Si pas trouvé exactement, essayer en minuscules
       if (!tenant) {
+        trace.tenantSearch(correlationId, 1, { method: 'slug exact', field: 'slug', value: tenant_slug, results: 0, found: false });
         tenant = getLocalTenantBySlug(tenant_slug.toLowerCase());
+        if (tenant) trace.tenantSearch(correlationId, 2, { method: 'slug lowercase', field: 'slug', value: tenant_slug.toLowerCase(), results: 1, found: true, tenantId: tenant.id, tenantName: tenant.name });
+      } else {
+        trace.tenantSearch(correlationId, 1, { method: 'slug exact', field: 'slug', value: tenant_slug, results: 1, found: true, tenantId: tenant.id, tenantName: tenant.name });
       }
-      
-      // Si toujours pas trouvé, essayer par nom ou business_id
       if (!tenant) {
         try {
           const db = require('../db/database').default;
           if (db) {
             tenant = db.prepare('SELECT * FROM tenants WHERE LOWER(name) = LOWER(?) OR business_id = ?').get(tenant_slug, tenant_slug);
+            if (tenant) trace.tenantSearch(correlationId, 3, { method: 'name ou business_id', field: 'name', value: tenant_slug, results: 1, found: true, tenantId: tenant.id, tenantName: tenant.name });
           }
         } catch {}
       }
-      
       if (!tenant) {
-        return res.status(404).json({
-          error: 'TENANT_NOT_FOUND',
-          message: 'Établissement introuvable.',
-        });
+        trace.tenantResolved(correlationId, { resolved: false, filterApplied: false });
+        trace.stepEnd(correlationId, 'Recherche du tenant (SQLite)', 'NON TROUVÉ');
+        trace.decision(correlationId, { outcome: 'FAILURE', reason: 'Tenant introuvable dans SQLite', tenantName: null, userId: null, userRole: null });
+        trace.responseSent(correlationId, { statusCode: 404, tenantName: null, tenantSlug: null, tenantId: null, userId: null, userRole: null, mode: 'local', dataSource: 'SQLite', hasJwt: false, elapsedMs: getElapsedMs() });
+        trace.end(correlationId);
+        return res.status(404).json({ error: 'TENANT_NOT_FOUND', message: 'Établissement introuvable.' });
       }
-
+      trace.tenantResolved(correlationId, { resolved: true, tenantId: tenant.id, tenantName: tenant.name, tenantSlug: tenant.slug, filterApplied: true });
+      trace.stepEnd(correlationId, 'Recherche du tenant (SQLite)', `${tenant.name}`);
       const db = require('../db/database').default;
-      if (identity) {
-        candidates = db.prepare(`
-          SELECT u.*, t.name as tenant_name, t.slug as tenant_slug, t.status
-          FROM users u LEFT JOIN tenants t ON u.tenant_id = t.id
-          WHERE u.tenant_id = ? AND (u.username = ? OR u.phone = ?) AND u.is_active = 1
-        `).all(tenant.id, identity, identity);
-      } else {
-        candidates = db.prepare(`
-          SELECT u.*, t.name as tenant_name, t.slug as tenant_slug, t.status
-          FROM users u LEFT JOIN tenants t ON u.tenant_id = t.id
-          WHERE u.tenant_id = ? AND u.is_active = 1
-        `).all(tenant.id);
-      }
+      candidates = identity
+        ? db.prepare('SELECT u.*, t.name as tenant_name, t.slug as tenant_slug, t.status FROM users u LEFT JOIN tenants t ON u.tenant_id = t.id WHERE u.tenant_id = ? AND (u.username = ? OR u.phone = ?) AND u.is_active = 1').all(tenant.id, identity, identity)
+        : db.prepare('SELECT u.*, t.name as tenant_name, t.slug as tenant_slug, t.status FROM users u LEFT JOIN tenants t ON u.tenant_id = t.id WHERE u.tenant_id = ? AND u.is_active = 1').all(tenant.id);
     } else {
       candidates = getLocalUserByPin(pin_code, identity);
     }
+    trace.log(correlationId, 'USER', `${candidates.length} candidat(s) dans SQLite`);
 
-    for (const user of candidates) {
-      if (user.pin_code && verifyPin(pin_code, user.pin_code)) {
-        console.log(`[Auth] PIN login success (local): ${user.full_name} (${user.role})`);
-        return res.json(buildAuthResponse(user, { name: user.tenant_name, slug: user.tenant_slug, status: user.status }, null));
+    for (let i = 0; i < candidates.length; i++) {
+      const user = candidates[i];
+      const idMatches = identity ? (user.username === identity || user.phone === identity) : true;
+      let pinFormat = 'inconnu', storedPinPrefix = '(null)';
+      if (user.pin_code) {
+        if (user.pin_code.startsWith('$2')) { pinFormat = 'bcrypt'; storedPinPrefix = user.pin_code.substring(0, 7) + '***'; }
+        else if (user.pin_code.includes(':')) { pinFormat = 'legacy_salt_hash'; storedPinPrefix = user.pin_code.split(':')[0] + ':***'; }
+        else { pinFormat = 'plain_text'; storedPinPrefix = '***'; }
+      }
+      const pinResult = user.pin_code ? verifyPin(pin_code, user.pin_code) : false;
+      const criteria: EvaluationCriterion[] = [
+        { name: 'identity_match', passed: idMatches },
+        { name: 'has_pin', passed: !!user.pin_code },
+        { name: 'is_active', passed: user.is_active === true || user.is_active === 1 },
+        { name: 'pin_verified', passed: pinResult },
+      ];
+      const decision: Decision = pinResult ? 'ACCEPTED' : 'REJECTED';
+      trace.userCandidate(correlationId, i + 1, {
+        userId: user.id, username: user.username, role: user.role,
+        tenantId: user.tenant_id, pinFormat, criteria, decision,
+        rejectReason: !user.pin_code ? 'pas de PIN stocké' : !pinResult ? 'PIN incorrect' : undefined,
+      });
+      if (user.pin_code) {
+        trace.pinVerify(correlationId, {
+          storedPrefix: storedPinPrefix,
+          verifyMethod: pinFormat === 'bcrypt' ? 'bcrypt.compareSync' : pinFormat === 'legacy_salt_hash' ? 'pbkdf2' : '=== (plain text)',
+          result: pinResult,
+        });
+      }
+      if (pinResult) {
+        const response = buildAuthResponse(user, { name: user.tenant_name, slug: user.tenant_slug, status: user.status }, null);
+        trace.jwtGenerated(correlationId, {
+          generated: !!response.token, tokenPrefix: response.token?.substring(0, 20),
+          payloadSub: user.id, payloadTenantId: user.tenant_id, payloadRole: user.role,
+        });
+        trace.decision(correlationId, {
+          outcome: 'SUCCESS', reason: 'PIN vérifié avec succès (SQLite)',
+          tenantName: user.tenant_name || null, userId: user.id, userRole: user.role,
+        });
+        trace.responseSent(correlationId, {
+          statusCode: 200, tenantName: user.tenant_name || null, tenantSlug: user.tenant_slug || null,
+          tenantId: user.tenant_id, userId: user.id, userRole: user.role,
+          mode: 'local', dataSource: 'SQLite', hasJwt: !!response.token,
+          elapsedMs: getElapsedMs(),
+        });
+        trace.end(correlationId);
+        return res.json(response);
       }
     }
-
-    return res.status(401).json({
-      error: 'INVALID_CREDENTIALS',
-      message: 'Code PIN incorrect.',
+    trace.decision(correlationId, {
+      outcome: 'FAILURE', reason: 'Aucun candidat SQLite n\'a fourni un PIN valide',
+      tenantName: null, userId: null, userRole: null,
     });
+    trace.responseSent(correlationId, {
+      statusCode: 401, tenantName: null, tenantSlug: null, tenantId: null,
+      userId: null, userRole: null, mode: 'local', dataSource: 'SQLite', hasJwt: false,
+      elapsedMs: getElapsedMs(),
+    });
+    trace.end(correlationId);
+    return res.status(401).json({ error: 'INVALID_CREDENTIALS', message: 'Code PIN incorrect.' });
   } catch (e: any) {
+    trace.error(correlationId, 'Erreur fatale login/pin', e);
+    trace.responseSent(correlationId, {
+      statusCode: 500, tenantName: null, tenantSlug: null, tenantId: null,
+      userId: null, userRole: null, mode: 'unknown', dataSource: 'unknown', hasJwt: false,
+      elapsedMs: getElapsedMs(),
+    });
+    trace.end(correlationId);
     console.error('[Auth] PIN login error:', e);
     return res.status(500).json({ error: 'LOGIN_FAILED', message: 'Erreur interne du serveur.' });
   }
@@ -643,7 +809,14 @@ router.post('/setup', authRateLimit, async (req: Request, res: Response) => {
       });
     }
 
-    // Create user
+    // Create user — WITH WRITE INTERCEPTION
+    const writeInterceptor = WriteInterceptor.getInstance();
+    writeInterceptor.verifyWritePermission({
+      operation: 'insert',
+      table: 'users',
+      caller: 'auth.service.ts/admin_setup'
+    });
+    
     const passwordHash = hashPassword(password);
     const pinHash = hashPin(pin_code);
     const { data: user, error: uErr } = await supabase.from('users').insert([{
@@ -668,14 +841,26 @@ router.post('/setup', authRateLimit, async (req: Request, res: Response) => {
       throw uErr;
     }
 
-    // Add as tenant_user
+    // Add as tenant_user — WITH WRITE INTERCEPTION
+    writeInterceptor.verifyWritePermission({
+      operation: 'insert',
+      table: 'tenant_users',
+      caller: 'auth.service.ts/admin_setup'
+    });
+    
     const { error: tuErr } = await supabase.from('tenant_users').insert([{
       tenant_id, user_id: user.id, role: 'admin', is_default: true, is_active: true,
       joined_at: new Date().toISOString(),
     }]);
     if (tuErr) console.error('[Auth] tenant_user insert warning:', tuErr.message);
 
-    // Audit log
+    // Audit log — WITH WRITE INTERCEPTION
+    writeInterceptor.verifyWritePermission({
+      operation: 'insert',
+      table: 'tenant_audit_log',
+      caller: 'auth.service.ts/admin_setup'
+    });
+    
     await supabase.from('tenant_audit_log').insert([{
       tenant_id, actor_user_id: user.id, action: 'auth.admin_setup',
       entity_type: 'tenant', entity_id: tenant_id,
@@ -830,6 +1015,15 @@ router.get('/status', (_req: Request, res: Response) => {
 // ALWAYS returns a valid response — falls back to single-tenant mode if needed
 router.get('/tenants/:slug', async (req: Request, res: Response) => {
   const slug = String(req.params.slug || '');
+  
+  console.log('[Auth] GET /tenants/:slug - Start', {
+    slug,
+    headers: {
+      host: req.headers.host,
+      origin: req.headers.origin,
+      'x-runtime-mode': req.headers['x-runtime-mode'],
+    }
+  });
 
   // Default tenant info (single-tenant fallback)
   const defaultTenant = {

@@ -14,6 +14,8 @@ import { Link, useSearchParams, useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../../stores/useAuthStore';
 import { APP_NAME } from '../../lib/app-config';
 import { api } from '../../lib/api-client';
+import { RuntimeContext } from '../../core/runtime/runtime-context';
+import { AuthService } from '../../core/auth/AuthService';
 import { Mail, Lock, Eye, EyeOff, Building2, ArrowRight, ArrowLeft, User, Loader2, Globe } from 'lucide-react';
 import en from '../../i18n/locales/en.json';
 import fr from '../../i18n/locales/fr.json';
@@ -358,10 +360,13 @@ const LoginPage = () => {
     if (!slug.trim()) return;
     setLoadingTenant(true);
     setTenantError('');
-    try {
-      const data = await api.auth.getTenant(slug.trim().toLowerCase()) as any;
 
-      setTenant(data as TenantInfo);
+    try {
+      // Use AuthService for all modes (LOCAL/CLOUD/HYBRID)
+      const authService = AuthService.getInstance();
+      const tenantData = await authService.resolveTenant(slug.trim().toLowerCase());
+      
+      setTenant(tenantData);
       setStep('credentials');
       setTimeout(() => {
         if (mode === 'staff') pinInputRef.current?.focus();
@@ -389,14 +394,18 @@ const LoginPage = () => {
     setError('');
 
     try {
-      const success = await loginEmail(email, password);
-      if (success) {
-        navigate('/dashboard');
-      } else {
-        setShaking(true);
-        setError(t('login.invalidCredentials'));
-        setTimeout(() => setShaking(false), 450);
-      }
+      // Use AuthService for all modes (LOCAL/CLOUD/HYBRID)
+      const authService = AuthService.getInstance();
+      const result = await authService.loginAdmin(email, password, tenantSlug);
+      
+      // Set auth token
+      const { setAuthToken } = await import('../../lib/api-client');
+      setAuthToken(result.token);
+      
+      // Update auth store
+      useAuthStore.getState().setUser(result.user);
+      
+      navigate('/dashboard');
     } catch (e: any) {
       setShaking(true);
       setError(e.message || t('login.invalidCredentials'));
@@ -404,7 +413,7 @@ const LoginPage = () => {
     } finally {
       setSubmitting(false);
     }
-  }, [email, password, isServerHealthy, submitting, loginEmail, navigate, t]);
+  }, [email, password, isServerHealthy, submitting, navigate, t, tenantSlug]);
 
   // ── Staff login (PIN) ───────────────────────────────────────────────────────
   const handlePinLogin = useCallback(async () => {
@@ -413,15 +422,18 @@ const LoginPage = () => {
     setError('');
 
     try {
-      const success = await loginPin(pin, identity || undefined, tenantSlug || undefined);
-      if (success) {
-        navigate('/dashboard');
-      } else {
-        setShaking(true);
-        setError(t('login.accessDenied'));
-        setPin('');
-        setTimeout(() => setShaking(false), 450);
-      }
+      // Use AuthService for all modes (LOCAL/CLOUD/HYBRID)
+      const authService = AuthService.getInstance();
+      const result = await authService.loginStaff(pin, identity || undefined, tenantSlug);
+      
+      // Set auth token
+      const { setAuthToken } = await import('../../lib/api-client');
+      setAuthToken(result.token);
+      
+      // Update auth store
+      useAuthStore.getState().setUser(result.user);
+      
+      navigate('/dashboard');
     } catch (e: any) {
       setShaking(true);
       setError(e.message || t('login.accessDenied'));
@@ -430,7 +442,7 @@ const LoginPage = () => {
     } finally {
       setSubmitting(false);
     }
-  }, [pin, identity, tenantSlug, isServerHealthy, submitting, loginPin, navigate, t]);
+  }, [pin, identity, tenantSlug, isServerHealthy, submitting, navigate, t]);
 
   // ── Auto-submit PIN when 4 digits entered ────────────────────────────────────
   useEffect(() => {

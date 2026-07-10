@@ -1,6 +1,8 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import { api, setAuthToken, clearAuthToken } from '../lib/api-client';
+import { api, setAuthToken, clearAuthToken, getToken, getTokenClaims } from '../lib/api-client';
+import { trace } from '../lib/runtime-tracer';
+import { RuntimeContext } from '../core/runtime/runtime-context';
 
 export type UserRole = 'super_admin' | 'owner' | 'admin' | 'manager' | 'cashier' | 'waiter';
 
@@ -53,11 +55,20 @@ export const useAuthStore = create<AuthStore>()(
       loginTimestamp: null,
 
       checkServer: async () => {
+        // LOCAL mode: no network call, always healthy
+        if (RuntimeContext.getInstance().isLocal) {
+          set({ isServerHealthy: true });
+          return;
+        }
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 2000);
         try {
-          const response = await fetch('/api/auth/status');
+          const response = await fetch('/api/auth/status', { signal: controller.signal });
           set({ isServerHealthy: response.ok });
         } catch {
           set({ isServerHealthy: false });
+        } finally {
+          clearTimeout(timeout);
         }
       },
 
@@ -81,16 +92,42 @@ export const useAuthStore = create<AuthStore>()(
       // ── Staff login (tenant_slug + PIN → JWT) ─────────────────────────────
       loginPin: async (pin, identity, tenant_slug) => {
         try {
+          console.log('[FORENSIC] useAuthStore.loginPin - Appel API:', {
+            pin_length: pin?.length,
+            identity: identity || '(non fourni)',
+            tenant_slug: tenant_slug || '(non fourni)',
+            timestamp: new Date().toISOString(),
+          });
           const resp = await api.auth.loginPin(pin, identity, tenant_slug);
+          console.log('[FORENSIC] useAuthStore.loginPin - Réponse API brute:', {
+            hasToken: !!resp?.token,
+            token_prefix: resp?.token ? resp.token.substring(0, 20) + '...' : null,
+            user: resp?.user ? {
+              id: resp.user.id,
+              full_name: resp.user.full_name,
+              role: resp.user.role,
+              tenant_id: resp.user.tenant_id,
+              tenant_name: resp.user.tenant_name,
+              tenant_slug: resp.user.tenant_slug,
+            } : null,
+            timestamp: new Date().toISOString(),
+          });
           const { token, user } = resp;
 
           setAuthToken(token);
           set({ user, token, isAuthenticated: true, isInitialized: true, loginTimestamp: Date.now() });
 
-          console.log(`[AuthStore] PIN login success: ${user.full_name} (${user.role}) → tenant ${user.tenant_name}`);
+          trace.setUser('loginPin', user);
+          console.log(`[FORENSIC] useAuthStore.loginPin - SUCCÈS: user.tenant_name = "${user?.tenant_name}"`);
+          console.log(`[FORENSIC] useAuthStore.loginPin - Le frontend affichera: "${user?.tenant_name || '(fallback vers APP_NAME)'}"`);
           return true;
         } catch (error: any) {
-          console.warn('[AuthStore] PIN login failed:', error.message);
+          console.warn('[FORENSIC] useAuthStore.loginPin - ÉCHEC:', {
+            message: error.message,
+            status: error.status,
+            responseBody: error.responseBody,
+            timestamp: new Date().toISOString(),
+          });
           return false;
         }
       },
@@ -108,8 +145,25 @@ export const useAuthStore = create<AuthStore>()(
       },
 
       setUser: (user) => {
+        trace.setUser('setUser', user);
         if (user) {
-          set({ user, isAuthenticated: true, isInitialized: true });
+          // Re-read token from storage so the persisted state (partialize includes
+          // `token`) keeps it instead of overwriting it with null on persist.
+          const token = getToken();
+          // Fallback: derive tenant identity from the JWT claims if the user
+          // object is missing it (e.g. some login paths). The token always
+          // carries the resolved tenant_name/tenant_slug.
+          const claims = getTokenClaims();
+          set({
+            user: {
+              ...user,
+              tenant_name: user.tenant_name ?? claims?.tenant_name ?? undefined,
+              tenant_slug: user.tenant_slug ?? claims?.tenant_slug ?? undefined,
+            },
+            token,
+            isAuthenticated: true,
+            isInitialized: true,
+          });
         } else {
           set({ user: null, token: null, isAuthenticated: false });
         }
@@ -117,10 +171,20 @@ export const useAuthStore = create<AuthStore>()(
 
       // ── Refresh user profile from server (using JWT) ──────────────────────
       refreshProfile: async () => {
+        trace.refreshProfile('start');
         try {
           const user = await api.auth.me();
-          set({ user });
+          trace.refreshProfile('response', user);
+          const claims = getTokenClaims();
+          set({
+            user: {
+              ...user,
+              tenant_name: user.tenant_name ?? claims?.tenant_name ?? undefined,
+              tenant_slug: user.tenant_slug ?? claims?.tenant_slug ?? undefined,
+            },
+          });
         } catch {
+          trace.refreshProfile('error');
           // If /me fails with 401, the API client already clears the token
           // and dispatches 'auth:token-expired' event
         }
@@ -128,12 +192,18 @@ export const useAuthStore = create<AuthStore>()(
     }),
     {
       name: 'ekala-auth',
-      partialize: (state) => ({
-        user: state.user,
-        token: state.token,
-        isAuthenticated: state.isAuthenticated,
-        loginTimestamp: state.loginTimestamp,
-      }),
+      partialize: (state) => {
+        trace.persistSave(state);
+        return {
+          user: state.user,
+          token: state.token,
+          isAuthenticated: state.isAuthenticated,
+          loginTimestamp: state.loginTimestamp,
+        };
+      },
+      onRehydrateStorage: () => (state) => {
+        trace.persistHydrate(state);
+      },
     }
   )
 );

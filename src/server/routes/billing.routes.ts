@@ -15,8 +15,14 @@ import { getSubscriptionStatus } from '../middleware/subscription-guard';
 import { requireJwtAuth } from '../middleware/jwt-auth';
 import { db } from '../db/database';
 import { queueSyncChange } from '../../sync/sync-helper';
-import { sendEmailDirect, loadRawSettings } from '../services/notification.service';
-import { buildVoucherGeneratedEmail, buildVoucherExpiredEmail } from '../services/email-templates';
+import { sendEmailDirect, loadRawSettings, getTenantName } from '../services/notification.service';
+import { createNotification } from '../services/notification.repository';
+import { getTenantSubscriptionEmails } from '../services/subscription-recipients.service';
+import {
+  buildVoucherGeneratedEmail,
+  buildVoucherExpiredEmail,
+  buildManualPaymentInstructionsEmail,
+} from '../services/email-templates';
 
 function getSupabase(): SupabaseClient | null {
   if (!env.SUPABASE_URL || !env.SUPABASE_SERVICE_ROLE_KEY) return null;
@@ -372,15 +378,34 @@ let voucherCode = '';
       return res.status(503).json({ error: 'SUPABASE_NOT_CONFIGURED' });
     }
 
-    // Envoyer email (best-effort)
+    // Notification dans l'application (retour immédiat pour le locataire)
+    try {
+      createNotification({
+        type: 'subscription_request_received',
+        title: 'Demande d\'abonnement reçue',
+        message: `Votre demande pour le forfait ${plan.name} est enregistrée. Transférez ${currency} ${(amountCents / 100).toLocaleString('fr-FR', { minimumFractionDigits: 2 })} via Mobile Money et appelez le +260767043875 pour confirmer. Réf. : ${voucherCode}`,
+        priority: 'high',
+        notification_type: 'subscription',
+        metadata: { planId, planName: plan.name, amountCents, currency, referenceCode: voucherCode, requestId: localId },
+        link: '/settings/subscription',
+        user_id: Number(req.user?.sub) || undefined,
+        tenant_id: tenantId,
+        role: String(req.user?.role || 'owner'),
+      });
+    } catch (notifErr) {
+      console.error('[Billing] Notification error (request-voucher):', notifErr);
+    }
+
+    // Email de procédure de paiement manuel — uniquement aux owner/admin/manager du tenant
     try {
       const settingsRaw = loadRawSettings();
-      const tenantEmail = req.user?.email || null;
-      if (tenantEmail) {
+      const tenantName = getTenantName(tenantId);
+      const recipients = await getTenantSubscriptionEmails(tenantId);
+      for (const recipient of recipients) {
         void sendEmailDirect(
-          `[Great Olive] Code de paiement généré — ${plan.name}`,
-          buildVoucherGeneratedEmail(voucherCode, plan, amountCents, currency, verificationDeadline, expiresAt),
-          settingsRaw, tenantEmail,
+          `[${tenantName}] Procédure de paiement — ${plan.name}`,
+          buildManualPaymentInstructionsEmail({ referenceCode: voucherCode, planName: plan.name, amountCents, currency, businessName: tenantName }),
+          settingsRaw, recipient,
         );
       }
     } catch (mailErr) {
@@ -390,6 +415,7 @@ let voucherCode = '';
     res.json({
       success: true,
       voucherCode,
+      referenceCode: voucherCode,
       amount: { cents: amountCents, currency },
       plan: { id: plan.id, code: plan.code, name: plan.name, period: plan.period, duration_days: plan.duration_days },
     });
@@ -433,9 +459,10 @@ router.post('/vouchers/request', async (req: Request, res: Response) => {
 
     if (vErr || !inserted) return res.status(500).json({ error: vErr?.message || 'Erreur création demande' });
 
+    const tenantName = getTenantName(Number(tenant_id || 0));
     void sendEmailDirect(
-      `[Great Olive] Code de paiement généré — ${plan.name}`,
-      buildVoucherGeneratedEmail(voucherCode, plan, Number(plan.price_cents), plan.currency || 'ZMW', verificationDeadline, expiresAt),
+      `[${tenantName}] Code de paiement généré — ${plan.name}`,
+      buildVoucherGeneratedEmail(voucherCode, plan, Number(plan.price_cents), plan.currency || 'ZMW', verificationDeadline, expiresAt, tenantName),
       loadRawSettings(), email,
     );
 
@@ -512,6 +539,37 @@ router.post('/payment-sent', requireJwtAuth, async (req: any, res: any) => {
       await supabase.from(tableName).update(updates).eq('id', row.id);
     }
 
+    // Notifier les administrateurs qu'un paiement a été déclaré (à vérifier)
+    try {
+      const planName = (() => {
+        if (localDb) {
+          const p = localDb.prepare('SELECT name FROM plans WHERE id = ?').get(row.plan_id) as any;
+          return p?.name || `Plan #${row.plan_id}`;
+        }
+        return `Plan #${row.plan_id}`;
+      })();
+      const tenantName = getTenantName(tenantId);
+      const admins: { id: number }[] = localDb
+        ? (localDb.prepare("SELECT id FROM users WHERE tenant_id = ? AND role IN ('owner','admin')").all(tenantId) as any[])
+        : [];
+      for (const admin of admins) {
+        createNotification({
+          type: 'subscription_payment_declared',
+          title: 'Paiement déclaré — à vérifier',
+          message: `Le locataire ${tenantName} a déclaré un paiement pour « ${planName} » (réf. ${row.voucher_code}). Vérifiez la réception des fonds.`,
+          priority: 'high',
+          notification_type: 'subscription',
+          metadata: { requestId: row.id, voucherCode: row.voucher_code, tenantId, planId: row.plan_id },
+          link: '/admin/vouchers',
+          user_id: admin.id,
+          tenant_id: tenantId,
+          role: 'admin',
+        });
+      }
+    } catch (notifErr) {
+      console.error('[Billing] Notification error (payment-sent):', notifErr);
+    }
+
     res.json({ success: true, status: 'payment_sent', voucherCode: row.voucher_code });
   } catch (e: any) {
     console.error('[Billing] payment-sent error:', e);
@@ -519,7 +577,25 @@ router.post('/payment-sent', requireJwtAuth, async (req: any, res: any) => {
   }
 });
 
-// GET /api/billing/plans — Liste des plans disponibles
+// ── Helpers partagés ───────────────────────────────────────────────────────────
+function formatPlanForClient(p: any): any {
+  if (!p) return p;
+  const period = p.period;
+  const per =
+    period === 'weekly' ? '/ semaine'
+    : period === 'monthly' ? '/ mois'
+    : period === 'annual' ? '/ an'
+    : period === 'trial' ? 'essai'
+    : period || '';
+  return {
+    ...p,
+    price_display: ((Number(p.price_cents) || 0) / 100).toFixed(2),
+    per,
+    is_trial: period === 'trial',
+  };
+}
+
+// GET /api/billing/plans — Liste des plans disponibles (publiques + actifs)
 router.get('/plans', requireJwtAuth, async (req: any, res: any) => {
   try {
     const supabase = getSupabase();
@@ -538,7 +614,7 @@ router.get('/plans', requireJwtAuth, async (req: any, res: any) => {
         return res.status(500).json({ error: error.message });
       }
 
-      return res.json({ plans: data || [] });
+      return res.json({ plans: (data || []).map(formatPlanForClient) });
     }
 
     if (localDb) {
@@ -548,12 +624,62 @@ router.get('/plans', requireJwtAuth, async (req: any, res: any) => {
         ORDER BY sort_order ASC
       `).all() as any[];
 
-      return res.json({ plans });
+      return res.json({ plans: plans.map(formatPlanForClient) });
     }
 
     return res.status(503).json({ error: 'SUPABASE_NOT_CONFIGURED' });
   } catch (e: any) {
     console.error('[Billing] plans error:', e);
+    res.status(500).json({ error: e?.message || 'Erreur serveur' });
+  }
+});
+
+// GET /api/billing/subscription — Détail de l'abonnement du tenant courant (local)
+// Renvoie le même format que l'ancien endpoint SaaS /tenants/:id pour rester
+// compatible avec la page de facturation côté tenant.
+router.get('/subscription', requireJwtAuth, async (req: any, res: any) => {
+  try {
+    const tenantId = Number(req.user?.tenant_id);
+    if (!tenantId) return res.status(401).json({ error: 'UNAUTHORIZED', message: 'Authentification requise.' });
+
+    const localDb = db;
+    if (!localDb) return res.status(503).json({ error: 'DB_UNAVAILABLE' });
+
+    const tenant = localDb.prepare('SELECT * FROM tenants WHERE id = ?').get(tenantId) as any;
+    if (!tenant) return res.status(404).json({ error: 'TENANT_NOT_FOUND' });
+
+    const subs = localDb
+      .prepare('SELECT * FROM subscriptions WHERE tenant_id = ? ORDER BY created_at DESC')
+      .all(tenantId) as any[];
+
+    const subscriptions = subs.map((s: any) => {
+      const p = localDb.prepare('SELECT code, name, price_cents, currency, period, max_users, max_tables, max_products, max_orders_per_month FROM plans WHERE id = ?').get(s.plan_id) as any;
+      return {
+        ...s,
+        plan: p
+          ? {
+              code: p.code,
+              name: p.name,
+              price_cents: p.price_cents,
+              currency: p.currency,
+              period: p.period,
+              max_users: p.max_users,
+              max_tables: p.max_tables,
+              max_products: p.max_products,
+              max_orders_per_month: p.max_orders_per_month,
+              is_trial: p.period === 'trial',
+            }
+          : null,
+      };
+    });
+
+    const payments = localDb
+      .prepare('SELECT * FROM payments WHERE tenant_id = ? ORDER BY created_at DESC LIMIT 50')
+      .all(tenantId) as any[];
+
+    res.json({ tenant, subscriptions, payments });
+  } catch (e: any) {
+    console.error('[Billing] subscription error:', e);
     res.status(500).json({ error: e?.message || 'Erreur serveur' });
   }
 });

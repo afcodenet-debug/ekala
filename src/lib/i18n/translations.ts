@@ -60,6 +60,8 @@ const T = {
     mySubscription:  d('My Subscription',    'Mon Abonnement',           'Minha Assinatura'),
     notifications:   d('Notifications',      'Notifications',            'Notificações'),
     daysRemaining:   d('{days} days remaining', '{days} jours restants', '{days} dias restantes'),
+    daysLeft:        d('Days left',            'Jours restants',          'Dias restantes'),
+    daysShort:       d('days',                 'jrs',                     'dias'),
   },
 
   // ── dashboard ───────────────────────────────────────────────────────
@@ -464,8 +466,14 @@ const T = {
      // Full Audit View
      fullMovementHistory: d('Complete Movement Audit Log', 'Journal Complet des Mouvements', 'Log Completo de Movimentos'),
      records:            d('records',               'enregistrements',        'registros'),
-     noMovements:        d('No inventory movements recorded yet', 'Aucun mouvement de stock enregistré', 'Nenhum movimento de stock registrado'),
-   },
+      noMovements:        d('No inventory movements recorded yet', 'Aucun mouvement de stock enregistré', 'Nenhum movimento de stock registrado'),
+      oldStock:           d('Old Stock',             'Ancien Stock',          'Stock Antigo'),
+      newStock:           d('New Stock',             'Nouveau Stock',         'Novo Stock'),
+      showing:            d('Showing',               'Affichage',             'Exibindo'),
+      rowsPerPage:        d('Rows per page',         'Lignes par page',       'Linhas por página'),
+      prev:               d('Prev',                  'Préc',                  'Ant'),
+      next:               d('Next',                  'Suivant',               'Próx'),
+    },
 
   // ── categories ──────────────────────────────────────────────────────
   categories: {
@@ -1093,6 +1101,104 @@ const T = {
         trialDescription: d('7 days to test all features', '7 jours pour tester toutes les fonctionnalités', '7 dias para testar todas as funcionalidades'),
       },
     },
+
+    // ── Subscription Studio (My Subscription) ───────────────────────
+    studio: {
+        title: d('Subscription Studio', 'Studio d\'Abonnement', 'Estúdio de Assinatura'),
+        subtitle: d('Manage, generate and monitor your subscription', 'Gérez, générez et suivez votre abonnement', 'Gira, gere e monitore a sua assinatura'),
+        refresh: d('Refresh', 'Actualiser', 'Atualizar'),
+        tabs: {
+          overview: d('Overview', 'Aperçu', 'Visão Geral'),
+          generate: d('Generate', 'Générer', 'Gerar'),
+          requests: d('My requests', 'Mes demandes', 'Minhas solicitações'),
+        },
+        hero: {
+          days: d('days', 'jours', 'dias'),
+          noPlan: d('No plan', 'Aucun forfait', 'Nenhum plano'),
+          renewalIn: d('Renews in {days} days', 'Renouvellement dans {days} jours', 'Renova em {days} dias'),
+          expired: d('Subscription expired', 'Abonnement expiré', 'Assinatura expirada'),
+        },
+        usage: {
+          title: d('Usage & limits', 'Utilisation & limites', 'Uso & limites'),
+          users: d('Users', 'Utilisateurs', 'Usuários'),
+          branches: d('Branches', 'Branches', 'Filiais'),
+          products: d('Products', 'Produits', 'Produtos'),
+        },
+        overview: {
+          ctaGenerate: d('Generate a subscription', 'Générer un abonnement', 'Gerar uma assinatura'),
+          factsTitle: d('Subscription details', 'Détails de l\'abonnement', 'Detalhes da assinatura'),
+          factPlan: d('Plan', 'Forfait', 'Plano'),
+          factStatus: d('Status', 'Statut', 'Status'),
+          factCycle: d('Billing cycle', 'Cycle de facturation', 'Ciclo de faturamento'),
+          factExpires: d('Next renewal', 'Prochain renouvellement', 'Próxima renovação'),
+        },
+        locked: {
+          title: d('Restricted', 'Restreint', 'Restrito'),
+          message: d('Only the owner or an admin can generate and manage subscriptions.', 'Seul le propriétaire ou un administrateur peut générer et gérer les abonnements.', 'Apenas o proprietário ou um administrador pode gerar e gerir assinaturas.'),
+        },
+        generate: {
+          subtitle: d('Choose a plan to generate a subscription. A payment reference is created for your tenant to complete activation.', 'Choisissez un forfait pour générer un abonnement. Une référence de paiement est créée pour votre tenant afin de finaliser l\'activation.', 'Escolha um plano para gerar uma assinatura. Uma referência de pagamento é criada para o seu tenant para concluir a ativação.'),
+          noPlans: d('No plans available at the moment.', 'Aucun forfait disponible pour le moment.', 'Nenhum plano disponível de momento.'),
+        },
+        plans: {
+          recommended: d('RECOMMENDED', 'RECOMMANDÉ', 'RECOMENDADO'),
+          current: d('CURRENT', 'ACTUEL', 'ATUAL'),
+          generate: d('Generate subscription', 'Générer l\'abonnement', 'Gerar assinatura'),
+          currentPlanActive: d('Current plan', 'Forfait actuel', 'Plano atual'),
+          freeTrial: d('Free Trial', 'Essai Gratuit', 'Teste Grátis'),
+          starterWeekly: d('Starter Weekly', 'Starter Hebdo', 'Starter Semanal'),
+          starterMonthly: d('Starter Monthly', 'Starter Mensuel', 'Starter Mensal'),
+          starterAnnual: d('Starter Annual', 'Starter Annuel', 'Starter Anual'),
+          proMonthly: d('Pro Monthly', 'Pro Mensuel', 'Pro Mensal'),
+          proAnnual: d('Pro Annual', 'Pro Annuel', 'Pro Anual'),
+          growth: d('Growth', 'Pour les restaurants en croissance', 'Para restaurantes em crescimento'),
+          trialDescription: d('7 days to test all features', '7 jours pour tester toutes les fonctionnalités', '7 dias para testar todas as funcionalidades'),
+          idealForTesting: d('Ideal for testing or small establishments', 'Idéal pour tester ou petits établissements', 'Ideal para testes ou pequenos estabelecimentos'),
+          forGrowth: d('For growing restaurants', 'Pour les restaurants en croissance', 'Para restaurantes em crescimento'),
+          forChains: d('For chains and large establishments', 'Pour les chaînes et grands établissements', 'Para cadeias e grandes estabelecimentos'),
+          save2Months: d('Save 2 months', 'Économisez 2 mois', 'Poupe 2 meses'),
+          save2MonthsPlusSupport: d('Save 2 months + priority support', 'Économisez 2 mois + support prioritaire', 'Poupe 2 meses + suporte prioritário'),
+        },
+        requests: {
+          empty: d('No subscription requests yet.', 'Aucune demande d\'abonnement pour le moment.', 'Nenhuma solicitação de assinatura ainda.'),
+          details: d('Details', 'Détails', 'Detalhes'),
+        },
+        wizard: {
+          confirmTitle: d('Confirm your plan', 'Confirmez votre forfait', 'Confirme o seu plano'),
+          paymentTitle: d('Complete your payment', 'Complétez votre paiement', 'Conclua o seu pagamento'),
+          plan: d('Plan', 'Forfait', 'Plano'),
+          price: d('Price', 'Prix', 'Preço'),
+          confirmHint: d('Generating this subscription creates a unique payment reference for your tenant.', 'Générer cet abonnement crée une référence de paiement unique pour votre tenant.', 'Gerar esta assinatura cria uma referência de pagamento única para o seu tenant.'),
+          requestBtn: d('Generate subscription', 'Générer l\'abonnement', 'Gerar assinatura'),
+          reference: d('Payment reference', 'Référence de paiement', 'Referência de pagamento'),
+          copy: d('Copy', 'Copier', 'Copiar'),
+          copied: d('Copied', 'Copié', 'Copiado'),
+          amount: d('Amount due', 'Montant à payer', 'Valor em dívida'),
+          transfer: d('Transfer the funds via Mobile Money', 'Transférez les fonds via Mobile Money', 'Transfira os fundos via Mobile Money'),
+          confirmCall: d('Confirm the transaction by phone', 'Confirmez la transaction par téléphone', 'Confirme a transação por telefone'),
+          call: d('Call', 'Appeler', 'Ligar'),
+          ivePaid: d('I have completed the payment', 'J\'ai effectué le paiement', 'Já efetuei o pagamento'),
+          doneTitle: d('Request submitted', 'Demande envoyée', 'Solicitação enviada'),
+          doneHint: d('Your payment is being verified by an administrator. You will be notified once your subscription is activated.', 'Votre paiement est en cours de vérification par un administrateur. Vous serez notifié dès l\'activation de votre abonnement.', 'O seu pagamento está a ser verificado por um administrador. Será notificado assim que a assinatura for ativada.'),
+          doneClose: d('Done', 'Terminé', 'Concluído'),
+        },
+        modal: {
+          details: d('Request details', 'Détails de la demande', 'Detalhes da solicitação'),
+          subtitle: d('Complete information', 'Informations complètes', 'Informações completas'),
+          code: d('Code', 'Code', 'Código'),
+          status: d('Status', 'Statut', 'Status'),
+          plan: d('Plan', 'Forfait', 'Plano'),
+          requestedAt: d('Requested on', 'Demandé le', 'Solicitado em'),
+          expiresAt: d('Expires on', 'Expire le', 'Expira em'),
+          markPaid: d('Mark payment sent', 'Marquer le paiement envoyé', 'Marcar pagamento enviado'),
+          close: d('Close', 'Fermer', 'Fechar'),
+        },
+        toast: {
+          requestCreated: d('Subscription request created', 'Demande d\'abonnement créée', 'Solicitação de assinatura criada'),
+          paymentSent: d('Payment marked as sent', 'Paiement marqué comme envoyé', 'Pagamento marcado como enviado'),
+          error: d('Something went wrong. Please try again.', 'Une erreur est survenue. Veuillez réessayer.', 'Algo correu mal. Tente novamente.'),
+        },
+      },
   },
 
   // ── qrMenu (Public QR Menu - default English) ─────────────────────────
@@ -1269,6 +1375,13 @@ const T = {
   },
 };
 
+/** The full translations record. */
+export const translations = {
+  ...T,
+  // Alias to support components using `subscription.*` keys (e.g. SubscriptionGate)
+  subscription: T.qrMenu.subscription,
+};
+
 /* ─── Type-safe access ──────────────────────────────────────────────── */
 
 /**
@@ -1277,10 +1390,3 @@ const T = {
  */
 export type TranslationNamespace = keyof typeof translations;
 export type TranslationEntry = _Dict;
-
-/** The full translations record. */
-export const translations = {
-  ...T,
-  // Alias to support components using `subscription.*` keys (e.g. SubscriptionGate)
-  subscription: T.qrMenu.subscription,
-};

@@ -1,12 +1,15 @@
-// === Environment loading ===
-// Load .env file in all modes (local, Render, production)
-// This ensures Supabase credentials are always available
+// ⭐ CRITICAL: Load dotenv FIRST, before ANY other imports that might use process.env
+// This ensures VITE_APP_MODE and other env vars are available when modules are loaded
 try {
   // @ts-ignore - dotenv may not be installed in production builds
   require('dotenv/config');
-} catch {
+  console.log('[RENDER BOOT] ✅ dotenv loaded FIRST (before any imports)');
+  console.log('[RENDER BOOT] VITE_APP_MODE:', process.env.VITE_APP_MODE);
+  console.log('[RENDER BOOT] NODE_ENV:', process.env.NODE_ENV);
+  console.log('[RENDER BOOT] RENDER_CLOUD_MODE:', process.env.RENDER_CLOUD_MODE);
+} catch (err) {
   // dotenv not present — this is expected on Render with npm ci --omit=dev
-  // In that case, environment variables must be set in the hosting platform
+  console.warn('[RENDER BOOT] ⚠️ dotenv not loaded:', err);
 }
 
 import express from 'express';
@@ -52,16 +55,52 @@ import { adminSubscriptionsRouter, adminVouchersRouter } from './routes/admin.su
 import platformRoutes from './routes/platform.routes';
 import syncDiagnosticRoutes from './routes/sync-diagnostic.routes';
 import platformAuthRoutes from './platform/platform-auth.routes';
+import platformPlansRouter from './routes/platform.plans.routes';
 import { bootstrapPlatform } from './platform/platform-bootstrap';
 import diagnosticRoutes from './routes/diagnostic-build.routes';
+import syncRoutes from './routes/sync';
+import traceRoutes from './routes/trace.routes';
+import eventStoreRoutes from './routes/event-store.routes';
+import { OutboxWorker } from './infrastructure/synchronization/outbox-worker';
+import runtimeHealthRoutes from './runtime/runtime-health.routes';
 
 const app = express();
+
+let bootError: any = null;
 
 // Initialize the local database schema (Forward migrations + safety net columns + seeding)
 // This is critical to ensure columns like remote_id exist before sync workers start.
 // IMPORTANT: Must be called BEFORE any other module imports db or uses database functions.
-initializeDatabase();
-console.log('[RENDER BOOT] Database schema initialized/verified.');
+try {
+  initializeDatabase();
+  console.log('[RENDER BOOT] Database schema initialized/verified.');
+
+  // LOCAL mode: trace_events is a debug-only table used to sync to Supabase.
+  // In LOCAL there is no Supabase, so it just accumulates stale rows (can reach
+  // hundreds of thousands) and bloat the DB. Clear it once at startup.
+  if (dataSource.isLocal()) {
+    try {
+      const db = require('./db/database').default;
+      const before = db.prepare('SELECT COUNT(*) AS c FROM traces_events').get().c;
+      if (before > 0) {
+        db.prepare('DELETE FROM traces_events').run();
+        console.log(`[TraceV5] LOCAL mode: cleared ${before} stale trace events`);
+      }
+    } catch { /* best-effort */ }
+  }
+} catch (err: any) {
+  bootError = err;
+  console.error('[RENDER BOOT] initializeDatabase failed:', err);
+}
+
+// ⭐ DIAGNOSTIC: Log runtime mode detection
+import { RuntimeContext } from '../core/runtime/runtime-context';
+const runtime = RuntimeContext.getInstance();
+console.log('[RENDER BOOT] Runtime mode:', runtime.toString());
+console.log('[RENDER BOOT] isLocal:', runtime.isLocal);
+console.log('[RENDER BOOT] isCloud:', runtime.isCloud);
+console.log('[RENDER BOOT] isHybrid:', runtime.isHybrid);
+console.log('[RENDER BOOT] VITE_APP_MODE from process.env:', process.env.VITE_APP_MODE);
 
 // ⭐ FIX: Run startup migrations to ensure all critical columns exist
 // This prevents "no such column: tenant_id" errors during sync
@@ -77,6 +116,7 @@ try {
     console.log('[RENDER BOOT] Startup migrations completed successfully');
   }
 } catch (err: any) {
+  bootError = err;
   console.error('[RENDER BOOT] Startup migrations failed:', err);
   // Don't throw — allow server to start
 }
@@ -87,11 +127,49 @@ const PORT = process.env.PORT || 3001;
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
+// Runtime health check routes (no auth required)
+app.use('/', runtimeHealthRoutes);
+
+// =============================================
+// CORS - reflechit les origines autorisées au lieu de "*"
+// =============================================
+// ⭐ CRITICAL: CORS must be BEFORE all routes to ensure headers are set on every response
+const ALLOWED_ORIGINS = new Set<string | undefined>([
+  process.env.FRONTEND_BASE_URL,
+  process.env.VITE_FRONTEND_URL,
+  'http://localhost:5173',
+  'http://localhost:5174',
+  'http://localhost:3000',
+  'https://ekala.vercel.app',
+  process.env.RENDER_EXTERNAL_URL,
+  ...(env.CORS_ORIGINS ? env.CORS_ORIGINS.split(',').map(o => o.trim()) : [])
+].filter(Boolean));
+
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+  const allowOrigin = origin && ALLOWED_ORIGINS.has(origin) ? origin : undefined;
+
+  res.setHeader('Vary', 'Origin');
+  if (allowOrigin) {
+    res.setHeader('Access-Control-Allow-Origin', allowOrigin);
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
+  }
+  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization, x-user-role, x-runtime-mode');
+
+  if (req.method === 'OPTIONS') {
+    return res.sendStatus(204);
+  }
+
+  next();
+});
+
 // =============================================
 // FORENSIC REQUEST LOGGING + TENANT CONTEXT
 // =============================================
 import { tenantStorage } from './db/tenant-context';
 import { verifyJwt } from './middleware/jwt-auth';
+import { TraceManager, traceStorage } from './services/trace-manager.service';
 
 app.use((req, res, next) => {
   if (req.path !== '/health') {
@@ -135,36 +213,48 @@ app.use((req, res, next) => {
 });
 
 // =============================================
-// CORS - reflechit les origines autorisées au lieu de "*"
+// FORENSIC TRACE v3 — BEGIN/END per HTTP request
 // =============================================
-const ALLOWED_ORIGINS = new Set<string | undefined>([
-  process.env.FRONTEND_BASE_URL,
-  process.env.VITE_FRONTEND_URL,
-  'http://localhost:5173',
-  'http://localhost:5174',
-  'http://localhost:3000',
-  'https://ekala.vercel.app',
-  process.env.RENDER_EXTERNAL_URL,
-  ...(env.CORS_ORIGINS ? env.CORS_ORIGINS.split(',').map(o => o.trim()) : [])
-].filter(Boolean));
-
+// Wraps every request in a TraceManager with guaranteed flush() in finally.
+// This is the outermost layer — it captures BEGIN and END for every request.
 app.use((req, res, next) => {
-  const origin = req.headers.origin;
-  const allowOrigin = origin && ALLOWED_ORIGINS.has(origin) ? origin : undefined;
-
-  res.setHeader('Vary', 'Origin');
-  if (allowOrigin) {
-    res.setHeader('Access-Control-Allow-Origin', allowOrigin);
-    res.setHeader('Access-Control-Allow-Credentials', 'true');
-  }
-  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization, x-user-role, x-runtime-mode');
-
-  if (req.method === 'OPTIONS') {
-    return res.sendStatus(204);
+  // Skip health checks to reduce noise
+  if (req.path === '/health' || req.path === '/test') {
+    return next();
   }
 
-  next();
+  const trace = new TraceManager();
+  trace.enter('BEGIN', {
+    method: req.method,
+    path: req.originalUrl,
+    ip: req.ip,
+    user_agent: req.headers['user-agent']?.substring(0, 100),
+  });
+
+  // Store trace in AsyncLocalStorage for downstream propagation
+  traceStorage.run(trace, () => {
+    // Intercept res.end to capture response status code
+    const originalEnd = res.end.bind(res);
+    res.end = function (this: any, ...args: any[]) {
+      try {
+        trace.response(res.statusCode, {
+          content_length: res.getHeader('content-length') || undefined,
+        });
+      } catch {
+        // Never throw in end interceptor
+      }
+      return originalEnd(...args);
+    } as any;
+
+    try {
+      next();
+    } catch (err) {
+      trace.error('BEGIN', err, { phase: 'middleware_unhandled' });
+      throw err;
+    } finally {
+      trace.flush();
+    }
+  });
 });
 
 // --- Render boot diagnostics (safe, low impact) ---
@@ -282,6 +372,9 @@ app.use('/api', (req, res, next) => {
   const p = req.path;
 
   if (p === '/health') return next();
+
+  // Auth endpoints are public and already handled by their own route guards
+  if (p.startsWith('/auth')) return next();
 
   // SaaS endpoints are public and do not rely on tenant scope from JWT
   // Public QR Menu endpoints
@@ -439,12 +532,21 @@ app.use('/api/platform', platformAuthRoutes);
 // Platform Routes (Super Admin) — MUST BE BEFORE tenant scope middleware
 // =============================================================================
 app.use('/api/platform', platformRoutes);
+app.use('/api/platform', platformPlansRouter);
 app.use('/api/diagnostic', diagnosticRoutes);
+app.use('/api/sync', syncRoutes);
 
 // =============================================================================
 // Sync Diagnostic Routes
 // =============================================================================
 app.use('/api/platform', syncDiagnosticRoutes);
+
+// =============================================================================
+// Forensic Trace Routes — Replay, search, anomaly detection
+// =============================================================================
+// Public diagnostic endpoints — no auth required for trace debugging
+app.use('/api', traceRoutes);
+app.use('/api', eventStoreRoutes);
 
 // =============================================================================
 // GLOBAL ERROR HANDLER — Convertit TOUTES les erreurs en JSON
@@ -474,8 +576,39 @@ startExpirationCron();
 // CRITICAL: This MUST run before app.listen() so that getProductSyncService()
 // works immediately when routes are called (e.g. TableService.create/delete).
 let syncOrchestratorV2: any = null;
+let supabaseClient: any = null;
 
-if (!env.RENDER_CLOUD_MODE && db) {
+// ⭐ LOCAL-FIRST SYNC: Enable the sync engine when:
+//   - we are in CLOUD mode, OR
+//   - it is explicitly requested via ENABLE_SUPABASE_SYNC, OR
+//   - we are in LOCAL mode (Electron: SQLite is the source of truth) AND Supabase
+//     credentials are present. In that last case the engine stays idle while the
+//     app is offline and automatically pushes/pulls the moment it has an internet
+//     connection (the scheduler is connectivity-gated). This makes the local
+//     `products` (and other tables) sync with the Supabase `products` table
+//     whenever the network is available.
+const supabaseCredsPresent = Boolean(
+  process.env.SUPABASE_URL &&
+  (process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY)
+);
+const shouldEnableSync =
+  runtime.isCloud ||
+  process.env.ENABLE_SUPABASE_SYNC === 'true' ||
+  (runtime.mode === 'LOCAL' && supabaseCredsPresent && !env.RENDER_CLOUD_MODE);
+
+// ─── Always bind the server DB to the sync module ───────────────────────────
+// Even in LOCAL mode (sync engine disabled), routes call getProductSyncService()
+// to queue local writes to the outbox. Without this binding those calls throw
+// "ProductSyncService not initialized". This keeps writes working offline.
+try {
+  const { setSyncDatabase } = require('../sync/index');
+  setSyncDatabase(db);
+  console.log('[Sync] Server database bound to sync module (offline queueing ready)');
+} catch (err: any) {
+  console.warn('[Sync] Could not bind database to sync module:', err?.message);
+}
+
+if (shouldEnableSync && !env.RENDER_CLOUD_MODE && db) {
   const supabaseUrl = process.env.SUPABASE_URL;
   const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY;
 
@@ -488,18 +621,54 @@ if (!env.RENDER_CLOUD_MODE && db) {
       setOutboxDb(db);
       
       syncOrchestratorV2 = initializeSyncV2(db, supabaseUrl, supabaseKey);
+      supabaseClient = syncOrchestratorV2.getSupabaseClient?.() || null;
       
       console.log(`[SyncV2] Engine initialized (ALL ${26} tables covered)`);
+      console.log(`[SyncV2] Mode: ${runtime.mode} | ENABLE_SUPABASE_SYNC: ${process.env.ENABLE_SUPABASE_SYNC}`);
     } catch (err: any) {
       console.error('[SyncV2] Failed to initialize sync engine:', err?.message || err);
     }
   } else {
     console.warn('[SyncV2] SUPABASE_URL or key missing — sync disabled');
   }
+} else {
+  if (!shouldEnableSync) {
+    console.log(`[SyncV2] Sync engine disabled in ${runtime.mode} mode (set ENABLE_SUPABASE_SYNC=true to enable)`);
+  } else if (env.RENDER_CLOUD_MODE) {
+    console.log('[SyncV2] Sync engine disabled in RENDER_CLOUD_MODE');
+  } else if (!db) {
+    console.log('[SyncV2] Sync engine disabled - database not available');
+  }
 }
 
 app.listen(PORT, async () => {
   console.log(`[RENDER BOOT] Express listening on port ${PORT}`);
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // TRACE SYSTEM v5 — ZERO LOSS INITIALIZATION
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  // 1. Crash Recovery — recover unprocessed events from disk queue
+  try {
+    const { recoverFromCrash, startFlushScheduler } = await import('./services/trace-flush-engine.service');
+    const recovered = await recoverFromCrash();
+    if (recovered > 0) {
+      console.log(`[TraceV5] Crash recovery: ${recovered} events recovered from disk queue.`);
+    }
+    
+    // 2. Start periodic flush scheduler (disk → SQLite → Supabase)
+    startFlushScheduler();
+  } catch (err: any) {
+    console.warn('[TraceV5] Initialization warning:', err.message);
+  }
+
+  // 3. Register process hooks for crash-safe shutdown
+  try {
+    const { registerProcessHooks } = await import('./services/trace-process-hooks.service');
+    registerProcessHooks();
+  } catch (err: any) {
+    console.warn('[TraceV5] Process hooks registration warning:', err.message);
+  }
 
   // Bootstrap Super Admin Platform
   try {
@@ -520,10 +689,12 @@ app.listen(PORT, async () => {
   console.log('[RENDER BOOT] endpoints mounted: /health, /test, /api/auth, /api/menu, /api/tables, /api/products, /api/categories, /api/orders, /api/sales, /api/expenses, /api/dashboard, /api/users, /api/settings, /api/logs, /api/inventory, /api/reports, /api/suppliers, /api/purchase-orders, /api/stock-adjustments');
 
   // Lightweight Supabase → SQLite pull worker (QR orders visibility)
-  // Only start if Supabase credentials are available
-  if (env.SUPABASE_URL && env.SUPABASE_SERVICE_ROLE_KEY) {
+  // Only start if Supabase credentials are available and NOT in LOCAL mode
+  if (!dataSource.isLocal() && env.SUPABASE_URL && env.SUPABASE_SERVICE_ROLE_KEY) {
     startSupabasePullWorker();
     startSupabaseRealtimePull();
+  } else if (dataSource.isLocal()) {
+    console.log('[Supabase] Local mode — skipping pull workers');
   } else {
     console.log('[Supabase] Credentials not configured — skipping pull workers');
   }
@@ -538,11 +709,28 @@ app.listen(PORT, async () => {
     syncOrchestratorV2.startScheduler(30000);
     console.log(`[SyncV2] Scheduler started (30s interval)`);
     
-    // Premier sync immédiat
+    // Premier sync immédiat (uniquement si Supabase est joignable)
     setImmediate(() => {
-      syncOrchestratorV2.triggerSync().catch((err: any) => {
+      syncOrchestratorV2.triggerSyncIfOnline().catch((err: any) => {
         console.error('[SyncV2] Initial sync failed:', err);
       });
     });
+  }
+
+  // Start OutboxWorkerV2 for V2.3.2 Event-Driven Architecture
+  try {
+    const { OutboxWorkerV2 } = require('./infrastructure/synchronization/outbox-worker-v2');
+    const outboxWorkerV2 = OutboxWorkerV2.getInstance();
+    
+    // Set Supabase client
+    if (supabaseClient) {
+      outboxWorkerV2.setSupabaseClient(supabaseClient);
+      outboxWorkerV2.start();
+      console.log('[Server] ✓ OutboxWorkerV2 started (Event-Driven V2.3.2)');
+    } else {
+      console.warn('[Server] OutboxWorkerV2 not started: Supabase client not available');
+    }
+  } catch (err: any) {
+    console.warn('[Server] OutboxWorkerV2 not started:', err?.message || err);
   }
 });

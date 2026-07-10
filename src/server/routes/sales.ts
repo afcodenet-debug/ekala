@@ -478,28 +478,44 @@ router.post('/checkout', requirePermission('PROCESS_PAYMENTS'), async (req: any,
 
       if (!items || items.length === 0) throw new Error('No items in order');
 
-      subtotal = items.reduce((sum, item) => sum + Number(item.price) * Number(item.quantity), 0);
-
       // Verify stock
       const fulfilledItems: any[] = [];
       const blockedItems: any[]   = [];
 
       for (const item of items) {
-        const product = db.prepare('SELECT stock_quantity, buying_price FROM products WHERE id = ? AND tenant_id = ?').get(item.productId, tenantId) as any;
+        const product = db.prepare('SELECT id, name, selling_price, stock_quantity, buying_price FROM products WHERE id = ? AND tenant_id = ?').get(item.productId, tenantId) as any;
         const requested = Number(item.quantity);
         const available = Number(product?.stock_quantity || 0);
 
+        // Resolve price & name from the database product when the request
+        // payload is missing/zero. This prevents a $0 line item and the false
+        // "Insufficient stock" error caused by a zero subtotal.
+        const resolvedPrice = Number(item.price) > 0 ? Number(item.price) : Number(product?.selling_price || 0);
+        const normalizedItem = {
+          ...item,
+          name: item.name || product?.name || '',
+          price: resolvedPrice,
+        };
+
         if (available >= requested) {
-          fulfilledItems.push({ ...item, quantity: requested, product });
+          fulfilledItems.push({ ...normalizedItem, quantity: requested, product });
         } else {
-          fulfilledItems.push({ ...item, quantity: available, product });
-          blockedItems.push({ ...item, quantity: requested - available, notes: item.notes ?? null });
+          fulfilledItems.push({ ...normalizedItem, quantity: available, product });
+          blockedItems.push({ ...normalizedItem, quantity: requested - available, notes: item.notes ?? null });
         }
       }
 
+      // Subtotal = value of the full requested quantities (fulfilled + blocked)
+      subtotal = fulfilledItems.reduce((sum, item) => sum + Number(item.price) * Number(item.quantity), 0)
+               + blockedItems.reduce((sum, item) => sum + Number(item.price) * Number(item.quantity), 0);
+
       const fulfilledSubtotal = fulfilledItems.reduce((sum, item) => sum + Number(item.price) * Number(item.quantity), 0);
 
-      if (fulfilledSubtotal <= 0) {
+      // Guard: nothing could be fulfilled because stock was truly insufficient.
+      // Base this on fulfilled *quantity* (not subtotal) so a $0 item that IS in
+      // stock does not trigger a false "Insufficient stock" error.
+      const fulfilledQty = fulfilledItems.reduce((sum, item) => sum + Number(item.quantity), 0);
+      if (fulfilledQty <= 0) {
         const blockedNames = blockedItems.map(item => item.name).join(', ');
         throw new Error(`Insufficient stock for ${blockedNames}`);
       }
@@ -557,7 +573,8 @@ router.post('/checkout', requirePermission('PROCESS_PAYMENTS'), async (req: any,
       // --- SYNC INTEGRATION ---
       try {
         const { getProductSyncService } = require('../../sync/index');
-        const coreSync = getProductSyncService();
+        const coreSync = getProductSyncService(); if (!coreSync) throw new Error('sync-disabled');
+        if (!coreSync) throw new Error('sync-disabled');
 
         // Prepare sale record for outbox
         const saleForSync = {
@@ -577,14 +594,22 @@ router.post('/checkout', requirePermission('PROCESS_PAYMENTS'), async (req: any,
         };
 
         // Prepare sale items for outbox
-        const saleItemsForSync = fulfilledItems.map((item: any) => ({
-          sale_id: saleId,
-          product_id: item.productId,
-          quantity: Number(item.quantity),
-          unit_price: Number(item.price),
-          total_price: Number(item.price) * Number(item.quantity),
-          tenant_id: tenantId
-        }));
+        const saleItemsForSync = fulfilledItems.map((item: any) => {
+          const unitPrice =
+            Number(item.price) ||
+            Number(item.unit_price) ||
+            Number(item.unitPrice) ||
+            0;
+          const quantity = Number(item.quantity) || 0;
+          return {
+            sale_id: saleId,
+            product_id: item.productId,
+            quantity,
+            unit_price: unitPrice,
+            total_price: unitPrice * quantity,
+            tenant_id: tenantId
+          };
+        });
 
         // Use coreSync to queue the changes
         db.transaction(() => {
@@ -622,7 +647,13 @@ router.post('/checkout', requirePermission('PROCESS_PAYMENTS'), async (req: any,
         const unitCost = Number(item.product.buying_price ?? 0);
         const totalValue = Number(item.quantity) * unitCost;
 
-        itemStmt.run(saleId, item.productId, item.quantity, item.price, item.price * item.quantity, tenantId);
+        const unitPrice =
+          Number(item.price) ||
+          Number(item.unit_price) ||
+          Number(item.unitPrice) ||
+          0;
+        const quantity = Number(item.quantity) || 0;
+        itemStmt.run(saleId, item.productId, quantity, unitPrice, unitPrice * quantity, tenantId);
         
         const saleReferenceId = Math.trunc(Number(saleId));
 
@@ -665,7 +696,7 @@ router.post('/checkout', requirePermission('PROCESS_PAYMENTS'), async (req: any,
         db.prepare('UPDATE products SET stock_quantity = ? WHERE id = ? AND tenant_id = ?').run(quantityAfter, item.productId, tenantId);
         
         // Sync product stock
-        getProductSyncService().queueChangeInsideTransaction('product', 'update', {
+        getProductSyncService()?.queueChangeInsideTransaction('product', 'update', {
           id: item.productId,
           stock_quantity: quantityAfter,
           tenant_id: tenantId
@@ -685,7 +716,7 @@ router.post('/checkout', requirePermission('PROCESS_PAYMENTS'), async (req: any,
         // Queue old items for deletion in sync
         try {
           const oldItems = db.prepare('SELECT id FROM order_items WHERE order_id = ? AND tenant_id = ?').all(normalizedOrderId, tenantId) as { id: number }[];
-          const sync = getProductSyncService();
+          const sync = getProductSyncService(); if (!sync) throw new Error('sync-disabled');
           for (const item of oldItems) {
             sync.queueChangeInsideTransaction('order_item', 'delete', { id: item.id, tenant_id: tenantId });
           }
@@ -700,7 +731,13 @@ router.post('/checkout', requirePermission('PROCESS_PAYMENTS'), async (req: any,
         `);
 
         for (const item of blockedItems) {
-          orderItemStmt.run(normalizedOrderId, item.productId, item.quantity, item.price, item.price * item.quantity, item.notes ?? null, tenantId);
+          const unitPrice =
+            Number(item.price) ||
+            Number(item.unit_price) ||
+            Number(item.unitPrice) ||
+            0;
+          const quantity = Number(item.quantity) || 0;
+          orderItemStmt.run(normalizedOrderId, item.productId ?? item.product_id, quantity, unitPrice, unitPrice * quantity, item.notes ?? null, tenantId);
         }
 
         remainingOrder = {
@@ -721,7 +758,7 @@ router.post('/checkout', requirePermission('PROCESS_PAYMENTS'), async (req: any,
             SELECT id, product_id as productId, quantity, unit_price as price, notes 
             FROM order_items WHERE order_id = ? AND tenant_id = ?
           `).all(normalizedOrderId, tenantId);
-          getOrderSyncService().queueOrderChange('update', { ...remainingOrder, items: itemsWithIds }, String(tenantId));
+          getOrderSyncService()?.queueOrderChange('update', { ...remainingOrder, items: itemsWithIds }, String(tenantId));
         } catch (e) {
           console.warn('[Sales] Failed to queue partial order update for sync:', e);
         }
@@ -739,7 +776,7 @@ router.post('/checkout', requirePermission('PROCESS_PAYMENTS'), async (req: any,
         // Queue sync
         try {
           const updatedOrder = db.prepare('SELECT * FROM orders WHERE id = ? AND tenant_id = ?').get(normalizedOrderId, tenantId);
-          getOrderSyncService().queueOrderChange('update', updatedOrder, String(tenantId));
+          getOrderSyncService()?.queueOrderChange('update', updatedOrder, String(tenantId));
         } catch (e) {
           console.warn('[Sales] Failed to queue order paid status for sync:', e);
         }

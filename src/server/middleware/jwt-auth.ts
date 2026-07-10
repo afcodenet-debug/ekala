@@ -11,6 +11,7 @@
 import { Request, Response, NextFunction } from 'express';
 import crypto from 'crypto';
 import { env } from '../config/env';
+import { getCurrentTrace } from '../services/trace-manager.service';
 
 // ── JWT Secret (symmetric HMAC-SHA256) ──────────────────────────────────────────
 const JWT_SECRET = process.env.JWT_SECRET || 'ekala-dev-fallback-secret-change-in-production-2026';
@@ -24,6 +25,8 @@ export interface JwtPayload {
   role: string;         // user role within the tenant
   email?: string;
   full_name?: string;
+  tenant_name?: string; // Resolved tenant display name (set at login)
+  tenant_slug?: string; // Resolved tenant slug (set at login)
   iat: number;          // issued at (epoch seconds)
   exp: number;          // expires at (epoch seconds)
 }
@@ -96,9 +99,18 @@ export function verifyJwt(token: string): JwtPayload | null {
 // Sets req.user with full JwtPayload including tenant_id
 
 export const requireJwtAuth = (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+  const trace = getCurrentTrace();
   const authHeader = req.headers.authorization;
 
+  // FORENSIC TRACE — JWT step
+  trace.enter('JWT', {
+    path: req.path,
+    method: req.method,
+    hasAuthHeader: !!authHeader,
+  });
+
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    trace.fail('JWT', { reason: 'missing_bearer_token' });
     return res.status(401).json({
       error: 'UNAUTHORIZED',
       message: 'Token d\'authentification requis. Veuillez vous connecter.',
@@ -109,6 +121,7 @@ export const requireJwtAuth = (req: AuthenticatedRequest, res: Response, next: N
   const payload = verifyJwt(token);
 
   if (!payload) {
+    trace.fail('JWT', { reason: 'invalid_or_expired_token' });
     return res.status(401).json({
       error: 'TOKEN_INVALID',
       message: 'Token expiré ou invalide. Veuillez vous reconnecter.',
@@ -117,6 +130,7 @@ export const requireJwtAuth = (req: AuthenticatedRequest, res: Response, next: N
 
   // Inject the authenticated user (with tenant_id) into the request
   req.user = payload;
+  trace.exit('JWT', { userId: payload.sub, tenantId: payload.tenant_id });
   next();
 };
 

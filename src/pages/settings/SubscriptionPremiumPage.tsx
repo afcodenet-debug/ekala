@@ -28,6 +28,10 @@ const ArrowRight = ({ size = 16, color = 'currentColor' }) => (
   </svg>
 );
 
+// Coordonnées de paiement manuel Mobile Money (Zambie)
+const MOBILE_MONEY_NUMBERS = ['+260573769091', '+260972934542'];
+const PAYMENT_CONFIRMATION_PHONE = '+260767043875';
+
 // ─── Types ────────────────────────────────────────────────────────────────────
 interface Plan {
   id: number; code: string; name: string; description: string;
@@ -221,16 +225,14 @@ const SubscriptionPremiumPage = () => {
   const [plans, setPlans] = useState<Plan[]>([]);
   const [voucherRequests, setVoucherRequests] = useState<VoucherRequest[]>([]);
   const [paymentHistory, setPaymentHistory] = useState<PaymentItem[]>([]);
-  const [tab, setTab] = useState<'overview' | 'plans' | 'vouchers'>('overview');
+  const [tab, setTab] = useState<'overview' | 'plans' | 'requests'>('overview');
 
   const [selectedPlanId, setSelectedPlanId] = useState<number | null>(null);
   const [requestingVoucher, setRequestingVoucher] = useState(false);
   const [voucherMsg, setVoucherMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
-  const [redeemCode, setRedeemCode] = useState('');
-  const [redeeming, setRedeeming] = useState(false);
   const [selectedVoucher, setSelectedVoucher] = useState<VoucherRequest | null>(null);
 
-  const isAdmin = ['admin', 'manager'].includes((user as any)?.role);
+  const isAdmin = ['owner', 'admin', 'manager'].includes((user as any)?.role);
 
   useEffect(() => {
     (async () => {
@@ -253,24 +255,12 @@ const SubscriptionPremiumPage = () => {
     })();
   }, []);
 
-  const handleRedeem = async () => {
-    if (!redeemCode.trim()) return;
-    setRedeeming(true);
-    try {
-      await api.post('/billing/redeem-voucher', { code: redeemCode.trim() });
-      setVoucherMsg({ type: 'success', text: t('billing.subscriptionPremium.vouchers.redeemSuccess') });
-      setRedeemCode('');
-    } catch (e: any) {
-      setVoucherMsg({ type: 'error', text: e.message || t('billing.subscriptionPremium.vouchers.redeemError') });
-    } finally { setRedeeming(false); }
-  };
-
   const handleRequestVoucher = async () => {
     if (!selectedPlanId) return;
     setRequestingVoucher(true);
     try {
-      const res: any = await api.post('/billing/request-voucher', { planId: selectedPlanId });
-      setVoucherMsg({ type: 'success', text: t('billing.subscriptionPremium.vouchers.requestSuccess', { code: res.voucherCode || 'N/A' }) });
+      await api.post('/billing/request-voucher', { planId: selectedPlanId });
+      setVoucherMsg({ type: 'success', text: 'Demande enregistrée. Suivez la procédure de paiement ci-dessous, puis appelez pour confirmer. Votre code de bon vous sera envoyé après validation.' });
       setSelectedPlanId(null);
       const [subRes, plansRes, vouchersRes] = await Promise.all([
         api.get('/billing/status'),
@@ -312,7 +302,7 @@ const SubscriptionPremiumPage = () => {
       </div>
 
       <div style={{ display: "flex", gap: 6, marginBottom: 20, flexWrap: "wrap" }}>
-        {(['overview', 'plans', 'vouchers'] as const).map((tabName) => (
+        {(['overview', 'plans', 'requests'] as const).map((tabName) => (
           <button
             key={tabName}
             onClick={() => setTab(tabName)}
@@ -321,7 +311,7 @@ const SubscriptionPremiumPage = () => {
               padding: "8px 18px", fontSize: 12, fontWeight: 700
             }}
           >
-            {tabName === 'overview' ? t('billing.subscriptionPremium.tabs.overview') : tabName === 'plans' ? t('billing.subscriptionPremium.tabs.plans') : t('billing.subscriptionPremium.tabs.vouchers')}
+            {tabName === 'overview' ? t('billing.subscriptionPremium.tabs.overview') : tabName === 'plans' ? t('billing.subscriptionPremium.tabs.plans') : 'Mes demandes'}
           </button>
         ))}
       </div>
@@ -387,7 +377,7 @@ const SubscriptionPremiumPage = () => {
 
             {isAdmin && (
               <div style={{ marginTop: 20, paddingTop: 16, borderTop: "1px solid rgba(255,255,255,0.06)" }}>
-                <button style={{ ...S.btn, ...S.btnSecondary }} onClick={() => setTab('vouchers')}>
+                <button style={{ ...S.btn, ...S.btnSecondary }} onClick={() => setTab('requests')}>
                   {t('billing.subscriptionPremium.vouchers.manage')}
                 </button>
               </div>
@@ -410,7 +400,7 @@ const SubscriptionPremiumPage = () => {
                   recommended={plan.code === 'pro_monthly'}
                   onSelect={(p: Plan) => {
                     setSelectedPlanId(p.id);
-                    setTab('vouchers');
+                    setTab('requests');
                   }}
                 />
               ))}
@@ -419,67 +409,106 @@ const SubscriptionPremiumPage = () => {
         </div>
       )}
 
-      {tab === 'vouchers' && isAdmin && (
+      {tab === 'requests' && (
         <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
-          <div style={S.card}>
-            <div style={S.accent} />
-            <div style={S.cardBody}>
-              <div style={S.sectionTitle}>
-                <Ticket size={18} color="#D4AF37" /> {t('billing.subscriptionPremium.vouchers.requestTitle')}
-              </div>
-
-              <div style={{ display: "flex", gap: 12, marginBottom: 16, flexWrap: "wrap" }}>
-                <select
-                  style={{ ...S.input, flex: 1, minWidth: 200, cursor: "pointer" }}
-                  value={selectedPlanId || ''}
-                  onChange={e => setSelectedPlanId(Number(e.target.value))}
-                  disabled={requestingVoucher || plans.length === 0}
-                >
-                  <option value="">{plans.length === 0 ? t('billing.subscriptionPremium.plans.noPlanAvailable') : t('billing.subscriptionPremium.vouchers.selectPlan')}</option>
-                  {plans.filter(p => p.is_active && p.is_public).map(p => (
-                    <option key={p.id} value={p.id}>{p.name} — {p.currency} {(p.price_cents / 100).toFixed(2)}</option>
-                  ))}
-                </select>
-                <button
-                  style={{ ...S.btn, ...S.btnPrimary }}
-                  onClick={handleRequestVoucher}
-                  disabled={requestingVoucher || !selectedPlanId}
-                >
-                  {requestingVoucher ? t('common.loading') : t('billing.subscriptionPremium.vouchers.requestButton')}
-                </button>
-              </div>
-
-              {voucherMsg && (
-                <div style={{
-                  padding: "10px 14px", borderRadius: 8, fontSize: 12, fontWeight: 600,
-                  background: voucherMsg.type === 'success' ? "rgba(16,185,129,0.1)" : "rgba(239,68,68,0.1)",
-                  color: voucherMsg.type === 'success' ? "#10b981" : "#ef4444",
-                  border: `1px solid ${voucherMsg.type === 'success' ? "rgba(16,185,129,0.2)" : "rgba(239,68,68,0.2)"}`
-                }}>
-                  {voucherMsg.text}
+          {isAdmin && (
+            <div style={S.card}>
+              <div style={S.accent} />
+              <div style={S.cardBody}>
+                <div style={S.sectionTitle}>
+                  <Ticket size={18} color="#D4AF37" /> {t('billing.subscriptionPremium.vouchers.requestTitle')}
                 </div>
-              )}
 
-              <div style={{ marginTop: 24, paddingTop: 20, borderTop: "1px solid rgba(255,255,255,0.06)" }}>
-                <div style={{ fontSize: 14, fontWeight: 700, color: "#eeeef5", marginBottom: 12 }}>
-                  {t('billing.subscriptionPremium.vouchers.historyTitle', { count: voucherRequests.length })}
-                </div>
-                <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-                  <input
-                    style={{ ...S.input, flex: 1, minWidth: 200 }}
-                    placeholder={t('billing.subscriptionPremium.vouchers.redeemCode')}
-                    value={redeemCode}
-                    onChange={e => setRedeemCode(e.target.value)}
-                    onKeyDown={e => e.key === 'Enter' && handleRedeem()}
-                    disabled={redeeming}
-                  />
-                  <button style={{ ...S.btn, ...S.btnPrimary }} onClick={handleRedeem} disabled={redeeming || !redeemCode.trim()}>
-                    {redeeming ? t('common.loading') : t('billing.subscriptionPremium.vouchers.redeemButton')}
+                <div style={{ display: "flex", gap: 12, marginBottom: 16, flexWrap: "wrap" }}>
+                  <select
+                    style={{ ...S.input, flex: 1, minWidth: 200, cursor: "pointer" }}
+                    value={selectedPlanId || ''}
+                    onChange={e => setSelectedPlanId(Number(e.target.value))}
+                    disabled={requestingVoucher || plans.length === 0}
+                  >
+                    <option value="">{plans.length === 0 ? t('billing.subscriptionPremium.plans.noPlanAvailable') : t('billing.subscriptionPremium.vouchers.selectPlan')}</option>
+                    {plans.filter(p => p.is_active && p.is_public).map(p => (
+                      <option key={p.id} value={p.id}>{p.name} — {p.currency} {(p.price_cents / 100).toFixed(2)}</option>
+                    ))}
+                  </select>
+                  <button
+                    style={{ ...S.btn, ...S.btnPrimary }}
+                    onClick={handleRequestVoucher}
+                    disabled={requestingVoucher || !selectedPlanId}
+                  >
+                    {requestingVoucher ? t('common.loading') : t('billing.subscriptionPremium.vouchers.requestButton')}
                   </button>
                 </div>
+
+                {voucherMsg && (
+                  <div style={{
+                    padding: "10px 14px", borderRadius: 8, fontSize: 12, fontWeight: 600,
+                    background: voucherMsg.type === 'success' ? "rgba(16,185,129,0.1)" : "rgba(239,68,68,0.1)",
+                    color: voucherMsg.type === 'success' ? "#10b981" : "#ef4444",
+                    border: `1px solid ${voucherMsg.type === 'success' ? "rgba(16,185,129,0.2)" : "rgba(239,68,68,0.2)"}`
+                  }}>
+                    {voucherMsg.text}
+                  </div>
+                )}
               </div>
             </div>
-          </div>
+          )}
+
+          {(() => {
+            const pending = voucherRequests.find(vr => ['pending', 'payment_sent'].includes(vr.status));
+            if (!pending) return null;
+            const plan = plans.find(p => p.id === pending.plan_id);
+            const info = {
+              referenceCode: pending.voucher_code,
+              planName: pending.plan_name || plan?.name || 'Forfait',
+              amountCents: plan?.price_cents || 0,
+              currency: plan?.currency || 'ZMW',
+            };
+            return (
+              <div style={{ padding: 20, borderRadius: 14, background: "rgba(212,175,55,0.06)", border: "1px solid rgba(212,175,55,0.25)" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}>
+                  <Ticket size={18} color="#D4AF37" />
+                  <div style={{ fontSize: 14, fontWeight: 700, color: "#eeeef5" }}>Procédure de paiement manuel</div>
+                </div>
+
+                <div style={{ fontSize: 12, color: "rgba(255,255,255,0.6)", lineHeight: 1.6, marginBottom: 14 }}>
+                  Forfait <strong style={{ color: "#eeeef5" }}>{info.planName}</strong> — montant :
+                  <strong style={{ color: "#D4AF37" }}> {info.currency} {(info.amountCents / 100).toLocaleString('fr-FR', { minimumFractionDigits: 2 })}</strong>.
+                  Référence de demande : <strong style={{ fontFamily: "monospace", color: "#eeeef5" }}>{info.referenceCode}</strong>.
+                </div>
+
+                <div style={{ fontSize: 12, fontWeight: 700, color: "#eeeef5", marginBottom: 8 }}>1. Transférez les fonds via Mobile Money</div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 16 }}>
+                  {MOBILE_MONEY_NUMBERS.map(n => (
+                    <a key={n} href={`tel:${n}`} style={{
+                      display: "flex", alignItems: "center", justifyContent: "space-between",
+                      padding: "10px 14px", borderRadius: 10, textDecoration: "none",
+                      background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.1)",
+                      color: "#eeeef5", fontSize: 14, fontWeight: 700, fontFamily: "monospace"
+                    }}>
+                      <span>{n}</span>
+                      <ArrowRight size={14} color="#D4AF37" />
+                    </a>
+                  ))}
+                </div>
+
+                <div style={{ fontSize: 12, fontWeight: 700, color: "#eeeef5", marginBottom: 8 }}>2. Confirmez la transaction par téléphone</div>
+                <a href={`tel:${PAYMENT_CONFIRMATION_PHONE}`} style={{
+                  display: "flex", alignItems: "center", justifyContent: "space-between",
+                  padding: "10px 14px", borderRadius: 10, textDecoration: "none",
+                  background: "rgba(212,175,55,0.12)", border: "1px solid rgba(212,175,55,0.3)",
+                  color: "#D4AF37", fontSize: 14, fontWeight: 700, fontFamily: "monospace"
+                }}>
+                  <span>Appeler {PAYMENT_CONFIRMATION_PHONE}</span>
+                  <ArrowRight size={14} color="#D4AF37" />
+                </a>
+
+                <div style={{ marginTop: 14, fontSize: 11, color: "rgba(255,255,255,0.45)", lineHeight: 1.5 }}>
+                  Après le transfert, appelez pour confirmer et communiquer votre référence. Un administrateur vérifiera le paiement, activera votre forfait et vous enverra votre code de bon (voucher) par email et dans l'application.
+                </div>
+              </div>
+            );
+          })()}
 
           {voucherRequests.length > 0 && (
             <div style={S.card}>
@@ -489,53 +518,63 @@ const SubscriptionPremiumPage = () => {
                   <History size={18} color="#a855f7" /> {t('billing.subscriptionPremium.vouchers.historyTitle', { count: voucherRequests.length })}
                 </div>
                 <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                  {voucherRequests.map(vr => (
-                    <div key={vr.id} style={{
-                      background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.06)",
-                      borderRadius: 10, padding: "14px 16px", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 12
-                    }}>
-                      <div style={{ display: "flex", alignItems: "center", gap: 12, flex: 1 }}>
-                        <div>
-                          <div style={{ fontSize: 13, fontWeight: 700, color: "#eeeef5", fontFamily: "monospace" }}>{vr.voucher_code}</div>
-                          <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", display: "flex", alignItems: "center", gap: 6, marginTop: 4 }}>
-                            <span style={{ fontWeight: 600 }}>{vr.plan_name || `Plan #${vr.plan_id}`}</span>
-                            <span style={{ color: "rgba(255,255,255,0.3)" }}>•</span>
-                            <span>{formatDate(vr.requested_at)}</span>
+                  {voucherRequests.map(vr => {
+                    const isActive = vr.status === 'verified' || vr.status === 'activated';
+                    return (
+                      <div key={vr.id} style={{
+                        background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.06)",
+                        borderRadius: 10, padding: "14px 16px", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 12
+                      }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 12, flex: 1 }}>
+                          <div>
+                            <div style={{ fontSize: 13, fontWeight: 700, color: "#eeeef5" }}>{vr.plan_name || `Plan #${vr.plan_id}`}</div>
+                            <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", display: "flex", alignItems: "center", gap: 6, marginTop: 4 }}>
+                              <span style={{ fontWeight: 600, fontFamily: "monospace" }}>{vr.voucher_code}</span>
+                              <span style={{ color: "rgba(255,255,255,0.3)" }}>•</span>
+                              <span>{formatDate(vr.requested_at)}</span>
+                            </div>
+                            {isActive && (
+                              <div style={{ marginTop: 8, display: "inline-flex", alignItems: "center", gap: 6, padding: "4px 10px", borderRadius: 6, background: "rgba(16,185,129,0.1)", border: "1px solid rgba(16,185,129,0.25)" }}>
+                                <span style={{ fontSize: 9, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em", color: "#10b981" }}>Code de bon</span>
+                                <span style={{ fontSize: 12, fontWeight: 700, fontFamily: "monospace", color: "#10b981" }}>{vr.voucher_code}</span>
+                              </div>
+                            )}
                           </div>
                         </div>
+                        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                          <span style={{
+                            display: "inline-block", padding: "2px 8px", borderRadius: 4, fontSize: 10, fontWeight: 700,
+                            background: isActive ? "rgba(16,185,129,0.1)" : "rgba(245,158,11,0.1)",
+                            color: isActive ? "#10b981" : "#f59e0b",
+                            border: isActive ? "1px solid rgba(16,185,129,0.2)" : "1px solid rgba(245,158,11,0.2)"
+                          }}>
+                            {t('billing.subscriptionPremium.statuses.' + vr.status)}
+                          </span>
+                          <button
+                            style={{ ...S.btn, ...S.btnSecondary, padding: "6px 14px", marginLeft: 16, flexShrink: 0,
+                              background: "rgba(59,130,246,0.1)", border: "1px solid rgba(59,130,246,0.2)",
+                              borderRadius: 8, fontSize: 11, fontWeight: 600,
+                              color: "#60a5fa", cursor: "pointer", transition: "all 0.2s",
+                              whiteSpace: "nowrap"
+                            }}
+                            onMouseEnter={(e) => {
+                              e.currentTarget.style.background = "rgba(59,130,246,0.2)";
+                              e.currentTarget.style.transform = "translateY(-1px)";
+                              e.currentTarget.style.boxShadow = "0 4px 12px rgba(59,130,246,0.2)";
+                            }}
+                            onMouseLeave={(e) => {
+                              e.currentTarget.style.background = "rgba(59,130,246,0.1)";
+                              e.currentTarget.style.transform = "translateY(0)";
+                              e.currentTarget.style.boxShadow = "none";
+                            }}
+                            onClick={() => setSelectedVoucher(vr)}
+                          >
+                            <Eye size={13} /> {t('common.actions')}
+                          </button>
+                        </div>
                       </div>
-                      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                        <span style={{
-                          display: "inline-block", padding: "2px 8px", borderRadius: 4, fontSize: 10, fontWeight: 700,
-                          background: vr.status === 'activated' ? "rgba(16,185,129,0.1)" : vr.status === 'verified' ? "rgba(59,130,246,0.1)" : "rgba(245,158,11,0.1)",
-                          color: vr.status === 'activated' ? "#10b981" : vr.status === 'verified' ? "#3b82f6" : "#f59e0b",
-                          border: vr.status === 'activated' ? "1px solid rgba(16,185,129,0.2)" : vr.status === 'verified' ? "1px solid rgba(59,130,246,0.2)" : "1px solid rgba(245,158,11,0.2)"
-                        }}>
-                          {t('billing.subscriptionPremium.statuses.' + vr.status)}
-                        </span>
-                        <button 
-                          style={{ ...S.btn, ...S.btnSecondary, padding: "6px 14px", marginLeft: 16, flexShrink: 0,
-                            background: "rgba(59,130,246,0.1)", border: "1px solid rgba(59,130,246,0.2)",
-                            borderRadius: 8, fontSize: 11, fontWeight: 600,
-                            color: "#60a5fa", cursor: "pointer", transition: "all 0.2s",
-                            whiteSpace: "nowrap"
-                          }}
-                          onMouseEnter={(e) => {
-                            e.currentTarget.style.background = "rgba(59,130,246,0.2)";
-                            e.currentTarget.style.transform = "translateY(-1px)";
-                            e.currentTarget.style.boxShadow = "0 4px 12px rgba(59,130,246,0.2)";
-                          }}
-                          onMouseLeave={(e) => {
-                            e.currentTarget.style.background = "rgba(59,130,246,0.1)";
-                            e.currentTarget.style.transform = "translateY(0)";
-                            e.currentTarget.style.boxShadow = "none";
-                          }}
-                        >
-                          <Eye size={13} /> {t('common.actions')}
-                        </button>
-                      </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
             </div>

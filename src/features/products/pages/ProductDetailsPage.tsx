@@ -210,7 +210,7 @@ export const ProductDetailsPage: React.FC = () => {
             ) : (
               <div>
                 {movements.map((m: InventoryMovement) => {
-                  const badge = movementBadge(m.type);
+                  const badge = movementBadge((m as any).movement_type || m.type);
                   const isAdd = (m.quantity_changed ?? 0) >= 0;
                   return (
                     <div key={m.id} style={{

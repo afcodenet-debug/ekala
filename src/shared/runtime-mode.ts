@@ -1,4 +1,4 @@
-export type RuntimeMode = 'local' | 'cloud';
+export type RuntimeMode = 'LOCAL' | 'CLOUD';
 
 const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '0.0.0.0', '::1', '[::1]']);
 
@@ -29,5 +29,5 @@ export function isLocalRuntimeOrigin(value?: string | null): boolean {
 }
 
 export function resolveRuntimeMode(value?: string | null): RuntimeMode {
-  return isLocalRuntimeOrigin(value) ? 'local' : 'cloud';
+  return isLocalRuntimeOrigin(value) ? 'LOCAL' : 'CLOUD';
 }
