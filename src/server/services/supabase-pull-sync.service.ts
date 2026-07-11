@@ -201,18 +201,56 @@ async function pullOrders(supabase: SupabaseClient, since: string, tenantId: num
       });
     }
 
+    // ─── Standardisation de la source ─────────────────────────────────────
+    // La valeur 'source' dans Supabase peut être :
+    //   'local'  → commande passée depuis le POS cloud (CP)
+    //   'qr'     → commande passée depuis le QR menu public (QR)
+    //   'pos'    → commande passée depuis le POS local (LP)
+    // On normalise en codes courts pour l'affichage UX :
+    //   CP = Cloud POS
+    //   LP = Local POS
+    //   QR = QR Menu
+    const rawSource = (o.source || '').toLowerCase();
+    let normalizedSource: string;
+    if (rawSource === 'qr') {
+      normalizedSource = 'QR';
+    } else if (rawSource === 'pos' || rawSource === 'lp') {
+      normalizedSource = 'LP';
+    } else {
+      // 'local', 'cloud', 'cp', ou toute autre valeur → CP (Cloud POS)
+      normalizedSource = 'CP';
+    }
+
+    // ─── Résolution du table_id ────────────────────────────────────────────
+    // Le table_id dans Supabase est un remote_id. On doit le mapper vers l'ID
+    // local SQLite. Si la table n'existe pas localement, on met NULL.
+    if (tableId === o.table_id && !localTable) {
+      // tableId n'a pas été résolu (c'est le remote_id) → on essaie par remote_id
+      const fallbackTable = db.prepare('SELECT id FROM restaurant_tables WHERE remote_id = ?').get(o.table_id) as any;
+      if (fallbackTable) {
+        console.log(`[PullSync] Resolved table remote_id ${o.table_id} → local id ${fallbackTable.id}`);
+      }
+    }
+
     if (existing) {
-      const localStatus = (existing as any).status;
+      // ⭐ PRIORITÉ AU STATUT REMOTE : Supabase est la source de vérité pour le pull
+      // On NE conserve PAS le statut local car il pourrait être obsolète.
+      // La condition précédente (localStatus && localStatus !== 'pending') forçait
+      // le statut local à rester tel quel si différent de 'pending', ce qui empêchait
+      // les mises à jour de statut (ex: 'paid') de se propager depuis le cloud.
       const remoteStatus = o.status;
-      const statusToWrite = (localStatus && localStatus !== 'pending') ? localStatus : remoteStatus;
 
       db.prepare(`UPDATE orders SET status=?, total=?, items=?, source=?, table_id=?, waiter_id=?, updated_at=? WHERE id=?`)
-        .run(statusToWrite, o.total, JSON.stringify(transformedItems), o.source || 'qr', tableId, waiterId, o.updated_at, existing.id);
+        .run(remoteStatus, o.total, JSON.stringify(transformedItems), normalizedSource, tableId, waiterId, o.updated_at, existing.id);
+      
+      console.log(`[PullSync] UPDATED order #${existing.id} (remote=${o.id}) status=${remoteStatus} source=${normalizedSource} table=${tableId}`);
     } else {
       db.prepare(`INSERT INTO orders (remote_id, source, table_id, waiter_id, status, total, items, created_at, updated_at, tenant_id) VALUES (?,?,?,?,?,?,?,?,?,?)`)
-        .run(o.id, o.source || 'qr', tableId, waiterId, o.status, o.total, JSON.stringify(transformedItems), o.created_at, o.updated_at, tenantId);
+        .run(o.id, normalizedSource, tableId, waiterId, o.status, o.total, JSON.stringify(transformedItems), o.created_at, o.updated_at, tenantId);
       
-      if (o.status === 'pending' && o.source === 'qr') {
+      console.log(`[PullSync] INSERTED order #${o.id} (local=${db.prepare('SELECT last_insert_rowid()').get()}) status=${o.status} source=${normalizedSource} table=${tableId}`);
+
+      if (o.status === 'pending' && normalizedSource === 'QR') {
         console.log(`[PullSync] 📣 NEW QR ORDER #${o.id} for Tenant #${tenantId}`);
         try {
           createNotification({
