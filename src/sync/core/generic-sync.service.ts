@@ -954,6 +954,11 @@ export class GenericSyncService {
     if (!data || data.length === 0) return 0;
 
     let applied = 0;
+    // Tracks whether any row in the batch failed to apply. If so we must NOT
+    // advance the pull cursor (see below) so the next sync cycle re-pulls and
+    // retries the failed rows instead of leaving them stranded "behind" the
+    // cursor forever (which is how 2 orders could silently disappear).
+    let hadError = false;
 
     const transaction = this.db.transaction((rows: any[]) => {
       for (const remote of rows) {
@@ -998,6 +1003,7 @@ export class GenericSyncService {
 
           applied++;
         } catch (err: any) {
+          hadError = true;
           console.error(`[GenericSync] Error pulling ${entity} #${remote.id}:`, err?.message || err);
         }
       }
@@ -1005,7 +1011,17 @@ export class GenericSyncService {
 
     transaction(data);
 
-    if (data.length > 0) {
+    // Self-healing cursor:
+    // - If EVERY row applied cleanly, advance the cursor past this batch as usual.
+    // - If ANY row failed to apply, reset the cursor to epoch so the NEXT sync
+    //   cycle re-pulls the whole window and retries the rows that failed (e.g.
+    //   orders whose FK referenced a not-yet-synced table/user). Without this a
+    //   failed row is left permanently "behind" the cursor and the local SQLite
+    //   DB silently loses that record (this is exactly how 2 orders went missing).
+    if (hadError) {
+      this.cursor.reset(cursorKey);
+      console.warn(`[GenericSync] Pull of ${entity}: ${applied} applied but some rows failed — resetting cursor to retry next cycle`);
+    } else if (data.length > 0) {
       const lastTs = (data as any[])[data.length - 1].updated_at || (data as any[])[data.length - 1].created_at;
       if (lastTs) {
         this.cursor.set(cursorKey, lastTs instanceof Date ? lastTs.toISOString() : String(lastTs));
@@ -1140,7 +1156,14 @@ export class GenericSyncService {
       for (const [field, targetTable] of Object.entries(foreignKeys)) {
         if (fields[field] !== undefined && fields[field] !== null) {
           const localFkId = this.getLocalId(targetTable, fields[field]);
-          if (localFkId) fields[field] = localFkId;
+          // If the referenced local row isn't synced yet, store NULL instead of
+          // the dangling remote id. Keeping the remote id would violate the local
+          // FK constraint and cause the whole row to be skipped (e.g. an order
+          // whose table_id/waiter_id points to a not-yet-pulled table/user would
+          // silently disappear from the local SQLite DB). The order must still
+          // exist locally even if a related row is missing — mirroring the push
+          // path's nullify behaviour and the previous dedicated order PullSync.
+          fields[field] = localFkId ?? null;
         }
       }
     }

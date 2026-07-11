@@ -9,6 +9,7 @@
 // =============================================================================
 
 import { db } from '../../db/database';
+import { dataSource } from '../../infrastructure/data-source-manager';
 import { sendEmailDirect, loadRawSettings } from '../../services/notification.service';
 import { buildVoucherExpiredEmail } from '../../services/email-templates';
 
@@ -185,6 +186,13 @@ async function cleanupOldLogs(): Promise<number> {
  * Exécute toutes les tâches d'expiration
  */
 export async function runExpirationCron(): Promise<void> {
+  // CLOUD mode (RENDER_CLOUD_MODE) has no local SQLite — these tables live in
+  // Supabase and are managed there. The `db` proxy has no `.prepare`, so running
+  // this cron would crash with "db.prepare is not a function". Skip it entirely.
+  if (dataSource.isCloud()) {
+    return;
+  }
+
   if (isRunning) {
     console.log('[ExpirationCron] Already running, skipping...');
     return;

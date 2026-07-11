@@ -252,6 +252,19 @@ router.post('/sync/retry-failed', requirePlatformAuth, async (req: Request, res:
   }
 });
 
+// POST /platform/sync/resync — Force full resync (reset all pull cursors + re-pull)
+router.post('/sync/resync', requirePlatformAuth, async (_req: Request, res: Response) => {
+  try {
+    const { getOrchestratorV2 } = require('../../sync');
+    const orchestrator = getOrchestratorV2();
+    await orchestrator.forceFullResync();
+    res.json({ success: true, message: 'Full resync completed — all pull cursors reset and re-pull triggered' });
+  } catch (err: any) {
+    console.error('[SyncDiagnostic] Error during full resync:', err);
+    res.status(500).json({ error: 'INTERNAL_ERROR', message: err?.message || 'Force resync failed' });
+  }
+});
+
 // DELETE /platform/sync/cleanup — Nettoyer les vieux jobs complétés
 router.delete('/sync/cleanup', requirePlatformAuth, async (req: Request, res: Response) => {
   try {
