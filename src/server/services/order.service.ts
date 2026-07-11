@@ -470,8 +470,14 @@ export class OrderService {
         if (error) throw error;
 
         // Miroir bidirectionnel : la commande cloud est aussi matérialisée dans SQLite
+        // (no-op si aucune SQLite locale disponible, ex. RENDER_CLOUD_MODE sur Render
+        // où il n'y a pas de fichier SQLite — la commande reste dans Supabase et sera
+        // tirée par l'app locale en mode LOCAL via le pull du moteur de sync).
         try {
-          mirrorRemoteOrderToLocal(tenantId, data, normalizedItems);
+          const mirrorRes = await mirrorRemoteOrderToLocal(tenantId, data, normalizedItems);
+          if (!mirrorRes.applied) {
+            console.log(`[OrderService] Order #${data?.id} saved to Supabase only (local SQLite mirror skipped — no local DB in this environment). The local app (mode LOCAL) will pull it via sync.`);
+          }
         } catch (mirrorErr: any) {
           console.warn('[OrderService] Cloud→SQLite mirror failed (non-critical):', mirrorErr?.message);
         }

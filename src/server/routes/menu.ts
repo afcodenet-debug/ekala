@@ -5,6 +5,7 @@ import { getProductRepository } from '../products/repositories/product.repositor
 import { getTableRepository } from '../tables/repositories/table.repository.provider';
 import { env } from '../config/env';
 import db from '../db/database';
+import { mirrorRemoteRecord } from '../services/remote-mirror';
 
 const router = express.Router();
 
@@ -474,10 +475,19 @@ router.post('/checkout', async (req, res) => {
         tenant_id: tenantId,
         source: 'qr'
       })
-      .select('id')
+      .select('*')
       .single();
 
     if (orderError) throw orderError;
+
+    // Miroir bidirectionnel : la commande QR (cloud) est aussi matérialisée dans
+    // la SQLite locale (si disponible). Écrit directement, sans dépendre du
+    // moteur de sync — la commande apparaît immédiatement côté local.
+    try {
+      mirrorRemoteRecord(tenantId, 'order', newOrder, enrichedItems);
+    } catch (mirrorErr: any) {
+      console.warn('[Menu] QR order cloud→SQLite mirror failed (non-critical):', mirrorErr?.message);
+    }
 
     console.log('[FORENSIC][QR_CHECKOUT] Order inserted', {
       orderId: newOrder.id,
