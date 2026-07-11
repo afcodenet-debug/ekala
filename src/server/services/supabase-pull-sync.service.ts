@@ -1,11 +1,14 @@
 /**
  * Supabase → SQLite Pull Sync Worker (Multi-tenant dynamic)
- * Makes QR orders created via the public menu (Supabase) visible in the local POS (SQLite).
+ * Synchronise les orders, order_items ET restaurant_tables depuis Supabase
+ * vers la SQLite locale pour le mode LOCAL (Electron).
+ * 
+ * V2 : Ajout du pull des restaurant_tables pour la synchronisation bidirectionnelle
+ * des tables de restaurant (créées/modifiées dans le cloud → visibles en local).
  */
 
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { db } from '../db/database';
-import { env } from '../config/env';
 import { dataSource } from '../infrastructure/data-source-manager';
 import { createNotification } from './notification.repository';
 
@@ -24,6 +27,9 @@ interface PullStatus {
   ordersInserted: number;
   ordersUpdated: number;
   itemsPulled: number;
+  tablesPulled: number;
+  tablesInserted: number;
+  tablesUpdated: number;
   lastError: string | null;
   errors: string[];
 }
@@ -39,6 +45,9 @@ let lastPullStatus: PullStatus = {
   ordersInserted: 0,
   ordersUpdated: 0,
   itemsPulled: 0,
+  tablesPulled: 0,
+  tablesInserted: 0,
+  tablesUpdated: 0,
   lastError: null,
   errors: [],
 };
@@ -53,8 +62,6 @@ const BOOTSTRAP_LOOKBACK_MINUTES = 60;
 
 function getPullConfig(): PullConfig {
   const explicit = process.env.ENABLE_SUPABASE_PULL;
-  const hasSupabaseCreds = !!process.env.SUPABASE_URL && !!process.env.SUPABASE_SERVICE_ROLE_KEY;
-
   const dbAvailable = !!db;
 
   let enabled =
@@ -71,7 +78,7 @@ function getPullConfig(): PullConfig {
   // but GenericSync scheduler only runs when sync engine is fully initialized
   // (requires Supabase credentials + ENABLE_SUPABASE_SYNC). When running in
   // LOCAL mode without full sync engine, the PullSyncWorker is the ONLY way
-  // to get cloud orders (e.g. from QR menu or cloud POS) into the local SQLite.
+  // to get cloud data into the local SQLite.
   // The old line `if (dataSource.isLocal()) enabled = false;` was REMOVED to
   // enable bidirectional sync: local→cloud via outbox, cloud→local via this worker.
   
@@ -92,11 +99,19 @@ function getSupabaseClient(): SupabaseClient {
 function ensureRemoteSyncSchema() {
   if (!db) return;
   try {
+    // Orders
     const orderCols = db.prepare("PRAGMA table_info(orders)").all() as any[];
-    const names = orderCols.map(c => c.name);
-    if (!names.includes('remote_id')) db.exec(`ALTER TABLE orders ADD COLUMN remote_id INTEGER`);
-    if (!names.includes('source')) db.exec(`ALTER TABLE orders ADD COLUMN source TEXT DEFAULT 'local'`);
+    const orderNames = orderCols.map(c => c.name);
+    if (!orderNames.includes('remote_id')) db.exec(`ALTER TABLE orders ADD COLUMN remote_id INTEGER`);
+    if (!orderNames.includes('source')) db.exec(`ALTER TABLE orders ADD COLUMN source TEXT DEFAULT 'local'`);
     db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_remote_id ON orders(remote_id) WHERE remote_id IS NOT NULL`);
+
+    // Restaurant tables
+    const tableCols = db.prepare("PRAGMA table_info(restaurant_tables)").all() as any[];
+    const tableNames = tableCols.map(c => c.name);
+    if (!tableNames.includes('remote_id')) db.exec(`ALTER TABLE restaurant_tables ADD COLUMN remote_id INTEGER`);
+    if (!tableNames.includes('updated_at')) db.exec(`ALTER TABLE restaurant_tables ADD COLUMN updated_at DATETIME DEFAULT CURRENT_TIMESTAMP`);
+    db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_restaurant_tables_remote_id ON restaurant_tables(remote_id) WHERE remote_id IS NOT NULL`);
   } catch {}
 }
 
@@ -105,7 +120,6 @@ export async function runSupabasePullOnce(): Promise<void> {
   if (!config.enabled || isPulling) return;
 
   if (!db) {
-    // Defensive guard: should never happen if config is correct.
     lastPullStatus.lastError = '[PullSync] db is not available (SQLite disabled). Worker skipped.';
     isPulling = false;
     return;
@@ -134,6 +148,7 @@ export async function runSupabasePullOnce(): Promise<void> {
     }
 
     for (const tId of tenantIds) {
+      await pullRestaurantTables(supabase, effectiveSince, tId);
       await pullOrders(supabase, effectiveSince, tId);
       await pullOrderItems(supabase, effectiveSince, tId);
     }
@@ -153,6 +168,94 @@ export async function runSupabasePullOnce(): Promise<void> {
   }
 }
 
+/**
+ * Pull les restaurant_tables depuis Supabase vers la SQLite locale.
+ * Résout les assigned_waiter_id (FK vers users) via remote_id.
+ * Statut mapping : 'occupied'/'available'/'cleaning'/'reserved' (Supabase)
+ *              →  'active'/'out_of_service'/'cleaning'/'reserved' (local)
+ */
+async function pullRestaurantTables(supabase: SupabaseClient, since: string, tenantId: number) {
+  const { data: tables, error } = await supabase
+    .from('restaurant_tables')
+    .select('*')
+    .eq('tenant_id', tenantId)
+    .or(`updated_at.gte.${since},created_at.gte.${since}`)
+    .order('updated_at', { ascending: true });
+
+  if (error) {
+    console.warn(`[PullSync] Failed to pull restaurant_tables for tenant #${tenantId}:`, error.message);
+    return;
+  }
+  if (!tables || tables.length === 0) return;
+
+  for (const t of tables as any[]) {
+    const existing = db.prepare('SELECT id, status FROM restaurant_tables WHERE remote_id = ?').get(t.id) as any;
+
+    // Resolve assigned_waiter_id (remote_id → local id)
+    let localWaiterId: number | null = null;
+    if (t.assigned_waiter_id) {
+      const waiter = db.prepare('SELECT id FROM users WHERE remote_id = ?').get(t.assigned_waiter_id) as any;
+      if (waiter) {
+        localWaiterId = waiter.id;
+      } else {
+        // Fallback: try by direct id
+        const waiterById = db.prepare('SELECT id FROM users WHERE id = ?').get(t.assigned_waiter_id) as any;
+        if (waiterById) localWaiterId = waiterById.id;
+      }
+    }
+
+    // Status mapping: Supabase → local
+    // Supabase uses: 'occupied', 'available', 'cleaning', 'reserved'
+    // Local uses:    'active', 'out_of_service', 'cleaning', 'reserved'
+    const statusMap: Record<string, string> = {
+      'occupied': 'active',
+      'available': 'out_of_service',
+      'cleaning': 'cleaning',
+      'reserved': 'reserved',
+    };
+    const localStatus = statusMap[t.status] || t.status || 'active';
+
+    if (existing) {
+      // UPDATE existing table
+      db.prepare(`
+        UPDATE restaurant_tables 
+        SET table_number=?, capacity=?, status=?, assigned_waiter_id=?, qr_token=?, updated_at=?
+        WHERE id=?
+      `).run(
+        String(t.table_number),
+        t.capacity ?? 0,
+        localStatus,
+        localWaiterId,
+        t.qr_token ?? null,
+        t.updated_at || new Date().toISOString(),
+        existing.id
+      );
+      lastPullStatus.tablesUpdated++;
+      console.log(`[PullSync] UPDATED table #${existing.id} (remote=${t.id}) num=${t.table_number} status=${localStatus}`);
+    } else {
+      // INSERT new table
+      const result = db.prepare(`
+        INSERT INTO restaurant_tables 
+          (remote_id, table_number, capacity, status, assigned_waiter_id, qr_token, created_at, updated_at, tenant_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        t.id,
+        String(t.table_number),
+        t.capacity ?? 0,
+        localStatus,
+        localWaiterId,
+        t.qr_token ?? null,
+        t.created_at || new Date().toISOString(),
+        t.updated_at || new Date().toISOString(),
+        tenantId
+      );
+      lastPullStatus.tablesInserted++;
+      console.log(`[PullSync] INSERTED table remote=${t.id} (local=${result.lastInsertRowid}) num=${t.table_number} status=${localStatus}`);
+    }
+    lastPullStatus.tablesPulled++;
+  }
+}
+
 async function pullOrders(supabase: SupabaseClient, since: string, tenantId: number) {
   const { data: orders, error } = await supabase
     .from('orders')
@@ -169,17 +272,14 @@ async function pullOrders(supabase: SupabaseClient, since: string, tenantId: num
     
     // Resolve remote IDs to local IDs
     let localTable = db.prepare('SELECT id FROM restaurant_tables WHERE remote_id = ?').get(o.table_id) as any;
-    // Fallback: si pas trouvé par remote_id, essayer par id direct (pour sync initiale)
     if (!localTable && o.table_id) {
       localTable = db.prepare('SELECT id FROM restaurant_tables WHERE id = ?').get(o.table_id) as any;
     }
-    // Fallback ultime: essayer par table_number si on a cette info dans l'ordre Supabase
     if (!localTable && o.table?.table_number) {
       localTable = db.prepare('SELECT id FROM restaurant_tables WHERE table_number = ?').get(o.table.table_number) as any;
     }
     
     let localWaiter = db.prepare('SELECT id FROM users WHERE remote_id = ?').get(o.waiter_id) as any;
-    // Fallback pour users aussi
     if (!localWaiter && o.waiter_id) {
       localWaiter = db.prepare('SELECT id FROM users WHERE id = ?').get(o.waiter_id) as any;
     }
@@ -202,14 +302,6 @@ async function pullOrders(supabase: SupabaseClient, since: string, tenantId: num
     }
 
     // ─── Standardisation de la source ─────────────────────────────────────
-    // La valeur 'source' dans Supabase peut être :
-    //   'local'  → commande passée depuis le POS cloud (CP)
-    //   'qr'     → commande passée depuis le QR menu public (QR)
-    //   'pos'    → commande passée depuis le POS local (LP)
-    // On normalise en codes courts pour l'affichage UX :
-    //   CP = Cloud POS
-    //   LP = Local POS
-    //   QR = QR Menu
     const rawSource = (o.source || '').toLowerCase();
     let normalizedSource: string;
     if (rawSource === 'qr') {
@@ -217,27 +309,10 @@ async function pullOrders(supabase: SupabaseClient, since: string, tenantId: num
     } else if (rawSource === 'pos' || rawSource === 'lp') {
       normalizedSource = 'LP';
     } else {
-      // 'local', 'cloud', 'cp', ou toute autre valeur → CP (Cloud POS)
       normalizedSource = 'CP';
     }
 
-    // ─── Résolution du table_id ────────────────────────────────────────────
-    // Le table_id dans Supabase est un remote_id. On doit le mapper vers l'ID
-    // local SQLite. Si la table n'existe pas localement, on met NULL.
-    if (tableId === o.table_id && !localTable) {
-      // tableId n'a pas été résolu (c'est le remote_id) → on essaie par remote_id
-      const fallbackTable = db.prepare('SELECT id FROM restaurant_tables WHERE remote_id = ?').get(o.table_id) as any;
-      if (fallbackTable) {
-        console.log(`[PullSync] Resolved table remote_id ${o.table_id} → local id ${fallbackTable.id}`);
-      }
-    }
-
     if (existing) {
-      // ⭐ PRIORITÉ AU STATUT REMOTE : Supabase est la source de vérité pour le pull
-      // On NE conserve PAS le statut local car il pourrait être obsolète.
-      // La condition précédente (localStatus && localStatus !== 'pending') forçait
-      // le statut local à rester tel quel si différent de 'pending', ce qui empêchait
-      // les mises à jour de statut (ex: 'paid') de se propager depuis le cloud.
       const remoteStatus = o.status;
 
       db.prepare(`UPDATE orders SET status=?, total=?, items=?, source=?, table_id=?, waiter_id=?, updated_at=? WHERE id=?`)
@@ -248,7 +323,7 @@ async function pullOrders(supabase: SupabaseClient, since: string, tenantId: num
       db.prepare(`INSERT INTO orders (remote_id, source, table_id, waiter_id, status, total, items, created_at, updated_at, tenant_id) VALUES (?,?,?,?,?,?,?,?,?,?)`)
         .run(o.id, normalizedSource, tableId, waiterId, o.status, o.total, JSON.stringify(transformedItems), o.created_at, o.updated_at, tenantId);
       
-      console.log(`[PullSync] INSERTED order #${o.id} (local=${db.prepare('SELECT last_insert_rowid()').get()}) status=${o.status} source=${normalizedSource} table=${tableId}`);
+      console.log(`[PullSync] INSERTED order #${o.id} status=${o.status} source=${normalizedSource} table=${tableId}`);
 
       if (o.status === 'pending' && normalizedSource === 'QR') {
         console.log(`[PullSync] 📣 NEW QR ORDER #${o.id} for Tenant #${tenantId}`);
@@ -284,7 +359,6 @@ async function pullOrderItems(supabase: SupabaseClient, since: string, tenantId:
 
     const existing = db.prepare('SELECT id FROM order_items WHERE remote_id = ?').get(it.id) as any;
     if (!existing) {
-      // Resolve remote product_id to local id
       const localProd = db.prepare('SELECT id FROM products WHERE remote_id = ?').get(it.product_id) as any;
       const productId = localProd ? localProd.id : it.product_id;
 
