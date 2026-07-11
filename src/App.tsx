@@ -10,7 +10,6 @@ import ErrorBoundary from './components/ErrorBoundary';
 import { DataLoader } from './components/DataLoader';
 import { GlobalStyles } from './lib/design-system';
 import { Menu } from 'lucide-react';
-import { SubscriptionBanner } from './components/SubscriptionBanner';
 import { GlobalNotificationToast } from './components/GlobalNotificationToast';
 import { NotificationProvider } from './components/NotificationProvider';
 import { ReconnectModal } from './components/ReconnectModal';
@@ -137,7 +136,6 @@ function App() {
     <ErrorBoundary>
       <QueryClientProvider client={queryClient}>
         <I18nProvider lang={language}>
-          <SubscriptionBanner />
           <ReconnectModal />
           <SessionExpiredModal 
             isOpen={showSessionExpiredModal} 
