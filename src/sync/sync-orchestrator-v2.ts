@@ -327,13 +327,13 @@ export class SyncOrchestratorV2 {
       totalErrors += result.errors;
       console.log(`[SyncV2] ✓ Generic sync completed - Pushed: ${result.pushed}, Pulled: ${result.pulled}, Errors: ${result.errors}`);
 
-      // Phase 4: Legacy Order sync (PUSH ONLY - pas de pull)
-      const ordersPushed = await this.orderSync.pushPendingOrders(tenantId);
-      totalPushed += ordersPushed;
-
-      // Phase 5: Legacy Sale sync (PUSH ONLY - pas de pull)
-      const salesPushed = await this.saleSync.pushPendingSales(tenantId);
-      totalPushed += salesPushed;
+      // Phase 4/5: Orders & Sales sont désormais couverts par le chemin
+      // bidirectionnel générique (fullSyncForTenant → push + pull pour CHAQUE
+      // entité du registre, y compris 'order', 'order_item', 'sale', 'sale_item').
+      // Les anciens appels push-only (orderSync.pushPendingOrders /
+      // saleSync.pushPendingSales) étaient redondants et pouvaient double-pusher
+      // depuis l'outbox : on les supprime pour faire du générique l'AUTORITÉ
+      // unique de la synchronisation bidirectionnelle.
 
       // Phase 6: Vérification d'intégrité post-sync
       const fixed = await this.ensureIntegrity(tenantId);

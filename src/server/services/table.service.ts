@@ -4,6 +4,7 @@ import { getProductSyncService, withOutboxTransaction } from '../../sync';
 import { env } from '../config/env';
 import { getCurrentTenantId } from '../db/tenant-context';
 import { dataSource } from '../infrastructure/data-source-manager';
+import { mirrorRemoteRecord, deleteMirroredRecord } from './remote-mirror';
 
 export type TableStatus = 'available' | 'active' | 'reserved' | 'cleaning' | 'out_of_service';
 
@@ -305,6 +306,13 @@ export class TableService {
         throw new Error(`Erreur Supabase: ${error.message}`);
       }
 
+      // Miroir bidirectionnel : la table cloud est aussi matérialisée dans SQLite
+      try {
+        mirrorRemoteRecord(resolvedTenantId, 'restaurant_table', data);
+      } catch (mirrorErr: any) {
+        console.warn('[TableService] Cloud→SQLite mirror failed (non-critical):', mirrorErr?.message);
+      }
+
       return {
         ...data,
         status: remoteToLocalStatus(data.status) as any
@@ -418,6 +426,13 @@ export class TableService {
       if (error) throw new Error(`Erreur Supabase: ${error.message}`);
       if (!data) throw new Error('Table non trouvée');
 
+      // Miroir bidirectionnel : reflète la mise à jour dans SQLite
+      try {
+        mirrorRemoteRecord(resolvedTenantId, 'restaurant_table', data);
+      } catch (mirrorErr: any) {
+        console.warn('[TableService] Cloud→SQLite mirror failed (non-critical):', mirrorErr?.message);
+      }
+
       return {
         ...data,
         remote_id: data.id,
@@ -525,6 +540,12 @@ export class TableService {
         } else {
           deletedFromSupabase = true;
           console.log(`[TableService] Deleted table ${id} from Supabase (tenant ${resolvedTenantId})`);
+          // Miroir bidirectionnel : supprime aussi la table de la SQLite locale
+          try {
+            deleteMirroredRecord(resolvedTenantId, 'restaurant_table', Number(id));
+          } catch (mirrorErr: any) {
+            console.warn('[TableService] Cloud→SQLite mirror delete failed (non-critical):', mirrorErr?.message);
+          }
         }
       } catch (supabaseErr: any) {
         console.warn('[TableService] Supabase delete error:', supabaseErr.message);

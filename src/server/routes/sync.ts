@@ -89,13 +89,10 @@ router.post('/trigger', requireRole(['admin', 'manager']), async (_req: any, res
 });
 
 /**
- * POST /api/sync/orders/reconcile
- * Réconcilie immédiatement les commandes (orders + order_items) entre Supabase
- * et SQLite pour un tenant : pull des changements distants + application du
- * miroir local. Résout le cas où une commande créée en mode cloud n'apparaît
- * pas côté SQLite. Renvoie le nombre de lignes appliquées et les conflits détectés.
+ * Réconcilie une entité (pull Supabase → SQLite) pour un tenant. Factorisé pour
+ * être réutilisé par les routes /reconcile et /orders/reconcile.
  */
-router.post('/orders/reconcile', requireRole(['admin', 'manager']), async (req: any, res: any) => {
+async function reconcileEntity(req: any, res: any, entity: string) {
   try {
     let orch;
     try {
@@ -112,15 +109,18 @@ router.post('/orders/reconcile', requireRole(['admin', 'manager']), async (req: 
     const tenantId = String(req.body?.tenantId || req.tenant_id || req.query.tenantId || '1');
     const generic = orch.getGenericSync();
 
-    const pulledOrders = await generic.pullByEntity('order', tenantId);
-    const pulledItems = await generic.pullByEntity('order_item', tenantId);
+    const pulled: Record<string, number> = {};
+    pulled[entity] = await generic.pullByEntity(entity, tenantId);
+    if (entity === 'order') {
+      pulled['order_item'] = await generic.pullByEntity('order_item', tenantId);
+    }
 
     // Conflits encore non résolus (journalisés dans sync_conflicts)
     let conflictsRemaining = 0;
     try {
       const resolver = (generic as any).conflictResolver;
       if (resolver?.getUnresolvedConflicts) {
-        conflictsRemaining = resolver.getUnresolvedConflicts('order').length;
+        conflictsRemaining = resolver.getUnresolvedConflicts(entity).length;
       }
     } catch { conflictsRemaining = 0; }
 
@@ -128,14 +128,32 @@ router.post('/orders/reconcile', requireRole(['admin', 'manager']), async (req: 
       reconciled: true,
       online: true,
       tenantId,
-      pulledOrders,
-      pulledItems,
+      entity,
+      pulled,
       conflictsRemaining,
-      message: 'Orders reconciled (Supabase → SQLite)',
+      message: `Entity "${entity}" reconciled (Supabase → SQLite)`,
     });
   } catch (err: any) {
-    res.status(500).json({ error: err?.message || 'Failed to reconcile orders' });
+    res.status(500).json({ error: err?.message || 'Failed to reconcile' });
   }
+}
+
+/**
+ * POST /api/sync/reconcile
+ * Réconcilie immédiatement une entité (par défaut orders + order_items) entre
+ * Supabase et SQLite pour un tenant. Générique — passez `{ "entity": "product" }`
+ * pour une autre table. Résout le cas où une écriture cloud n'apparaît pas côté SQLite.
+ */
+router.post('/reconcile', requireRole(['admin', 'manager']), async (req: any, res: any) => {
+  const entity = String(req.body?.entity || 'order');
+  return reconcileEntity(req, res, entity);
+});
+
+/**
+ * @deprecated Préférer POST /api/sync/reconcile (générique). Conservé pour compat.
+ */
+router.post('/orders/reconcile', requireRole(['admin', 'manager']), async (req: any, res: any) => {
+  return reconcileEntity(req, res, 'order');
 });
 
 export default router;

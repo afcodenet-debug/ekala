@@ -993,11 +993,11 @@ export class GenericSyncService {
           const remoteTs = remote.updated_at || remote.created_at;
           const localTs = local?.updated_at || local?.created_at;
 
-          // ─── Gestion de conflits (orders / order_items) ──────────────────────
+          // ─── Gestion de conflits (toutes entités) ───────────────────────────
           // Si une ligne locale existe ET a été modifiée de façon concurrente au
           // remote (écart de version > 1), on journalise le conflit dans
           // sync_conflicts (résolution LWW versionnée) avant d'appliquer le remote.
-          if ((def.entity === 'order' || def.entity === 'order_item') && local && local.version) {
+          if (local && local.version) {
             const isConflict = this.conflictResolver.detectConflict(
               def.entity,
               local.id,
@@ -1061,6 +1061,82 @@ export class GenericSyncService {
     }
 
     return applied;
+  }
+
+  /* ==================================================================
+   *  MIRROR — Supabase → SQLite immédiat (généralisé à toutes les entités)
+   * ==================================================================
+   *
+   * Réplique UNE ligne distante dans la SQLite locale, en réutilisant
+   * EXACTEMENT la même logique que le pull générique (résolution de FK,
+   * champs autorisés, JSON, résolution de conflits LWW). C'est l'unique
+   * implémentation du "remote → local" : le pull périodique ET le miroir
+   * immédiat appelé depuis les services en mode cloud passent par ici.
+   *
+   * Idempotent : clé par remote_id (ou id direct). Pour 'order', les
+   * 'order_item' fournis dans `relatedItems` sont mirroring en cascade.
+   */
+  async mirrorRemoteRecordToLocal(
+    entity: string,
+    tenantId: string,
+    remote: any,
+    relatedItems?: any[]
+  ): Promise<{ applied: boolean; localId?: number; conflictLogged?: boolean }> {
+    const def = getEntityDef(entity);
+    if (!def || !remote || remote.id == null) return { applied: false };
+
+    const remoteId = Number(remote.id);
+    if (isNaN(remoteId)) return { applied: false };
+
+    try {
+      const local = this.findLocalRow(def, remoteId, remote);
+
+      // Détection + journalisation de conflit (même logique que le pull)
+      let conflictLogged = false;
+      const localTs = (local?.updated_at || local?.created_at) ?? '';
+      const remoteTs = (remote.updated_at || remote.created_at) ?? '';
+      if (local && local.version) {
+        const isConflict = this.conflictResolver.detectConflict(
+          entity, local.id, remoteId, localTs, remoteTs,
+          Number(local.version || 1), Number(remote.version || 1)
+        );
+        if (isConflict) {
+          const resolution = this.conflictResolver.resolveLWW(
+            Number(local.version || 1), Number(remote.version || 1), localTs, remoteTs
+          );
+          this.conflictResolver.logResolvedConflict(
+            { entity, localId: local.id, remoteId },
+            entity,
+            { version: local.version, updated_at: localTs },
+            { version: remote.version, updated_at: remoteTs },
+            resolution,
+            `Concurrent modification on mirror (local v${local.version} vs remote v${remote.version}) — ${resolution}`
+          );
+          conflictLogged = true;
+        }
+      }
+
+      const fields = this.buildPullFields(def, remote, local, remoteId, tenantId);
+      this.applyPullRow(def, fields, local, remoteId, remote);
+      const localId = local ? local.id : remoteId;
+
+      // Cascade pour les order_items (la commande porte ses items en ligne)
+      if (entity === 'order' && relatedItems && relatedItems.length) {
+        for (const item of relatedItems) {
+          if (item && item.id != null) {
+            // L'item peut ne pas porter order_id (ex. items normalisés côté app) :
+            // on le dérive de la commande parente pour résoudre la FK locale.
+            const childItem = { ...item, order_id: item.order_id ?? remoteId };
+            await this.mirrorRemoteRecordToLocal('order_item', tenantId, childItem);
+          }
+        }
+      }
+
+      return { applied: true, localId, conflictLogged };
+    } catch (err: any) {
+      console.warn(`[GenericSync] mirrorRemoteRecordToLocal(${entity}) failed:`, err?.message || err);
+      return { applied: false };
+    }
   }
 
   private findLocalRow(

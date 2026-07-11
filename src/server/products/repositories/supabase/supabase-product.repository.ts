@@ -4,6 +4,7 @@ import { IProductRepository } from '../product.repository.interface';
 import { ProductEntity } from '../../types/product.types';
 import { getRequestId, logTrace } from '../../../utils/trace-utils';
 import { WriteInterceptor } from '../../../infrastructure/synchronization/write-interceptor';
+import { mirrorRemoteRecord, deleteMirroredRecord } from '../../../services/remote-mirror';
 
 export class SupabaseProductRepository implements IProductRepository {
   private supabase = createClient(env.SUPABASE_URL!, env.SUPABASE_SERVICE_ROLE_KEY!, {
@@ -137,6 +138,14 @@ export class SupabaseProductRepository implements IProductRepository {
       throw err;
     }
     if (error) throw error;
+
+    // Miroir bidirectionnel : le produit cloud est aussi matérialisé dans SQLite
+    try {
+      mirrorRemoteRecord(Number(tenantId) || Number(data.tenant_id), 'product', data);
+    } catch (mirrorErr: any) {
+      console.warn('[ProductRepo] Cloud→SQLite mirror failed (non-critical):', mirrorErr?.message);
+    }
+
     return this.map(data);
   }
 
@@ -177,6 +186,14 @@ export class SupabaseProductRepository implements IProductRepository {
       throw err;
     }
     if (error) throw error;
+
+    // Miroir bidirectionnel : reflète la mise à jour dans SQLite
+    try {
+      mirrorRemoteRecord(Number(tenantId) || Number(data.tenant_id), 'product', data);
+    } catch (mirrorErr: any) {
+      console.warn('[ProductRepo] Cloud→SQLite mirror failed (non-critical):', mirrorErr?.message);
+    }
+
     return this.map(data);
   }
 
@@ -212,6 +229,13 @@ export class SupabaseProductRepository implements IProductRepository {
       throw err;
     }
     if (error) throw error;
+
+    // Miroir bidirectionnel : supprime aussi le produit de la SQLite locale
+    try {
+      deleteMirroredRecord(Number(tenantId) || 0, 'product', Number(id));
+    } catch (mirrorErr: any) {
+      console.warn('[ProductRepo] Cloud→SQLite mirror delete failed (non-critical):', mirrorErr?.message);
+    }
   }
 
   private map(row: any): ProductEntity {
