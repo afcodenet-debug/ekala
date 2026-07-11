@@ -3,6 +3,7 @@ import { notifyOrderCheckout, loadRawSettings } from '../services/notification.s
 import { getOrderSyncService, getProductSyncService, withOutboxTransaction, isSyncEnabled } from '../../sync';
 import { getCurrentTenantId } from '../db/tenant-context';
 import { dataSource } from '../infrastructure/data-source-manager';
+import { mirrorRemoteOrderToLocal, deleteMirroredOrder } from './order-local-mirror';
 
 export interface OrderItem {
   id?: number;
@@ -467,6 +468,14 @@ export class OrderService {
           .single();
 
         if (error) throw error;
+
+        // Miroir bidirectionnel : la commande cloud est aussi matérialisée dans SQLite
+        try {
+          mirrorRemoteOrderToLocal(tenantId, data, normalizedItems);
+        } catch (mirrorErr: any) {
+          console.warn('[OrderService] Cloud→SQLite mirror failed (non-critical):', mirrorErr?.message);
+        }
+
         return {
           ...data,
           items: normalizedItems
@@ -627,6 +636,13 @@ export class OrderService {
         if (error) throw error;
         if (!data) throw new Error('Order not found');
 
+        // Miroir bidirectionnel : reflète la mise à jour dans SQLite
+        try {
+          mirrorRemoteOrderToLocal(tenantId, data, normalizedItems);
+        } catch (mirrorErr: any) {
+          console.warn('[OrderService] Cloud→SQLite mirror failed (non-critical):', mirrorErr?.message);
+        }
+
         return {
           ...data,
           items: normalizedItems
@@ -715,6 +731,13 @@ export class OrderService {
 
         if (error) throw error;
         if (!data) throw new Error('Order not found');
+
+        // Miroir bidirectionnel : reflète le changement de statut dans SQLite
+        try {
+          mirrorRemoteOrderToLocal(tenantId, data);
+        } catch (mirrorErr: any) {
+          console.warn('[OrderService] Cloud→SQLite mirror failed (non-critical):', mirrorErr?.message);
+        }
 
         // 2. Handle table status side-effects (matching local behavior)
         if (status === 'paid' && data.table_id) {
@@ -906,6 +929,13 @@ export class OrderService {
           .eq('tenant_id', tenantId);
 
         if (error) throw error;
+
+        // Miroir bidirectionnel : supprime aussi la commande de la SQLite locale
+        try {
+          deleteMirroredOrder(tenantId, id);
+        } catch (mirrorErr: any) {
+          console.warn('[OrderService] Cloud→SQLite mirror delete failed (non-critical):', mirrorErr?.message);
+        }
         return;
       } catch (err: any) {
         console.error('[OrderService] Supabase deleteOrder failed:', err?.message || err);

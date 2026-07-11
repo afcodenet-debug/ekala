@@ -66,6 +66,36 @@ router.get('/status', async (_req: any, res: any) => {
  * Supabase est joignable. Silencieux si hors-ligne.
  */
 router.post('/trigger', requireRole(['admin', 'manager']), async (_req: any, res: any) => {
+   try {
+     let orch;
+     try {
+       orch = getOrchestratorV2();
+     } catch {
+       return res.status(503).json({ error: 'SYNC_DISABLED', message: 'Sync engine not enabled' });
+     }
+
+     const reachable = await orch.isSupabaseReachable();
+     if (!reachable) {
+       return res.status(200).json({ triggered: false, online: false, message: 'Supabase not reachable — sync skipped' });
+     }
+
+     // Fire-and-forget : on ne bloque pas la réponse sur le cycle complet.
+     orch.triggerSync().catch((e: any) => console.error('[Sync] Manual trigger failed:', e?.message));
+
+     res.status(202).json({ triggered: true, online: true, message: 'Sync cycle started' });
+   } catch (err: any) {
+     res.status(500).json({ error: err?.message || 'Failed to trigger sync' });
+   }
+});
+
+/**
+ * POST /api/sync/orders/reconcile
+ * Réconcilie immédiatement les commandes (orders + order_items) entre Supabase
+ * et SQLite pour un tenant : pull des changements distants + application du
+ * miroir local. Résout le cas où une commande créée en mode cloud n'apparaît
+ * pas côté SQLite. Renvoie le nombre de lignes appliquées et les conflits détectés.
+ */
+router.post('/orders/reconcile', requireRole(['admin', 'manager']), async (req: any, res: any) => {
   try {
     let orch;
     try {
@@ -76,15 +106,35 @@ router.post('/trigger', requireRole(['admin', 'manager']), async (_req: any, res
 
     const reachable = await orch.isSupabaseReachable();
     if (!reachable) {
-      return res.status(200).json({ triggered: false, online: false, message: 'Supabase not reachable — sync skipped' });
+      return res.status(200).json({ reconciled: false, online: false, message: 'Supabase not reachable — reconcile skipped' });
     }
 
-    // Fire-and-forget : on ne bloque pas la réponse sur le cycle complet.
-    orch.triggerSync().catch((e: any) => console.error('[Sync] Manual trigger failed:', e?.message));
+    const tenantId = String(req.body?.tenantId || req.tenant_id || req.query.tenantId || '1');
+    const generic = orch.getGenericSync();
 
-    res.status(202).json({ triggered: true, online: true, message: 'Sync cycle started' });
+    const pulledOrders = await generic.pullByEntity('order', tenantId);
+    const pulledItems = await generic.pullByEntity('order_item', tenantId);
+
+    // Conflits encore non résolus (journalisés dans sync_conflicts)
+    let conflictsRemaining = 0;
+    try {
+      const resolver = (generic as any).conflictResolver;
+      if (resolver?.getUnresolvedConflicts) {
+        conflictsRemaining = resolver.getUnresolvedConflicts('order').length;
+      }
+    } catch { conflictsRemaining = 0; }
+
+    res.status(200).json({
+      reconciled: true,
+      online: true,
+      tenantId,
+      pulledOrders,
+      pulledItems,
+      conflictsRemaining,
+      message: 'Orders reconciled (Supabase → SQLite)',
+    });
   } catch (err: any) {
-    res.status(500).json({ error: err?.message || 'Failed to trigger sync' });
+    res.status(500).json({ error: err?.message || 'Failed to reconcile orders' });
   }
 });
 

@@ -993,6 +993,38 @@ export class GenericSyncService {
           const remoteTs = remote.updated_at || remote.created_at;
           const localTs = local?.updated_at || local?.created_at;
 
+          // ─── Gestion de conflits (orders / order_items) ──────────────────────
+          // Si une ligne locale existe ET a été modifiée de façon concurrente au
+          // remote (écart de version > 1), on journalise le conflit dans
+          // sync_conflicts (résolution LWW versionnée) avant d'appliquer le remote.
+          if ((def.entity === 'order' || def.entity === 'order_item') && local && local.version) {
+            const isConflict = this.conflictResolver.detectConflict(
+              def.entity,
+              local.id,
+              remoteId,
+              localTs || '',
+              remoteTs || '',
+              Number(local.version || 1),
+              Number(remote.version || 1)
+            );
+            if (isConflict) {
+              const resolution = this.conflictResolver.resolveLWW(
+                Number(local.version || 1),
+                Number(remote.version || 1),
+                localTs || '',
+                remoteTs || ''
+              );
+              this.conflictResolver.logResolvedConflict(
+                { entity: def.entity, localId: local.id, remoteId },
+                def.entity,
+                { version: local.version, updated_at: localTs },
+                { version: remote.version, updated_at: remoteTs },
+                resolution,
+                `Concurrent modification on pull (local v${local.version} vs remote v${remote.version}) — ${resolution}`
+              );
+            }
+          }
+
           const shouldApply =
             !local || !localTs || (remoteTs && new Date(remoteTs) > new Date(localTs)) || isRemoteSoftDeleted;
 
