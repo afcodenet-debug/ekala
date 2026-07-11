@@ -38,8 +38,8 @@ import billingRoutes from './routes/billing.routes';
 import billingDebugRoutes from './routes/billing-debug.routes';
 import subscriptionRoutes from './routes/subscription.routes';
 import { db, initializeDatabase } from './db/database';
-import { startSupabasePullWorker, getPullSyncStatus } from './services/supabase-pull-sync.service';
-import { startSupabaseRealtimePull, getSupabaseRealtimeStatus } from './services/supabase-realtime-sync.service';
+import { getPullSyncStatus } from './services/supabase-pull-sync.service';
+import { getSupabaseRealtimeStatus } from './services/supabase-realtime-sync.service';
 import { startScheduledReports } from './services/scheduled-reports.service';
 // Note: Direct sync imports not needed here - sync is initialized via require() inside listen() callback
 // to ensure db is ready. The sync engine uses the V2 orchestrator for all tables.
@@ -693,15 +693,15 @@ app.listen(PORT, async () => {
   dataSource.logStatus();
   console.log('[RENDER BOOT] endpoints mounted: /health, /test, /api/auth, /api/menu, /api/tables, /api/products, /api/categories, /api/orders, /api/sales, /api/expenses, /api/dashboard, /api/users, /api/settings, /api/logs, /api/inventory, /api/reports, /api/suppliers, /api/purchase-orders, /api/stock-adjustments');
 
-  // Lightweight Supabase → SQLite pull worker (QR orders visibility)
-  // ONLY meaningful when a real local SQLite exists (Electron / LOCAL mode).
-  // In CLOUD mode there is no local SQLite (RENDER_CLOUD_MODE forbids it), so
-  // these workers would crash every cycle on `db.prepare is not a function`.
-  // The cloud frontend reads directly from Supabase, so no pull is needed.
+  // Order (QR) pulls are now handled by the Generic Sync Engine
+  // (SyncOrchestratorV2), which pulls `order` and `order_item` uniformly with the
+  // other 26 entities on its 30s scheduler. The legacy Supabase→SQLite PullSync
+  // worker/realtime are deprecated: they used a *separate* strategy (nested
+  // order_items) that conflicted with the generic engine's per-entity pull and
+  // could double-write order_items. Delegating to the generic engine makes order
+  // sync behave exactly like products/users (single push+pull authority).
   if (dataSource.isLocal() && env.SUPABASE_URL && env.SUPABASE_SERVICE_ROLE_KEY) {
-    startSupabasePullWorker();
-    startSupabaseRealtimePull();
-    console.log('[Supabase] Local SQLite detected — started pull workers (QR orders → SQLite)');
+    console.log('[Supabase] Local SQLite detected — order pulls delegated to SyncOrchestratorV2 (generic engine)');
   } else if (dataSource.isCloud()) {
     console.log('[Supabase] CLOUD mode — skipping pull workers (no local SQLite, reads from Supabase directly)');
   } else if (dataSource.isLocal()) {

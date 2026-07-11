@@ -32,6 +32,7 @@ export function runStartupMigrations(db: Database.Database): void {
     { table: 'tenant_users', columns: ['tenant_id', 'user_id', 'remote_id', 'updated_at'] },
     { table: 'products', columns: ['tenant_id', 'remote_id', 'updated_at', 'created_by', 'updated_by'] },
     { table: 'orders', columns: ['tenant_id', 'remote_id', 'updated_at'] },
+    { table: 'order_items', columns: ['tenant_id', 'remote_id', 'updated_at', 'order_id'] },
     { table: 'categories', columns: ['tenant_id', 'remote_id', 'updated_at'] },
     { table: 'restaurant_tables', columns: ['tenant_id', 'remote_id', 'updated_at'] },
     { table: 'customers', columns: ['tenant_id', 'remote_id', 'updated_at'] },

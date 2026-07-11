@@ -150,9 +150,13 @@ export const SYNC_ENTITIES: SyncEntityDefinition[] = [
     localTable: 'order_items',
     remoteTable: 'order_items',
     syncOrder: 35,
+    // order_item now carries updated_at (Supabase + local SQLite) so the generic
+    // pull can detect ITEM UPDATES via the updated_at cursor — previously it used
+    // created_at, which never changes on an edit, so modified QR-order items were
+    // never re-pulled. This makes order_item sync behave like products/users.
     allowedFields: [...ALLOWED_BASE_NO_VERSION, 'order_id', 'product_id', 'quantity', 'unit_price', 'total_price', 'notes'],
     foreignKeys: { order_id: 'orders', product_id: 'products' },
-    hasUpdatedAt: false,
+    hasUpdatedAt: true,
     hasTenantId: true,
   },
 
