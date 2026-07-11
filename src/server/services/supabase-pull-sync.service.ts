@@ -149,6 +149,7 @@ export async function runSupabasePullOnce(): Promise<void> {
 
     for (const tId of tenantIds) {
       await pullRestaurantTables(supabase, effectiveSince, tId);
+      await pullInventoryMovements(supabase, effectiveSince, tId);
       await pullOrders(supabase, effectiveSince, tId);
       await pullOrderItems(supabase, effectiveSince, tId);
     }
@@ -365,6 +366,117 @@ async function pullOrderItems(supabase: SupabaseClient, since: string, tenantId:
       db.prepare(`INSERT INTO order_items (remote_id, order_id, product_id, quantity, unit_price, total_price, notes, created_at, tenant_id) VALUES (?,?,?,?,?,?,?,?,?)`)
         .run(it.id, parent.id, productId, it.quantity, it.unit_price, it.total_price, it.notes, it.created_at, tenantId);
       lastPullStatus.itemsPulled++;
+    }
+  }
+}
+
+/**
+ * Pull les inventory_movements depuis Supabase vers la SQLite locale.
+ * Résout les product_id (FK vers products) via remote_id.
+ * La table inventory_movements n'a pas de colonne updated_at dans Supabase,
+ * donc on utilise created_at pour le curseur.
+ */
+async function pullInventoryMovements(supabase: SupabaseClient, since: string, tenantId: number) {
+  const { data: movements, error } = await supabase
+    .from('inventory_movements')
+    .select('*')
+    .eq('tenant_id', tenantId)
+    .gte('created_at', since)
+    .order('created_at', { ascending: true });
+
+  if (error) {
+    console.warn(`[PullSync] Failed to pull inventory_movements for tenant #${tenantId}:`, error.message);
+    return;
+  }
+  if (!movements || movements.length === 0) return;
+
+  for (const m of movements as any[]) {
+    const existing = db.prepare('SELECT id FROM inventory_movements WHERE remote_id = ?').get(m.id) as any;
+
+    // Resolve product_id (remote_id → local id)
+    let localProductId: number | null = null;
+    if (m.product_id) {
+      const product = db.prepare('SELECT id FROM products WHERE remote_id = ?').get(m.product_id) as any;
+      if (product) {
+        localProductId = product.id;
+      } else {
+        // Fallback: try by direct id
+        const productById = db.prepare('SELECT id FROM products WHERE id = ?').get(m.product_id) as any;
+        if (productById) localProductId = productById.id;
+      }
+    }
+
+    // Resolve created_by / approved_by (FK vers users)
+    let localCreatedBy: number | null = null;
+    if (m.created_by) {
+      const user = db.prepare('SELECT id FROM users WHERE remote_id = ?').get(m.created_by) as any;
+      if (user) localCreatedBy = user.id;
+    }
+    let localApprovedBy: number | null = null;
+    if (m.approved_by) {
+      const user = db.prepare('SELECT id FROM users WHERE remote_id = ?').get(m.approved_by) as any;
+      if (user) localApprovedBy = user.id;
+    }
+
+    if (existing) {
+      // UPDATE existing movement
+      db.prepare(`
+        UPDATE inventory_movements 
+        SET product_id=?, movement_type=?, quantity_before=?, quantity_changed=?, quantity_after=?,
+            reference_id=?, reference_type=?, status=?, notes=?, unit_cost=?, total_value=?,
+            created_by=?, reason=?, movement_code=?, inventory_session_id=?, approved_by=?
+        WHERE id=?
+      `).run(
+        localProductId,
+        m.movement_type ?? null,
+        m.quantity_before ?? 0,
+        m.quantity_changed ?? 0,
+        m.quantity_after ?? 0,
+        m.reference_id ?? null,
+        m.reference_type ?? null,
+        m.status ?? null,
+        m.notes ?? null,
+        m.unit_cost ?? 0,
+        m.total_value ?? 0,
+        localCreatedBy,
+        m.reason ?? null,
+        m.movement_code ?? null,
+        m.inventory_session_id ?? null,
+        localApprovedBy,
+        existing.id
+      );
+      console.log(`[PullSync] UPDATED inventory_movement #${existing.id} (remote=${m.id}) type=${m.movement_type}`);
+    } else {
+      // INSERT new movement
+      const result = db.prepare(`
+        INSERT INTO inventory_movements 
+          (remote_id, product_id, movement_type, quantity_before, quantity_changed, quantity_after,
+           reference_id, reference_type, status, notes, unit_cost, total_value,
+           created_by, reason, movement_code, inventory_session_id, approved_by,
+           created_at, tenant_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        m.id,
+        localProductId,
+        m.movement_type ?? null,
+        m.quantity_before ?? 0,
+        m.quantity_changed ?? 0,
+        m.quantity_after ?? 0,
+        m.reference_id ?? null,
+        m.reference_type ?? null,
+        m.status ?? null,
+        m.notes ?? null,
+        m.unit_cost ?? 0,
+        m.total_value ?? 0,
+        localCreatedBy,
+        m.reason ?? null,
+        m.movement_code ?? null,
+        m.inventory_session_id ?? null,
+        localApprovedBy,
+        m.created_at || new Date().toISOString(),
+        tenantId
+      );
+      console.log(`[PullSync] INSERTED inventory_movement remote=${m.id} (local=${result.lastInsertRowid}) type=${m.movement_type}`);
     }
   }
 }
