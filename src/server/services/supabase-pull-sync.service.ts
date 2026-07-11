@@ -174,15 +174,24 @@ export async function runSupabasePullOnce(): Promise<void> {
       await pullOrderItems(supabase, effectiveSince, tId);
     }
 
-    // Curseur orders
+    // Curseur orders avec décalage de sécurité (-1s) pour éviter de manquer
+    // des commandes qui auraient le même timestamp que le curseur.
+    // Sans ce décalage, une commande créée dans le cloud avec updated_at
+    // égal au curseur ne serait jamais tirée.
     const orderRow = db.prepare(`SELECT MAX(updated_at) as max_ts FROM orders WHERE remote_id IS NOT NULL`).get() as any;
-    const nextCursor = orderRow?.max_ts || new Date().toISOString();
+    const nextCursor = orderRow?.max_ts 
+      ? new Date(new Date(orderRow.max_ts).getTime() - 1000).toISOString()
+      : new Date(Date.now() - 60000).toISOString();
     db.prepare(`INSERT INTO sync_metadata (key, value) VALUES ('last_supabase_pull', ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`).run(nextCursor);
 
-    // Curseur dédié produits
+    // Curseur dédié produits avec le même décalage
     const productRow = db.prepare(`SELECT MAX(updated_at) as max_ts FROM products WHERE remote_id IS NOT NULL`).get() as any;
-    const productCursor = productRow?.max_ts || new Date().toISOString();
+    const productCursor = productRow?.max_ts
+      ? new Date(new Date(productRow.max_ts).getTime() - 1000).toISOString()
+      : new Date(Date.now() - 60000).toISOString();
     db.prepare(`INSERT INTO sync_metadata (key, value) VALUES ('last_supabase_pull_products', ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`).run(productCursor);
+
+    console.log(`[PullSync] Cycle completed: cursor=${nextCursor.substring(0,19)} productsCursor=${productCursor.substring(0,19)} orders=${lastPullStatus.ordersPulled} products=${lastPullStatus.productsPulled}`);
 
     lastPullStatus.lastCursor = nextCursor;
     lastPullStatus.lastSuccessfulPullAt = new Date().toISOString();
