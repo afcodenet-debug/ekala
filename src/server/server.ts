@@ -693,15 +693,29 @@ app.listen(PORT, async () => {
   dataSource.logStatus();
   console.log('[RENDER BOOT] endpoints mounted: /health, /test, /api/auth, /api/menu, /api/tables, /api/products, /api/categories, /api/orders, /api/sales, /api/expenses, /api/dashboard, /api/users, /api/settings, /api/logs, /api/inventory, /api/reports, /api/suppliers, /api/purchase-orders, /api/stock-adjustments');
 
-  // Order (QR) pulls are now handled by the Generic Sync Engine
-  // (SyncOrchestratorV2), which pulls `order` and `order_item` uniformly with the
-  // other 26 entities on its 30s scheduler. The legacy Supabase→SQLite PullSync
-  // worker/realtime are deprecated: they used a *separate* strategy (nested
-  // order_items) that conflicted with the generic engine's per-entity pull and
-  // could double-write order_items. Delegating to the generic engine makes order
-  // sync behave exactly like products/users (single push+pull authority).
+  // ─── PullSync Worker (Supabase → SQLite) ──────────────────────────────
+  // The PullSyncWorker pulls orders (and order_items) from Supabase into the
+  // local SQLite database. It is the ONLY mechanism that makes cloud orders
+  // (created via QR menu, cloud POS, or platform) visible in the local POS.
+  //
+  // Previously disabled in LOCAL mode (dataSource.isLocal() → enabled = false),
+  // it is now re-enabled so that bidirectional sync works: local→cloud via
+  // outbox, cloud→local via this worker. The worker is configured via env vars:
+  //   ENABLE_SUPABASE_PULL=true   (required)
+  //   SUPABASE_PULL_INTERVAL_MS=5000  (optional, default 8000)
+  //
+  // The GenericSync engine also pulls orders, but only when the full sync
+  // engine is initialized (requires ENABLE_SUPABASE_SYNC=true). The PullSync
+  // worker is a lightweight alternative that works without the full sync engine.
   if (dataSource.isLocal() && env.SUPABASE_URL && env.SUPABASE_SERVICE_ROLE_KEY) {
-    console.log('[Supabase] Local SQLite detected — order pulls delegated to SyncOrchestratorV2 (generic engine)');
+    const explicit = process.env.ENABLE_SUPABASE_PULL;
+    if (explicit === 'true' || explicit === '1') {
+      const { startSupabasePullWorker } = require('./services/supabase-pull-sync.service');
+      startSupabasePullWorker();
+      console.log('[Supabase] ✅ PullSyncWorker started (Supabase → SQLite order pull active)');
+    } else {
+      console.log('[Supabase] PullSyncWorker not started — set ENABLE_SUPABASE_PULL=true to enable');
+    }
   } else if (dataSource.isCloud()) {
     console.log('[Supabase] CLOUD mode — skipping pull workers (no local SQLite, reads from Supabase directly)');
   } else if (dataSource.isLocal()) {
@@ -709,7 +723,6 @@ app.listen(PORT, async () => {
   } else {
     console.log('[Supabase] Credentials not configured — skipping pull workers');
   }
-
   // Scheduled email reports
   if (!env.RENDER_CLOUD_MODE) {
     startScheduledReports();

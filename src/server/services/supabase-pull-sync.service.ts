@@ -65,8 +65,16 @@ function getPullConfig(): PullConfig {
   // Supabase → SQLite pull is meaningless and would crash on `db.prepare`.
   if (dataSource.isCloud()) enabled = false;
   if (!dbAvailable) enabled = false;
-  if (dataSource.isLocal()) enabled = false;
 
+  // NOTE: LOCAL mode is now ALLOWED for pull when explicitly configured.
+  // Previously disabled because the GenericSync was supposed to handle pulls,
+  // but GenericSync scheduler only runs when sync engine is fully initialized
+  // (requires Supabase credentials + ENABLE_SUPABASE_SYNC). When running in
+  // LOCAL mode without full sync engine, the PullSyncWorker is the ONLY way
+  // to get cloud orders (e.g. from QR menu or cloud POS) into the local SQLite.
+  // The old line `if (dataSource.isLocal()) enabled = false;` was REMOVED to
+  // enable bidirectional sync: local→cloud via outbox, cloud→local via this worker.
+  
   return {
     enabled,
     intervalMs: parseInt(process.env.SUPABASE_PULL_INTERVAL_MS || '8000', 10),
