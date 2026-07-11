@@ -298,7 +298,11 @@ export async function request<T>(
     const controller = new AbortController();
     const isLoginEndpoint = endpoint.match(/^\/auth\/login(\/|$)/);
     const isGetTenant = endpoint.match(/^\/auth\/tenants\//);
-    const timeoutMs = isLoginEndpoint ? 5000 : isGetTenant ? 3000 : 10000;
+    const timeoutMs = isLoginEndpoint
+      ? 5000
+      : isGetTenant
+        ? 10000
+        : 10000;
     const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
     // Merge signal with any existing signal

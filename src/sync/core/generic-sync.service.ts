@@ -1368,6 +1368,26 @@ export class GenericSyncService {
       }
     }
 
+    // ── Self-heal: si order/order_item ont moins de lignes locales que distantes,
+    // le curseur est coincé (lignes ratées passées derrière) → on le reset pour
+    // que le prochain cycle re-tire tout et récupère les enregistrements manquants.
+    try {
+      for (const entity of ['order', 'order_item']) {
+        const def = getEntityDef(entity);
+        if (!def) continue;
+        const localCount = this.db.prepare(`SELECT COUNT(*) as c FROM ${def.localTable} WHERE tenant_id = ?`).get(tenantId) as any;
+        const { count: remoteCount, error } = await this.supabase
+          .from(def.remoteTable)
+          .select('*', { count: 'exact', head: true })
+          .eq('tenant_id', tenantId);
+        const remoteCountNum = remoteCount ?? 0;
+        if (!error && remoteCountNum > (localCount?.c ?? 0)) {
+          console.warn(`[SyncV2] Self-heal ${entity}: local=${localCount.c} remote=${remoteCountNum} — resetting cursor`);
+          this.cursor.reset(entity);
+        }
+      }
+    } catch {}
+
     return { pushed, pulled, errors };
   }
 
