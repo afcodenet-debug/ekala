@@ -170,17 +170,17 @@ export async function runSupabasePullOnce(): Promise<void> {
       await pullOrderItems(supabase, effectiveSince, tId);
     }
 
-    // Mise à jour du curseur avec décalage de sécurité
+    // Mise à jour du curseur avec décalage de sécurité pour éviter de manquer des commandes
     const orderRow = db.prepare(`SELECT MAX(updated_at) as max_ts FROM orders WHERE remote_id IS NOT NULL`).get() as any;
     const nextCursor = orderRow?.max_ts 
-      ? new Date(new Date(orderRow.max_ts).getTime() - 2000).toISOString()
-      : new Date(Date.now() - 120000).toISOString();
+      ? new Date(new Date(orderRow.max_ts).getTime() - 5000).toISOString()  // -5 secondes pour éviter les problèmes de timing
+      : new Date(Date.now() - 300000).toISOString();  // -5 minutes au premier démarrage
     db.prepare(`INSERT INTO sync_metadata (key, value) VALUES ('last_supabase_pull', ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`).run(nextCursor);
 
     const productRow = db.prepare(`SELECT MAX(updated_at) as max_ts FROM products WHERE remote_id IS NOT NULL`).get() as any;
     const productCursor = productRow?.max_ts
-      ? new Date(new Date(productRow.max_ts).getTime() - 2000).toISOString()
-      : new Date(Date.now() - 120000).toISOString();
+      ? new Date(new Date(productRow.max_ts).getTime() - 5000).toISOString()  // -5 secondes
+      : new Date(Date.now() - 300000).toISOString();  // -5 minutes
     db.prepare(`INSERT INTO sync_metadata (key, value) VALUES ('last_supabase_pull_products', ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`).run(productCursor);
 
     if (totalOrders === 0) {
@@ -189,7 +189,7 @@ export async function runSupabasePullOnce(): Promise<void> {
       consecutiveEmptyCycles = 0;
     }
 
-    console.log(`[PullSync] Cycle: cursor=${nextCursor.substring(0,19)} orders=${totalOrders} products=${lastPullStatus.productsPulled} emptyCycles=${consecutiveEmptyCycles}`);
+    console.log(`[PullSync] Cycle: cursor=${nextCursor.substring(0,19)} orders=${totalOrders} (inserted=${lastPullStatus.ordersInserted}, updated=${lastPullStatus.ordersUpdated}) products=${lastPullStatus.productsPulled} emptyCycles=${consecutiveEmptyCycles}`);
 
     lastPullStatus.lastCursor = nextCursor;
     lastPullStatus.lastSuccessfulPullAt = new Date().toISOString();
