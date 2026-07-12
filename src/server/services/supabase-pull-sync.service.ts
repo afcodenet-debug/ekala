@@ -1,12 +1,12 @@
 /**
  * Supabase → SQLite Pull Sync Worker (Multi-tenant dynamic)
  * V3 : Pull bidirectionnel complet pour toutes les entités.
+ * FIX: Activé en mode LOCAL (dataSource.isLocal() n'est plus un blocage)
  */
 
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { db } from '../db/database';
 import { dataSource } from '../infrastructure/data-source-manager';
-import { createNotification } from './notification.repository';
 
 let pullInterval: NodeJS.Timeout | null = null;
 let isPulling = false;
@@ -72,8 +72,10 @@ const BOOTSTRAP_LOOKBACK_MINUTES = 60;
 function getPullConfig(): PullConfig {
   const explicit = process.env.ENABLE_SUPABASE_PULL;
   const dbAvailable = !!db;
+  // FIX: Supprimé dataSource.isLocal() → enabled = false
+  // Le worker doit tourner en LOCAL pour permettre le pull cloud→local
   let enabled = explicit === 'true' || explicit === '1';
-  if (dataSource.isCloud()) enabled = false;
+  if (dataSource.isCloud()) enabled = false; // Cloud: pas de SQLite locale
   if (!dbAvailable) enabled = false;
   return {
     enabled,
@@ -97,6 +99,7 @@ function ensureRemoteSyncSchema() {
     if (!orderNames.includes('remote_id')) db.exec(`ALTER TABLE orders ADD COLUMN remote_id INTEGER`);
     if (!orderNames.includes('source')) db.exec(`ALTER TABLE orders ADD COLUMN source TEXT DEFAULT 'local'`);
     db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_remote_id ON orders(remote_id) WHERE remote_id IS NOT NULL`);
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_orders_updated_at ON orders(updated_at) WHERE updated_at IS NOT NULL`);
 
     const tableCols = db.prepare("PRAGMA table_info(restaurant_tables)").all() as any[];
     const tableNames = tableCols.map(c => c.name);
@@ -137,8 +140,6 @@ export async function runSupabasePullOnce(): Promise<void> {
     const storedCursor = (db.prepare(`SELECT value FROM sync_metadata WHERE key = 'last_supabase_pull'`).get() as any)?.value;
     const storedProductCursor = (db.prepare(`SELECT value FROM sync_metadata WHERE key = 'last_supabase_pull_products'`).get() as any)?.value;
 
-    // ⭐ SELF-HEALING : Si 3 cycles consécutifs sans commande, on recule le curseur de 5 minutes
-    // pour être sûr de ne rien manquer. Cela évite le problème du curseur trop avancé.
     let effectiveSince: string;
     let productSince: string;
     if (!hasDoneBootstrap) {
@@ -147,7 +148,6 @@ export async function runSupabasePullOnce(): Promise<void> {
       console.log(`[PullSync] BOOTSTRAP lookback enabled (${BOOTSTRAP_LOOKBACK_MINUTES}m)`);
       hasDoneBootstrap = true;
     } else if (consecutiveEmptyCycles >= 3) {
-      // Recule le curseur de 5 minutes pour forcer un re-pull
       const baseTime = storedCursor ? new Date(storedCursor).getTime() : Date.now();
       effectiveSince = new Date(baseTime - 5 * 60 * 1000).toISOString();
       productSince = storedProductCursor 
@@ -183,7 +183,6 @@ export async function runSupabasePullOnce(): Promise<void> {
       : new Date(Date.now() - 120000).toISOString();
     db.prepare(`INSERT INTO sync_metadata (key, value) VALUES ('last_supabase_pull_products', ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`).run(productCursor);
 
-    // Self-healing : si aucune commande n'a été tirée, on incrémente le compteur
     if (totalOrders === 0) {
       consecutiveEmptyCycles++;
     } else {
@@ -217,7 +216,7 @@ async function pullCategories(supabase: SupabaseClient, since: string, tenantId:
           .run(c.name, c.description || null, c.updated_at || new Date().toISOString(), existing.id);
         lastPullStatus.categoriesUpdated++;
       } else {
-        const r = db.prepare(`INSERT INTO categories (remote_id, name, description, created_at, updated_at, tenant_id) VALUES (?,?,?,?,?,?)`)
+        db.prepare(`INSERT INTO categories (remote_id, name, description, created_at, updated_at, tenant_id) VALUES (?,?,?,?,?,?)`)
           .run(c.id, c.name, c.description || null, c.created_at || new Date().toISOString(), c.updated_at || new Date().toISOString(), tenantId);
         lastPullStatus.categoriesInserted++;
       }
@@ -246,7 +245,6 @@ async function pullProducts(supabase: SupabaseClient, since: string, tenantId: n
         db.prepare(`UPDATE products SET name=?, stock_quantity=?, selling_price=?, buying_price=?, is_available=?, category_id=?, barcode=?, description=?, unit=?, image_url=?, sku=?, status=?, cost_method=?, minimum_stock=?, price=?, cost_price=?, deleted_at=?, archived_at=?, updated_at=? WHERE id=?`)
           .run(p.name, p.stock_quantity ?? 0, p.selling_price ?? p.price ?? 0, p.buying_price ?? p.cost_price ?? 0, p.is_available === true ? 1 : 0, localCategoryId, p.barcode ?? null, p.description ?? null, p.unit ?? null, p.image_url ?? null, p.sku ?? null, p.status ?? 'active', p.cost_method ?? 'average', p.minimum_stock ?? p.low_stock_threshold ?? 0, p.price ?? p.selling_price ?? 0, p.cost_price ?? p.buying_price ?? 0, p.deleted_at ?? null, p.archived_at ?? null, p.updated_at || new Date().toISOString(), existing.id);
         lastPullStatus.productsUpdated++;
-        if (oldStock !== newStock) console.log(`[PullSync] 📦 STOCK ${p.name}: ${oldStock} → ${newStock}`);
       } else {
         db.prepare(`INSERT INTO products (remote_id, name, stock_quantity, selling_price, buying_price, is_available, category_id, barcode, description, unit, image_url, sku, status, cost_method, minimum_stock, price, cost_price, deleted_at, archived_at, created_at, updated_at, tenant_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
           .run(p.id, p.name, p.stock_quantity ?? 0, p.selling_price ?? p.price ?? 0, p.buying_price ?? p.cost_price ?? 0, p.is_available === true ? 1 : 0, localCategoryId, p.barcode ?? null, p.description ?? null, p.unit ?? null, p.image_url ?? null, p.sku ?? null, p.status ?? 'active', p.cost_method ?? 'average', p.minimum_stock ?? p.low_stock_threshold ?? 0, p.price ?? p.selling_price ?? 0, p.cost_price ?? p.buying_price ?? 0, p.deleted_at ?? null, p.archived_at ?? null, p.created_at || new Date().toISOString(), p.updated_at || new Date().toISOString(), tenantId);
@@ -282,12 +280,6 @@ async function pullRestaurantTables(supabase: SupabaseClient, since: string, ten
   } catch (e: any) { console.warn(`[PullSync] tables error:`, e.message); }
 }
 
-/**
- * Pull les orders depuis Supabase vers SQLite.
- * Chaque commande est traitée individuellement avec try/catch pour qu'une
- * erreur sur une commande (ex: "Table already has an active order") n'empêche
- * PAS les autres commandes d'être synchronisées.
- */
 async function pullOrders(supabase: SupabaseClient, since: string, tenantId: number): Promise<number> {
   let count = 0;
   try {
@@ -341,12 +333,10 @@ async function pullOrders(supabase: SupabaseClient, since: string, tenantId: num
           db.prepare(`INSERT INTO orders (remote_id, source, table_id, waiter_id, status, total, items, created_at, updated_at, tenant_id) VALUES (?,?,?,?,?,?,?,?,?,?)`)
             .run(o.id, normalizedSource, tableId, waiterId, o.status, o.total, JSON.stringify(transformedItems), o.created_at, o.updated_at, tenantId);
           lastPullStatus.ordersInserted++;
-          console.log(`[PullSync] 📋 NEW order #${o.id} status=${o.status} source=${normalizedSource} table=${tableId}`);
         }
         count++;
         lastPullStatus.ordersPulled++;
       } catch (orderErr: any) {
-        // ⭐ CRITIQUE : On logge l'erreur mais on continue avec les autres commandes
         console.warn(`[PullSync] ⚠️ Skipping order #${o.id}: ${orderErr.message}`);
       }
     }

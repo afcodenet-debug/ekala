@@ -28,8 +28,14 @@ export const requireAuth = (req: AuthenticatedRequest, res: Response, next: Next
     });
   }
 
-  // Mock user - replace with actual auth
-  req.user = { id: 1, role: roleRaw };
+  // Attach the role required by the route, but PRESERVE any identity already
+  // established by JWT auth / tenant-scope (sub, tenant_id) so downstream code
+  // such as `req.user.sub` and `sales.user_id` resolution keeps working.
+  req.user = {
+    ...(req.user || {}),
+    id: (req.user && (req.user as any).id) || 1,
+    role: roleRaw,
+  } as any;
   next();
 };
 
@@ -54,7 +60,13 @@ export const requirePermission = (permission: keyof typeof PERMISSIONS) => {
       });
     }
 
-    req.user = { id: 1, role: roleRaw };
+    // Preserve any JWT/tenant-scope identity (sub, tenant_id) while attaching the
+    // role required by this route, so `req.user.sub` stays available downstream.
+    req.user = {
+      ...(req.user || {}),
+      id: (req.user && (req.user as any).id) || 1,
+      role: roleRaw,
+    } as any;
     next();
   };
 };

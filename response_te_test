@@ -36,3 +36,4 @@ Voici les verification que je viens de faire
 NB: J'ai meme redemarré le serveur et j'ai toujours le même problème. Le pull ne se fait pas correctement. Il semble que la table "orders" ait déjà un ordre actif, ce qui empêche le pull de se compléter.
  Merci de votre aide.
 
+

@@ -9,6 +9,31 @@ import { dataSource } from '../infrastructure/data-source-manager';
 
 const router = express.Router();
 
+/**
+ * Resolve a user identifier (local id, remote_id, or undefined) to a GUARANTEED
+ * existing local `users.id`. This prevents inserting a non-existent `user_id`
+ * which would violate the `sales.user_id REFERENCES users(id)` foreign key.
+ * Fallback chain: exact id → matched remote_id → any user in the tenant →
+ * any active user → any user at all.
+ */
+function resolveValidUserId(candidate: any, tenantId: any): number | null {
+  if (!db) return null;
+  const c = Number(candidate);
+  if (Number.isFinite(c) && c > 0) {
+    if (db.prepare('SELECT 1 FROM users WHERE id = ?').get(c)) return c;
+    const byRemote = db.prepare('SELECT id FROM users WHERE remote_id = ?').get(c) as { id: number } | undefined;
+    if (byRemote) return byRemote.id;
+  }
+  if (tenantId != null) {
+    const tu = db.prepare('SELECT id FROM users WHERE tenant_id = ? LIMIT 1').get(tenantId) as { id: number } | undefined;
+    if (tu) return tu.id;
+  }
+  const active = db.prepare('SELECT id FROM users WHERE is_active = 1 LIMIT 1').get() as { id: number } | undefined;
+  if (active) return active.id;
+  const anyUser = db.prepare('SELECT id FROM users LIMIT 1').get() as { id: number } | undefined;
+  return anyUser ? anyUser.id : null;
+}
+
 // Get receipt data for a sale
 router.get('/receipt/:saleId', async (req: any, res) => {
   const tenantId = req.tenant_id;
@@ -374,7 +399,10 @@ router.post('/checkout', requirePermission('PROCESS_PAYMENTS'), async (req: any,
   // ===== Mode Local (SQLite) =====
   // Resolve tenantId and user_id to local IDs to prevent FK failures
   let tenantId = req.tenant_id;
-  let user_id = normalizedUserId || req.user?.sub || 1;
+  // Prefer the JWT-authenticated subject. `req.user_id` is set by tenant-scope from
+  // the JWT `sub` and SURVIVES the mock requirePermission middleware that overwrites
+  // `req.user`. Falling back to `req.user?.sub` then to the request body user id.
+  let user_id: any = normalizedUserId ?? (req as any).user_id ?? req.user?.sub ?? null;
 
   // 1. Resolve tenantId: if current tenantId doesn't exist in 'tenants' table, try finding a valid one
   try {
@@ -390,19 +418,19 @@ router.post('/checkout', requirePermission('PROCESS_PAYMENTS'), async (req: any,
     console.warn('[Sales] Tenant resolution failed:', e);
   }
 
-  // 2. Resolve user_id: if user_id doesn't exist in 'users' table, check if it's a remote_id
+  // 2. Resolve user_id to a GUARANTEED existing local user to prevent FK failures.
+  // Never inserts a non-existent id (the old `|| 1` fallback pointed at a user that
+  // does not exist in this database, causing "FOREIGN KEY constraint failed").
   try {
-    const validUser = db ? db.prepare('SELECT id FROM users WHERE id = ?').get(user_id) : null;
-    if (db && !validUser) {
-      const remoteUser = db.prepare('SELECT id FROM users WHERE remote_id = ?').get(user_id) as { id: number } | undefined;
-      if (remoteUser) {
-        console.log(`[Sales] user_id ${user_id} not found as local ID, but found as remote_id. Using local id ${remoteUser.id}`);
-        user_id = remoteUser.id;
-      } else {
-        // Last resort: use the first admin or user ID 1
-        const firstUser = db.prepare('SELECT id FROM users WHERE role = "admin" OR is_active = 1 LIMIT 1').get() as { id: number } | undefined;
-        user_id = firstUser?.id || 1;
+    const resolved = resolveValidUserId(user_id, tenantId);
+    if (resolved != null) {
+      if (resolved !== user_id) {
+        console.log(`[Sales] Resolved user_id ${user_id} -> local id ${resolved}`);
       }
+      user_id = resolved;
+    } else {
+      console.error('[Sales] Could not resolve any valid user_id; checkout cannot satisfy sales.user_id FK. order_id=', normalizedOrderId);
+      return res.status(400).json({ error: 'Invalid user context — no valid cashier/user found for this tenant.' });
     }
   } catch (e) {
     console.warn('[Sales] User resolution failed:', e);

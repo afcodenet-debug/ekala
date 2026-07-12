@@ -281,7 +281,10 @@ export const usePOSStore = create<POSStore>((set, get) => ({
         order_id: currentOrder.id,
         items: get().cart,
         payment_method: paymentMethod,
-        user_id: authUser?.id || 1,
+        // Send the numeric local user id when available. The backend resolves the
+        // cashier from the JWT subject as a fallback, so we must NOT hardcode `1`
+        // (no such user exists -> FOREIGN KEY constraint failed on sales.user_id).
+        user_id: typeof authUser?.id === 'number' ? authUser.id : undefined,
         discount: currentOrder.discount || 0,
         tax: currentOrder.tax || 0
       };

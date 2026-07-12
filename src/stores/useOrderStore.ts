@@ -91,11 +91,17 @@ export const useOrderStore = create<OrderStore>((set, get) => ({
   })),
 
   fetchActiveOrders: async (silent = false) => {
-    const { userId, role, _tokenExpired } = get();
+    const { userId, role } = get();
+    const authState = useAuthStore.getState();
     
-    // Guard: don't fetch if not authenticated or token expired
-    if (!useAuthStore.getState().isAuthenticated || _tokenExpired) {
+    // Guard: don't fetch if not authenticated
+    if (!authState.isAuthenticated) {
       return;
+    }
+    
+    // Reset _tokenExpired if user is actually authenticated (token might have been refreshed)
+    if (get()._tokenExpired && authState.isAuthenticated) {
+      set({ _tokenExpired: false });
     }
     
     try {
@@ -125,10 +131,16 @@ export const useOrderStore = create<OrderStore>((set, get) => ({
   },
 
   fetchAllOrders: async (silent = false) => {
-    const { userId, role, filters, _tokenExpired } = get();
+    const { userId, role, filters } = get();
+    const authState = useAuthStore.getState();
+    
+    // Reset _tokenExpired if user is actually authenticated (token might have been refreshed)
+    if (get()._tokenExpired && authState.isAuthenticated) {
+      set({ _tokenExpired: false });
+    }
     
     // Guard: don't fetch if token expired
-    if (_tokenExpired) {
+    if (get()._tokenExpired) {
       return;
     }
     
@@ -179,7 +191,13 @@ export const useOrderStore = create<OrderStore>((set, get) => ({
     try {
       const newOrder: any = await api.orders.create(orderData);
       if (newOrder) {
-        set({ activeOrders: [...get().activeOrders, newOrder as Order] });
+        // Update both activeOrders AND allOrders so the order appears immediately
+        // on both the POS sidebar and the /orders management page
+        const state = get();
+        set({ 
+          activeOrders: [...state.activeOrders, newOrder as Order],
+          allOrders: [...state.allOrders, newOrder as Order]
+        });
 
         // === TRANSACTIONAL OUTBOX QUEUE (enforced for future offline-first) ===
         // When running in Electron main with local SQLite, the real DB write + queue
