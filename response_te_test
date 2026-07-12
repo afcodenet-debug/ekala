@@ -1,0 +1,38 @@
+ekala-auth:"{"state":{"user":{"id":31,"full_name":"Melina KABEDI","email":"meyimelina1@gmail.com","phone":"+2607655443","username":"kabedi","role":"admin","is_active":1,"tenant_id":16,"tenant_name":"MAKUTANO","tenant_slug":"makutano","status":"active","plan_name":"Basic Mensuel","expires_at":"2026-07-30 14:13:55"},"token":"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOjMxLCJ0ZW5hbnRfaWQiOjE2LCJyb2xlIjoiYWRtaW4iLCJlbWFpbCI6Im1leWltZWxpbmExQGdtYWlsLmNvbSIsImZ1bGxfbmFtZSI6Ik1lbGluYSBLQUJFREkiLCJ0ZW5hbnRfbmFtZSI6Ik1BS1VUQU5PIiwidGVuYW50X3NsdWciOiJtYWt1dGFubyIsImlhdCI6MTc4MzgwMTExOSwiZXhwIjoxNzgzODg3NTE5fQ.SDVss3pYMdFfxVLE8zszRkTdl3JyNLKxOLIzAkz2FfI","isAuthenticated":true,"loginTimestamp":null},"version":0}"
+ekala-auth:"{"state":{"user":{"id":31,"full_name":"Melina KABEDI","email":"meyimelina1@gmail.com","phone":"+2607655443","username":"kabedi","role":"admin","is_active":1,"tenant_id":16,"tenant_name":"MAKUTANO","tenant_slug":"makutano","status":"active","plan_name":"Basic Mensuel","expires_at":"2026-07-30 14:13:55"},"token":"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOjMxLCJ0ZW5hbnRfaWQiOjE2LCJyb2xlIjoiYWRtaW4iLCJlbWFpbCI6Im1leWltZWxpbmExQGdtYWlsLmNvbSIsImZ1bGxfbmFtZSI6Ik1lbGluYSBLQUJFREkiLCJ0ZW5hbnRfbmFtZSI6Ik1BS1VUQU5PIiwidGVuYW50X3NsdWciOiJtYWt1dGFubyIsImlhdCI6MTc4MzgzNTA0NywiZXhwIjoxNzgzOTIxNDQ3fQ.LgzCCXXI7U4jr9fDwSS5V5VfoIN6rPFxdDVEZ2j9BS4","isAuthenticated":true,"loginTimestamp":null},"version":0}"
+
+
+Voici les verification que je viens de faire 
+1. Vérifier l'état du sync : 
+`{"worker":{"running":true,"enabled":false,"intervalMs":8000},"realtime":{"enabled":false,"subscribed":false,"tables":[],"lastEventAt":null,"lastError":null,"eventsApplied":0},"lastPullAt":"2026-07-11T20:37:45.968Z","lastSuccessfulPullAt":null,"lastCursor":null,"counters":{"ordersPulled":114,"ordersInserted":0,"ordersUpdated":0,"itemsPulled":0},"lastError":"Table already has an active order","errors":[],"timestamp":"2026-07-11T20:37:46.774Z"}`
+
+2. Forcer un pull immédiat :
+`{
+	"reconciled": true,
+	"online": true,
+	"tenantId": "16",
+	"entity": "order",
+	"pulled": {
+		"order": 0,
+		"order_item": 0
+	},
+	"conflictsRemaining": 0,
+	"message": "Entity \"order\" reconciled (Supabase → SQLite)"
+}`
+3. Vérifier les logs : 
+`[0] [PullSync] BOOTSTRAP lookback enabled (60m)`
+`[0] [PullSync] Cycle completed: cursor=2026-07-11T16:36:49 productsCursor=2026-07-12T03:38:45 orders=0 products=2`
+`[0] [PullSync] Cycle failed: Table already has an active order`
+
+4. Vérifier la base SQLite :
+`(base) MEYIs-MBP:great_olive meyinzaji$ sqlite3 data/database.db  "SELECT * FROM orders WHERE remote_id IS NOT NULL ORDER BY id DESC LIMIT 5"
+182|78|32|[{"name":"Black Label","notes":null,"price":35,"quantity":4,"productId":9,"tenant_id":16,"product_id":9}]|paid|140.0|||182|CP||2026-07-11T16:36:32.227+00:00|2026-07-11T16:36:50.18511+00:00|16||1|||||
+104|23|32|"[{\"productId\":617,\"name\":\"Dasani\",\"price\":10,\"quantity\":1,\"notes\":null,\"tenant_id\":16}]"|paid|10.0|||101|local||2026-07-10T12:13:52+00:00|2026-07-10T14:40:39.807099+00:00|16||1|||||
+99|9|32|[{"name":"Coca-Cola","notes":null,"price":25,"quantity":3,"productId":613,"tenant_id":16,"product_id":613},{"name":"Fanta","notes":null,"price":25,"quantity":1,"productId":615,"tenant_id":16,"product_id":615},{"name":"Dasani","notes":null,"price":10,"quantity":1,"productId":617,"tenant_id":16,"product_id":617}]|paid|110.0|||99|qr|5|2026-07-02T20:42:48.696783+00:00|2026-07-10T14:40:41.133421+00:00|16||1|||||
+97|9|32|[{"name":"Coca-Cola","notes":null,"price":25,"quantity":1,"productId":613,"tenant_id":16,"product_id":613},{"name":"Fanta","notes":null,"price":25,"quantity":2,"productId":615,"tenant_id":16,"product_id":615}]|paid|75.0|||97|qr||2026-07-02T14:27:49.509312+00:00|2026-07-02T15:01:55.665732+00:00|16||1|||||
+96||31|[{"name":"Dasani","quantity":1,"product_id":617,"productId":617},{"name":"Savana Beer","quantity":1,"product_id":641,"productId":641},{"name":"Mosi","quantity":1,"product_id":642,"productId":642}]|served|70.0|||96|qr||2026-07-02T12:11:22.287119+00:00|2026-07-02T12:54:32.730054+00:00|16||1|||||`
+
+
+NB: J'ai meme redemarré le serveur et j'ai toujours le même problème. Le pull ne se fait pas correctement. Il semble que la table "orders" ait déjà un ordre actif, ce qui empêche le pull de se compléter.
+ Merci de votre aide.
+
