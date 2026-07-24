@@ -128,10 +128,6 @@ export class OrderService {
       INSERT INTO order_items (order_id, product_id, quantity, unit_price, total_price, notes, tenant_id)
       VALUES (?, ?, ?, ?, ?, ?, ?)
     `);
-    const stockDeductStmt = db.prepare(`
-      UPDATE products SET stock_quantity = stock_quantity - ?, updated_at = CURRENT_TIMESTAMP, version = version + 1
-      WHERE id = ? AND tenant_id = ? AND stock_quantity >= ?
-    `);
 
     const sync = getProductSyncService();
 
@@ -151,13 +147,6 @@ export class OrderService {
 
       itemStmt.run(orderId, productId, quantity, unitPrice, unitPrice * quantity, item.notes ?? null, tenantId);
 
-      if (productId && quantity > 0) {
-        const result = stockDeductStmt.run(quantity, productId, tenantId, quantity);
-        if (result.changes === 0) {
-          throw new Error(`Stock insuffisant pour le produit ID ${productId}`);
-        }
-      }
-
       if (sync) {
         const product = db.prepare(
           'SELECT id, stock_quantity, updated_at, version, tenant_id FROM products WHERE id = ? AND tenant_id = ?'
@@ -176,7 +165,7 @@ export class OrderService {
             },
             db
           );
-          console.log(`[Order] Queued product sync for ID ${product.id}, new stock: ${product.stock_quantity}`);
+          console.log(`[Order] Queued product sync for ID ${product.id}, stock: ${product.stock_quantity}`);
         }
       }
     }
@@ -318,35 +307,6 @@ export class OrderService {
         const total = normalizedItems.reduce((sum, item) => sum + item.price * item.quantity, 0);
         const { data, error } = await supabase.from('orders').insert([{ table_id, waiter_id: effectiveWaiterId, customer_id, items: normalizedItems, status: status || 'pending', total, version: 1, tenant_id: tenantId, source: 'local', created_at: new Date().toISOString(), updated_at: new Date().toISOString() }]).select().single();
         if (error) throw error;
-
-        for (const item of normalizedItems) {
-          const productResult = await supabase
-            .from('products')
-            .select('stock_quantity, version')
-            .eq('id', item.productId)
-            .eq('tenant_id', tenantId)
-            .single();
-          if (productResult.error || !productResult.data) {
-            throw new Error(`Produit ${item.productId} non trouvé`);
-          }
-          const newStock = (productResult.data.stock_quantity || 0) - Number(item.quantity);
-          if (newStock < 0) {
-            throw new Error(`Stock insuffisant pour le produit ${item.productId}`);
-          }
-          const updateResult = await supabase
-            .from('products')
-            .update({
-              stock_quantity: newStock,
-              updated_at: new Date().toISOString(),
-              version: (productResult.data.version || 0) + 1
-            })
-            .eq('id', item.productId)
-            .eq('tenant_id', tenantId);
-          if (updateResult.error) {
-            throw new Error(`Erreur lors de la mise à jour du stock: ${updateResult.error.message}`);
-          }
-          console.log(`[Order] Updated stock in Supabase for product ${item.productId}: ${newStock}`);
-        }
 
         try { const mirrorRes = await mirrorRemoteOrderToLocal(tenantId, data, normalizedItems); if (!mirrorRes.applied) console.log(`[OrderService] Order saved to Supabase only.`); } catch (mirrorErr: any) { console.warn('[OrderService] Cloud→SQLite mirror failed (non-critical):', mirrorErr?.message); }
 
