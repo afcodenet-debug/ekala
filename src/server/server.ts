@@ -310,7 +310,7 @@ app.use('/api/menu', menuRoutes);
 app.use('/menu', menuRoutes);   // clean public URLs for QR codes (e.g. /menu/table/<token>)
 
 import { requireTenantScope } from './middleware/tenant-scope';
-import { requireActiveSubscription, requireSubscriptionForWrites, getSubscriptionStatus, invalidateSubscriptionCache } from './middleware/subscription-guard';
+import { requireActiveSubscription, requireSubscriptionForWrites, getSubscriptionStatus, invalidateSubscriptionCache, subscriptionService } from './middleware/subscription-guard';
 import { logSubscriptionEvent } from './middleware/subscription-audit-logger';
 
 app.use('/api/auth', authService); // Public
@@ -425,7 +425,7 @@ app.use('/api', async (req, res, next) => {
     const tenantId = (req as any).tenant_id;
     if (!tenantId) return next(); // No tenant context → skip
 
-    const sub = await getSubscriptionStatus(tenantId);
+    const sub = await subscriptionService.getStatus(tenantId);
     (req as any).subscription = sub;
 
     // Log the event

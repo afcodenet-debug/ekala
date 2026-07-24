@@ -11,13 +11,14 @@
 import { Router, Request, Response } from 'express';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { env } from '../config/env';
-import { getSubscriptionStatus } from '../middleware/subscription-guard';
+import { getSubscriptionStatus, invalidateSubscriptionCache } from '../middleware/subscription-guard';
 import { requireJwtAuth } from '../middleware/jwt-auth';
 import { db } from '../db/database';
 import { queueSyncChange } from '../../sync/sync-helper';
 import { sendEmailDirect, loadRawSettings, getTenantName } from '../services/notification.service';
 import { createNotification } from '../services/notification.repository';
 import { getTenantSubscriptionEmails } from '../services/subscription-recipients.service';
+import { subscriptionService } from '../services/subscription.service';
 import {
   buildVoucherGeneratedEmail,
   buildVoucherExpiredEmail,
@@ -91,8 +92,7 @@ router.get('/v1/subscription/status/:tenantId', async (req: any, res: any) => {
       }
     }
 
-    const tenantStatus = tenant?.status || 'unknown';
-    const subState = await getSubscriptionStatus(tenantId);
+    const subState = await subscriptionService.getStatus(tenantId);
 
     let expiresAt: string | null = null;
     if (subscription) {
@@ -100,11 +100,11 @@ router.get('/v1/subscription/status/:tenantId', async (req: any, res: any) => {
     }
 
     const blockedStates = ['pending', 'expired', 'suspended', 'cancelled', 'no_plan', 'past_due'];
-    const effectiveState = tenantStatus === 'pending' ? 'pending' : subState.state;
-    const canActivateVoucher = blockedStates.includes(effectiveState);
+    const effectiveState = blockedStates.includes(subState.state) ? subState.state : 'active';
+    const canActivateVoucher = blockedStates.includes(subState.state);
 
     res.json({
-      tenant_status: tenantStatus,
+      tenant_status: tenant?.status || 'unknown',
       subscription_status: subState.state,
       plan_code: subState.planName || plan?.code,
       plan_name: plan?.name || subState.planName,
@@ -196,7 +196,7 @@ router.get('/status', requireJwtAuth, async (req: any, res: any) => {
     }
 
     const tenantStatus = tenant?.status || 'unknown';
-    const subState = await getSubscriptionStatus(tenantId);
+    const subState = await subscriptionService.getStatus(tenantId);
 
     let expiresAt: string | null = null;
     if (subscription) {
@@ -204,8 +204,8 @@ router.get('/status', requireJwtAuth, async (req: any, res: any) => {
     }
 
     const blockedStates = ['pending', 'expired', 'suspended', 'cancelled', 'no_plan', 'past_due'];
-    const effectiveState = tenantStatus === 'pending' ? 'pending' : subState.state;
-    const canActivateVoucher = blockedStates.includes(effectiveState);
+    const effectiveState = blockedStates.includes(subState.state) ? subState.state : 'active';
+    const canActivateVoucher = blockedStates.includes(subState.state);
 
     res.json({
       tenant_status: tenantStatus,

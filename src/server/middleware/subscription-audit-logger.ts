@@ -12,7 +12,7 @@
 //   - CACHE_HIT / CACHE_MISS
 // =============================================================================
 
-import { SubscriptionGuardResult, SubscriptionState } from './subscription-guard';
+import { SubscriptionGuardResult, SubscriptionState } from '../services/subscription.service';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 

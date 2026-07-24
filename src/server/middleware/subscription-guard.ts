@@ -14,30 +14,11 @@
 import { Request, Response, NextFunction } from 'express';
 import { runtime } from '../infrastructure/data-source-manager';
 import { getCurrentTrace } from '../services/trace-manager.service';
+import { SubscriptionService, type SubscriptionGuardResult, type SubscriptionState } from '../services/subscription.service';
+
+const subscriptionService = new SubscriptionService();
 
 // ── Types ──────────────────────────────────────────────────────────────────────
-
-export type SubscriptionState =
-  | 'active'
-  | 'trial'
-  | 'grace'
-  | 'suspended'
-  | 'cancelled'
-  | 'expired'
-  | 'no_plan'
-  | 'pending';
-
-export interface SubscriptionGuardResult {
-  state: SubscriptionState;
-  tenantId: number;
-  planName: string | null;
-  daysUntilRenewal: number | null;
-  isExpired: boolean;
-  isGracePeriod: boolean;
-  graceDaysRemaining: number | null;
-  subscriptionId: number | null;
-  planId: number | null;
-}
 
 export interface AuthenticatedRequest extends Request {
   user?: {
@@ -366,7 +347,7 @@ export const requireActiveSubscription = async (
   }
 
   let result = getCached(tenantId);
-  if (!result) { result = await checkSubscriptionStatus(tenantId); setCache(tenantId, result); }
+  if (!result) { result = await subscriptionService.getStatus(tenantId); setCache(tenantId, result); }
   req.subscription = result;
 
   // Only log blocked/warning states to reduce noise
@@ -384,9 +365,9 @@ export const requireActiveSubscription = async (
     }));
   }
 
-  const BLOCKED_STATES = ['pending', 'expired', 'suspended', 'cancelled', 'no_plan', 'past_due'];
+  const BLOCKED_STATES = ['pending', 'expired', 'suspended', 'cancelled', 'no_plan', 'past_due'] as const;
 
-  if (BLOCKED_STATES.includes(result.state)) {
+  if (BLOCKED_STATES.includes(result.state as any)) {
     trace.fail('DECIDE', { state: result.state, reason: 'subscription_blocked' });
     
     console.log(JSON.stringify({
@@ -474,7 +455,7 @@ export const requireSubscriptionForWrites = async (
   if (!tenantId) return res.status(401).json({ error: 'UNAUTHORIZED', message: 'Authentification requise.' });
 
   let result = getCached(tenantId);
-  if (!result) { result = await checkSubscriptionStatus(tenantId); setCache(tenantId, result); }
+  if (!result) { result = await subscriptionService.getStatus(tenantId); setCache(tenantId, result); }
   req.subscription = result;
 
   if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) {
@@ -495,10 +476,10 @@ export const requireSubscriptionForWrites = async (
 
 export async function getSubscriptionStatus(tenantId: number): Promise<SubscriptionGuardResult> {
   let r = getCached(tenantId);
-  if (!r) { r = await checkSubscriptionStatus(tenantId); setCache(tenantId, r); }
+  if (!r) { r = await subscriptionService.getStatus(tenantId); setCache(tenantId, r); }
   return r;
 }
-
-export function invalidateSubscriptionCache(tenantId: number): void { subscriptionCache.delete(tenantId); }
-export function invalidateAllSubscriptionCache(): void { subscriptionCache.clear(); }
-export { checkSubscriptionStatus, GRACE_PERIOD_DAYS };
+export function invalidateSubscriptionCache(tenantId: number): void { subscriptionService.invalidateCache(tenantId); }
+export function invalidateAllSubscriptionCache(): void { subscriptionService.clearCache(); }
+export { subscriptionService };
+export type { SubscriptionGuardResult } from '../services/subscription.service';
