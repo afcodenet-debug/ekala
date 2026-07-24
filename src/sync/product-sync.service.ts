@@ -199,7 +199,7 @@ export class ProductSyncService {
     console.log(`[Sync] ${entity} ${operation} queued for ${record.id}`);
   }
 
-  queueChangeInsideTransaction(entity: string, operation: 'insert' | 'update' | 'delete', record: any) {
+  queueChangeInsideTransaction(entity: string, operation: 'insert' | 'update' | 'delete', record: any, transactionDb?: Database.Database) {
     const requestId = getRequestId();
     logTrace('ENTER ProductSyncService.queueChangeInsideTransaction', { entity, operation, recordId: record.id });
     
@@ -211,7 +211,8 @@ export class ProductSyncService {
 
     logTrace('ENTER db.prepare INSERT sync_outbox');
     try {
-      const stmt = this.db.prepare(`
+      const db = transactionDb || this.db;
+      const stmt = db.prepare(`
         INSERT INTO sync_outbox (id, entity, operation, record_id, payload, version, tenant_id)
         VALUES (?, ?, ?, ?, ?, ?, ?)
       `);

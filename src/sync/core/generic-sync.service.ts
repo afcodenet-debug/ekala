@@ -180,7 +180,7 @@ export class GenericSyncService {
     }
   }
 
-  queueChangeInsideTransaction(entity: string, operation: 'insert' | 'update' | 'delete', record: any) {
+  queueChangeInsideTransaction(entity: string, operation: 'insert' | 'update' | 'delete', record: any, transactionDb?: Database.Database) {
     const id = this.newId();
     const payload = JSON.stringify(record);
     const version = record.version || 1;
@@ -189,7 +189,8 @@ export class GenericSyncService {
       : this.normalizeTenantId(record.tenant_id);
 
     try {
-      const stmt = this.db.prepare(`
+      const db = transactionDb || this.db;
+      const stmt = db.prepare(`
         INSERT INTO sync_outbox (id, entity, operation, record_id, payload, version, tenant_id)
         VALUES (?, ?, ?, ?, ?, ?, ?)
       `);
