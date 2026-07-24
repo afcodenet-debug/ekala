@@ -936,8 +936,8 @@ export class GenericSyncService {
   diagnoseSyncOutbox(tenantId: string): void {
     const allProducts = this.db.prepare(`SELECT COUNT(*) as count FROM sync_outbox WHERE entity='product'`).get() as any;
     const pendingProducts = this.db.prepare(`SELECT COUNT(*) as count FROM sync_outbox WHERE entity='product' AND status='pending'`).get() as any;
-    // const productsByTenant = this.db.prepare(`SELECT tenant_id, COUNT(*) as count FROM sync_outbox WHERE entity='product' GROUP BY tenant_id`).all() as any[];
-    // const productsByStatus = this.db.prepare(`SELECT status, COUNT(*) as count FROM sync_outbox WHERE entity='product' GROUP BY status`).all() as any[];
+    const productsByTenant = this.db.prepare(`SELECT tenant_id, COUNT(*) as count FROM sync_outbox WHERE entity='product' GROUP BY tenant_id`).all() as any[];
+    const productsByStatus = this.db.prepare(`SELECT status, COUNT(*) as count FROM sync_outbox WHERE entity='product' GROUP BY status`).all() as any[];
     console.log('[DIAG] Products in outbox:', allProducts?.count || 0, 'pending:', pendingProducts?.count || 0);
   }
 

@@ -83,118 +83,116 @@ function setCache(tenantId: number, result: SubscriptionGuardResult): void {
 
 async function checkSubscriptionStatus(tenantId: number): Promise<SubscriptionGuardResult> {
   const supabase = runtime.getSupabase();
+  const inCloud = runtime.isCloud();
   const fallback: SubscriptionGuardResult = {
     state: 'active', tenantId, planName: null, daysUntilRenewal: null,
     isExpired: false, isGracePeriod: false, graceDaysRemaining: null,
     subscriptionId: null, planId: null,
   };
 
-  // Try SQLite first (local dev mode)
-  try {
-    const Database = require('better-sqlite3');
-    const path = require('path');
-    const dbPath = path.resolve(process.cwd(), 'data', 'database.db');
-    const db = new Database(dbPath);
-    
-    const sub = db.prepare(`
-      SELECT s.*, p.name as plan_name, p.code as plan_code
-      FROM subscriptions s
-      LEFT JOIN plans p ON p.id = s.plan_id
-      WHERE s.tenant_id = ?
-      ORDER BY s.created_at DESC
-      LIMIT 1
-    `).get(tenantId);
-    
-    if (sub && sub.status === 'active') {
-      const now = Date.now();
-      const periodEnd = sub.current_period_end ? new Date(sub.current_period_end).getTime() : null;
-      const trialEnd = sub.trial_end ? new Date(sub.trial_end).getTime() : null;
-      const endDate = trialEnd || periodEnd;
-      const daysUntilRenewal = endDate ? Math.ceil((endDate - now) / 86_400_000) : null;
-      const isExpired = endDate ? endDate < now : false;
+  if (!inCloud) {
+    try {
+      const Database = require('better-sqlite3');
+      const path = require('path');
+      const dbPath = path.resolve(process.cwd(), 'data', 'database.db');
+      const db = new Database(dbPath);
       
-      db.close();
-      return {
-        ...fallback,
-        state: isExpired ? 'expired' : 'active',
-        planName: sub.plan_name || sub.plan_code,
-        daysUntilRenewal,
-        isExpired,
-        isGracePeriod: false,
-        graceDaysRemaining: null,
-        subscriptionId: sub.id,
-        planId: sub.plan_id,
-      };
-    }
-    
-    if (sub && sub.status !== 'active') {
-      db.close();
-      return {
-        ...fallback,
-        state: sub.status as any,
-        planName: sub.plan_name || sub.plan_code,
-        subscriptionId: sub.id,
-        planId: sub.plan_id,
-      };
-    }
-    
-    // No subscription found - check tenant status in SQLite
-    const tenant = db.prepare(`
-      SELECT status, created_at FROM tenants WHERE id = ?
-    `).get(tenantId);
-    
-    if (tenant) {
-      db.close();
+      const sub = db.prepare(`
+        SELECT s.*, p.name as plan_name, p.code as plan_code
+        FROM subscriptions s
+        LEFT JOIN plans p ON p.id = s.plan_id
+        WHERE s.tenant_id = ?
+        ORDER BY s.created_at DESC
+        LIMIT 1
+      `).get(tenantId);
       
-      // If tenant is active, allow access (no subscription = free tier)
-      if (tenant.status === 'active') {
-        return {
-          ...fallback,
-          state: 'active',
-          planName: 'Free',
-          daysUntilRenewal: null,
-          isExpired: false,
-          isGracePeriod: false,
-          graceDaysRemaining: null,
-        };
-      }
-      
-      // If tenant is trial, calculate trial end
-      if (tenant.status === 'trial') {
-        const created = new Date(tenant.created_at).getTime();
-        const trialEnd = created + 7 * 86400000;
+      if (sub && sub.status === 'active') {
         const now = Date.now();
-        const isExpired = now > trialEnd;
+        const periodEnd = sub.current_period_end ? new Date(sub.current_period_end).getTime() : null;
+        const trialEnd = sub.trial_end ? new Date(sub.trial_end).getTime() : null;
+        const endDate = trialEnd || periodEnd;
+        const daysUntilRenewal = endDate ? Math.ceil((endDate - now) / 86_400_000) : null;
+        const isExpired = endDate ? endDate < now : false;
         
+        db.close();
         return {
           ...fallback,
-          state: isExpired ? 'expired' : 'trial',
-          planName: 'Essai Gratuit',
-          daysUntilRenewal: Math.ceil((trialEnd - now) / 86400000),
+          state: isExpired ? 'expired' : 'active',
+          planName: sub.plan_name || sub.plan_code,
+          daysUntilRenewal,
           isExpired,
           isGracePeriod: false,
           graceDaysRemaining: null,
+          subscriptionId: sub.id,
+          planId: sub.plan_id,
         };
       }
       
-      // Other tenant statuses (past_due, expired, etc.)
-      return {
-        ...fallback,
-        state: tenant.status as any,
-        planName: 'No Plan',
-        daysUntilRenewal: null,
-        isExpired: true,
-        isGracePeriod: false,
-        graceDaysRemaining: null,
-      };
+      if (sub && sub.status !== 'active') {
+        db.close();
+        return {
+          ...fallback,
+          state: sub.status as any,
+          planName: sub.plan_name || sub.plan_code,
+          subscriptionId: sub.id,
+          planId: sub.plan_id,
+        };
+      }
+      
+      const tenant = db.prepare(`
+        SELECT status, created_at FROM tenants WHERE id = ?
+      `).get(tenantId);
+      
+      if (tenant) {
+        db.close();
+        
+        if (tenant.status === 'active') {
+          return {
+            ...fallback,
+            state: 'active',
+            planName: 'Free',
+            daysUntilRenewal: null,
+            isExpired: false,
+            isGracePeriod: false,
+            graceDaysRemaining: null,
+          };
+        }
+        
+        if (tenant.status === 'trial') {
+          const created = new Date(tenant.created_at).getTime();
+          const trialEnd = created + 7 * 86400000;
+          const now = Date.now();
+          const isExpired = now > trialEnd;
+          
+          return {
+            ...fallback,
+            state: isExpired ? 'expired' : 'trial',
+            planName: 'Essai Gratuit',
+            daysUntilRenewal: Math.ceil((trialEnd - now) / 86400000),
+            isExpired,
+            isGracePeriod: false,
+            graceDaysRemaining: null,
+          };
+        }
+        
+        return {
+          ...fallback,
+          state: tenant.status as any,
+          planName: 'No Plan',
+          daysUntilRenewal: null,
+          isExpired: true,
+          isGracePeriod: false,
+          graceDaysRemaining: null,
+        };
+      }
+      
+      db.close();
+    } catch (err) {
+      // SQLite not available, continue to Supabase
     }
-    
-    db.close();
-  } catch (err) {
-    // SQLite not available, continue to Supabase
   }
 
-  if (!supabase) return fallback; // local dev → allow all
+  if (!supabase) return fallback;
 
   try {
     const { data: sub, error } = await supabase
