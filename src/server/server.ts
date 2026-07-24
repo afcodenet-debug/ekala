@@ -412,6 +412,7 @@ app.use('/api', async (req, res, next) => {
     req.path === '/sync/status' ||
     req.path.startsWith('/saas') ||
     req.path.startsWith('/subscription') ||
+    req.path.startsWith('/v1/subscription/status') ||
     isPaymentOrVoucherFlow ||
     req.path.startsWith('/plans') ||
     (req.path.startsWith('/tenants') && ['GET','HEAD','OPTIONS'].includes(req.method))
@@ -448,9 +449,17 @@ app.use('/api', async (req, res, next) => {
     // Enforce access control
     if (sub.state === 'active' || sub.state === 'trial') {
       return next();
-    } else if (sub.state === 'grace') {
+    }
+
+    if (sub.state === 'grace') {
       res.setHeader('X-Subscription-Warning', 'grace_period');
       res.setHeader('X-Subscription-Grace-Days', String(sub.graceDaysRemaining || 0));
+      return next();
+    }
+
+    if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) {
+      res.setHeader('X-Subscription-Status', sub.state);
+      res.setHeader('X-Subscription-Warning', sub.state);
       return next();
     }
 
