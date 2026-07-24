@@ -51,9 +51,19 @@ export class ConflictResolver {
   }
 
   /**
-   * Stratégie Last-Writer-Wins versionnée :
-   * Compare les versions ET les timestamps pour déterminer qui gagne.
-   * Retourne true si le remote est plus récent (doit écraser le local).
+   * Stratégie Last-Writer-Wins versionnée — LOCAL-FIRST.
+   * 
+   * PRINCIPE : SQLite est la source de vérité. En cas de conflit (modifications
+   * concurrentes détectées par un écart de version), la version locale gagne
+   * TOUJOURS. Cela garantit que les modifications effectuées en mode offline
+   * ne sont jamais écrasées par des données distantes.
+   * 
+   * RÈGLE :
+   * - Si écart de version > 0 (conflit) → local gagne (SQLite source de vérité)
+   * - Si versions identiques → comparer les timestamps (le plus récent gagne)
+   * - Si égalité parfaite → local gagne (préserve l'état local)
+   * 
+   * @see docs/CONFLICT_RESOLUTION.md pour la stratégie complète
    */
   resolveLWW(
     localVersion: number,
@@ -61,16 +71,17 @@ export class ConflictResolver {
     localUpdatedAt: string,
     remoteUpdatedAt: string
   ): 'local_wins' | 'remote_wins' {
-    // Version gap > 1 signifie des modifications concurrentes
-    if (Math.abs(localVersion - remoteVersion) > 1) {
-      return 'remote_wins'; // Le remote est considéré comme source de vérité par défaut
+    // Conflit détecté : écart de version > 0 → LOCAL GAGNE TOUJOURS
+    // Ceci est le comportement LOCAL-FIRST : SQLite est la source de vérité
+    if (Math.abs(localVersion - remoteVersion) > 0) {
+      return 'local_wins';
     }
-    // Sinon, compare les timestamps
+    // Versions identiques : comparer les timestamps
     const localTime = new Date(localUpdatedAt).getTime();
     const remoteTime = new Date(remoteUpdatedAt).getTime();
-    if (remoteTime > localTime) return 'remote_wins';
     if (localTime > remoteTime) return 'local_wins';
-    return 'remote_wins'; // Égalité : remote gagne
+    if (remoteTime > localTime) return 'remote_wins';
+    return 'local_wins'; // Égalité : local gagne (préserve l'état local)
   }
 
   /**

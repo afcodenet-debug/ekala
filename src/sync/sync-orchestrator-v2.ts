@@ -319,21 +319,26 @@ export class SyncOrchestratorV2 {
         console.warn('[SyncV2] Inventory movement product_id fix partial failure:', fixErr?.message);
       }
 
-      // Phase 3: Generic sync pour TOUTES les entités (dans l'ordre)
+      // ═══════════════════════════════════════════════════════════════════
+      // PHASE 3 : GenericSync — UNIQUE CHEMIN DE SYNCHRONISATION
+      // ═══════════════════════════════════════════════════════════════════
+      // [V3 REFACTOR] Le chemin legacy ProductSyncService.syncNow() est
+      // DÉSACTIVÉ pour éliminer le dual path. GenericSyncService.fullSyncForTenant()
+      // est l'AUTORITÉ unique pour la synchronisation bidirectionnelle de TOUTES
+      // les entités, y compris les produits, catégories, commandes, ventes, etc.
+      //
+      // Justification :
+      // - GenericSyncService couvre déjà les produits avec pagination complète
+      // - La résolution de conflits LWW local-first est appliquée uniformément
+      // - Les FK sont résolues via le registre d'entités (entity-registry.ts)
+      // - Le backfill et les orphan deletes sont gérés en Phase 2
+      // - Élimine le risque de double push et les conflits de version
       console.log(`[SyncV2] Starting generic sync for all entities...`);
       const result = await this.genericSync.fullSyncForTenant(tenantId);
       totalPushed += result.pushed;
       totalPulled += result.pulled;
       totalErrors += result.errors;
       console.log(`[SyncV2] ✓ Generic sync completed - Pushed: ${result.pushed}, Pulled: ${result.pulled}, Errors: ${result.errors}`);
-
-      // Phase 4/5: Orders & Sales sont désormais couverts par le chemin
-      // bidirectionnel générique (fullSyncForTenant → push + pull pour CHAQUE
-      // entité du registre, y compris 'order', 'order_item', 'sale', 'sale_item').
-      // Les anciens appels push-only (orderSync.pushPendingOrders /
-      // saleSync.pushPendingSales) étaient redondants et pouvaient double-pusher
-      // depuis l'outbox : on les supprime pour faire du générique l'AUTORITÉ
-      // unique de la synchronisation bidirectionnelle.
 
       // Phase 6: Vérification d'intégrité post-sync
       const fixed = await this.ensureIntegrity(tenantId);
@@ -605,5 +610,10 @@ export class SyncOrchestratorV2 {
   /** Expose le GenericSyncService pour usage externe */
   getGenericSync(): GenericSyncService {
     return this.genericSync;
+  }
+
+  /** Expose le client Supabase pour l'OutboxWorkerV2 */
+  getSupabaseClient(): SupabaseClient {
+    return this.supabase;
   }
 }

@@ -93,13 +93,26 @@ export class OrderService {
   private static resolveProductId(candidate: any, tenantId: any): number | null {
     const c = Number(candidate);
     if (Number.isFinite(c) && c > 0) {
+      // 1. Check exact match: product with this id and tenant_id
       if (db.prepare('SELECT 1 FROM products WHERE id = ? AND tenant_id = ?').get(c, tenantId)) return c;
+      
+      // 2. Check if product exists with this id (any tenant)
       const local = db.prepare('SELECT id FROM products WHERE id = ?').get(c) as { id: number } | undefined;
       if (local) return local.id;
+      
+      // 3. Check if product exists with this remote_id and tenant_id
       const byRemote = db.prepare('SELECT id FROM products WHERE remote_id = ? AND tenant_id = ?').get(c, tenantId) as { id: number } | undefined;
       if (byRemote) return byRemote.id;
+      
+      // 4. Check if product exists with this remote_id (any tenant)
       const byRemoteAny = db.prepare('SELECT id FROM products WHERE remote_id = ?').get(c) as { id: number } | undefined;
       if (byRemoteAny) return byRemoteAny.id;
+      
+      // Product not found - log for debugging
+      console.warn(`[OrderService.resolveProductId] Could not resolve product: candidate=${candidate}, numeric=${c}, tenant_id=${tenantId}`);
+    } else {
+      // Invalid candidate value
+      console.warn(`[OrderService.resolveProductId] Invalid candidate: ${candidate} (type=${typeof candidate})`);
     }
     return null;
   }
@@ -122,9 +135,19 @@ export class OrderService {
     `);
 
     for (const item of items as any[]) {
-      const productId = OrderService.resolveProductId(item.productId ?? item.product_id, tenantId);
+      const rawProductId = item.productId ?? item.product_id;
+      const productId = OrderService.resolveProductId(rawProductId, tenantId);
       const unitPrice = Number(item.price) || Number(item.unit_price) || Number(item.unitPrice) || 0;
       const quantity = Number(item.quantity) || 0;
+
+      // CRITICAL FIX: Prevent FOREIGN KEY constraint failed when productId is null
+      if (productId === null) {
+        const productName = item.name || String(rawProductId) || 'unknown';
+        throw new Error(
+          `Product not found: cannot resolve product_id for "${productName}" (raw_id=${rawProductId}, tenant_id=${tenantId}). ` +
+          `The product may have been deleted or does not exist in the database.`
+        );
+      }
 
       itemStmt.run(orderId, productId, quantity, unitPrice, unitPrice * quantity, item.notes ?? null, tenantId);
 

@@ -231,6 +231,37 @@ export function ensureSyncTables(db: Database.Database) {
       console.warn('[SyncTables] Could not ensure sync_metadata:', err?.message || err);
     }
 
+    // --- sync_degraded_mode (Sprint 2: degraded mode tracking) ---
+    // Permet de suivre les entités en mode degraded (échecs persistants)
+    // et d'éviter les resets de curseur intempestifs.
+    try {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS sync_degraded_mode (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          tenant_id INTEGER NOT NULL,
+          entity TEXT NOT NULL,
+          error TEXT NOT NULL,
+          activated_at TEXT NOT NULL,
+          status TEXT DEFAULT 'active',
+          resolved_at TEXT,
+          resolved_by TEXT,
+          metadata TEXT,
+          UNIQUE(tenant_id, entity, status)
+        )
+      `);
+      db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_degraded_tenant_entity 
+        ON sync_degraded_mode(tenant_id, entity, status)
+      `);
+      db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_degraded_activated 
+        ON sync_degraded_mode(activated_at)
+      `);
+      console.log('[SyncTables] sync_degraded_mode table created/verified');
+    } catch (err: any) {
+      console.warn('[SyncTables] Could not ensure sync_degraded_mode:', err?.message || err);
+    }
+
     console.log('[SyncTables] All sync tables and columns ensured');
   } catch (err: any) {
     // Final safety net - log but never throw

@@ -358,8 +358,13 @@ async function pullOrderItems(supabase: SupabaseClient, since: string, tenantId:
         const existing = db.prepare('SELECT id FROM order_items WHERE remote_id = ?').get(it.id) as any;
         if (!existing) {
           const localProd = db.prepare('SELECT id FROM products WHERE remote_id = ?').get(it.product_id) as any;
+          // CRITICAL FIX: Skip if we cannot resolve product_id to prevent FOREIGN KEY constraint failed
+          if (!localProd) {
+            console.warn(`[PullSync] Skipping order item ${it.id}: product ${it.product_id} not found locally`);
+            continue;
+          }
           db.prepare(`INSERT INTO order_items (remote_id, order_id, product_id, quantity, unit_price, total_price, notes, created_at, tenant_id) VALUES (?,?,?,?,?,?,?,?,?)`)
-            .run(it.id, parent.id, localProd ? localProd.id : it.product_id, it.quantity, it.unit_price, it.total_price, it.notes, it.created_at, tenantId);
+            .run(it.id, parent.id, localProd.id, it.quantity, it.unit_price, it.total_price, it.notes, it.created_at, tenantId);
           lastPullStatus.itemsPulled++;
         }
       } catch (e: any) { /* skip item errors */ }

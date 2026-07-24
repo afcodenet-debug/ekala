@@ -5,7 +5,7 @@
   "main": "dist/main/main.js",
   "homepage": "./",
   "scripts": {
-    "dev": "npm run build:main && concurrently \"npm run server:fast\" \"wait-on http://localhost:3001/health && npx vite\" \"wait-on http://localhost:5173 && electron .\"",
+    "dev": "npm run build:main && concurrently \"npm run server:fast\" \"wait-on http://localhost:3001/health && npx vite --open\" \"wait-on http://localhost:5173 && echo '\\n✅ Application prete! Accedez a: http://localhost:5173/\\n' && electron .\"",
     "dev:web": "npm run build:main && concurrently \"npm run server:fast\" \"wait-on http://localhost:3001/health && npx vite --open\"",
     "build": "npm run build:main && npm run build:server && npm run build:renderer",
     "build:renderer": "npx vite build",

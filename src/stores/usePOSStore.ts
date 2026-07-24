@@ -219,6 +219,17 @@ export const usePOSStore = create<POSStore>((set, get) => ({
       return false;
     }
 
+    // Validate all cart items have valid productId
+    const invalidItems = cart.filter(item => !item.productId && !item.product_id);
+    if (invalidItems.length > 0) {
+      const productNames = invalidItems.map(i => i.name || 'unknown').join(', ');
+      set({ 
+        error: `Cannot save order: product ID missing for items: ${productNames}. Please reload products.`,
+        isProcessing: false 
+      });
+      return false;
+    }
+
     set({ isProcessing: true, error: null });
 
     try {

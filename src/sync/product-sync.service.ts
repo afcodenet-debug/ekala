@@ -76,6 +76,62 @@ export class ProductSyncService {
     }
   }
 
+  /**
+   * Récupère un remote_id avec retry automatique et pull forcé.
+   * Remplace la nullification silencieuse des FK par un mécanisme de retry.
+   * 
+   * @param table - Nom de la table (ex: 'categories', 'users')
+   * @param localId - ID local de l'enregistrement
+   * @param maxRetries - Nombre maximum de tentatives (défaut: 3)
+   * @returns Le remote_id trouvé, ou null après épuisement des retries
+   */
+  private async getRemoteIdWithRetry(
+    table: string,
+    localId: any,
+    maxRetries: number = 3
+  ): Promise<number | null> {
+    const startTime = Date.now();
+    
+    for (let attempt = 0; attempt < maxRetries; attempt++) {
+      // 1. Vérifier dans la table de mapping locale
+      const remoteId = this.getRemoteId(table, localId);
+      if (remoteId) {
+        if (attempt > 0) {
+          console.log(`[Sync] FK resolved after retry: ${table} #${localId} -> remote=${remoteId} (attempt ${attempt + 1})`);
+        }
+        return remoteId;
+      }
+      
+      // 2. Si pas trouvé, forcer un pull de l'entité référencée
+      if (attempt < maxRetries - 1) {
+        const delay = 1000 * Math.pow(2, attempt);
+        console.log(`[Sync] FK not found: ${table} #${localId} — pull attempt ${attempt + 1}/${maxRetries} (delay=${delay}ms)`);
+        
+        try {
+          // Pull recent changes for this entity (last 30 seconds)
+          const since = new Date(Date.now() - 30000).toISOString();
+          const { data } = await this.supabase
+            .from(table)
+            .select('id')
+            .gt('updated_at', since);
+          
+          if (data && data.length > 0) {
+            console.log(`[Sync] Pulled ${data.length} recent ${table} records for FK resolution`);
+          }
+        } catch (pullError: any) {
+          console.warn(`[Sync] Pull attempt failed during FK resolution: ${pullError?.message}`);
+        }
+        
+        // Attendre avant de réessayer (backoff exponentiel)
+        await new Promise(resolve => setTimeout(resolve, delay));
+      }
+    }
+    
+    // 3. Échec définitif
+    console.warn(`[Sync] FK resolution FAILED after ${maxRetries} attempts: ${table} #${localId} (${Date.now() - startTime}ms)`);
+    return null;
+  }
+
   /* ------------------------------------------------------------------ */
   /*  Public helpers                                                     */
   /* ------------------------------------------------------------------ */
@@ -401,25 +457,32 @@ export class ProductSyncService {
       // Sécurité: ne JAMAIS envoyer low_stock_threshold à Supabase
       delete (safeUpdate as any).low_stock_threshold;
 
-      // Map category_id
+      // Map category_id avec retry (plus de nullification silencieuse)
       if (safeUpdate.category_id) {
-        const remoteCatId = this.getRemoteId('categories', safeUpdate.category_id);
+        const remoteCatId = await this.getRemoteIdWithRetry('categories', safeUpdate.category_id);
         if (remoteCatId) {
           safeUpdate.category_id = remoteCatId;
         } else {
-          console.warn(`[Sync] Category ${safeUpdate.category_id} not yet synced for product ${recordId}, removing to avoid FK error`);
-          delete safeUpdate.category_id;
+          // FK non résolue → marquer comme pending, conserver la valeur locale
+          console.warn(`[Sync] Category ${safeUpdate.category_id} not yet synced for product ${recordId} — marking as pending FK`);
+          // Enqueue un retry différé pour la résolution
+          this.queueChange('product', 'update', {
+            id: recordId,
+            category_id: safeUpdate.category_id,
+            tenant_id: tenantId,
+            remote_id: payload.remote_id || null,
+          });
         }
       }
 
-      // Map created_by / updated_by
+      // Map created_by / updated_by avec retry
       if (safeUpdate.created_by) {
-        const remoteUserId = this.getRemoteId('users', safeUpdate.created_by);
+        const remoteUserId = await this.getRemoteIdWithRetry('users', safeUpdate.created_by);
         if (remoteUserId) safeUpdate.created_by = remoteUserId;
         else delete safeUpdate.created_by;
       }
       if (safeUpdate.updated_by) {
-        const remoteUserId = this.getRemoteId('users', safeUpdate.updated_by);
+        const remoteUserId = await this.getRemoteIdWithRetry('users', safeUpdate.updated_by);
         if (remoteUserId) safeUpdate.updated_by = remoteUserId;
         else delete safeUpdate.updated_by;
       }

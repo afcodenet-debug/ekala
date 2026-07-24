@@ -759,13 +759,19 @@ router.post('/checkout', requirePermission('PROCESS_PAYMENTS'), async (req: any,
         `);
 
         for (const item of blockedItems) {
+          const productId = item.productId ?? item.product_id;
+          // CRITICAL FIX: Skip items with invalid product_id to prevent FOREIGN KEY constraint failed
+          if (productId === null || productId === undefined) {
+            console.warn(`[Sales] Skipping blocked item with null product_id: ${item.name || 'unknown'}`);
+            continue;
+          }
           const unitPrice =
             Number(item.price) ||
             Number(item.unit_price) ||
             Number(item.unitPrice) ||
             0;
           const quantity = Number(item.quantity) || 0;
-          orderItemStmt.run(normalizedOrderId, item.productId ?? item.product_id, quantity, unitPrice, unitPrice * quantity, item.notes ?? null, tenantId);
+          orderItemStmt.run(normalizedOrderId, productId, quantity, unitPrice, unitPrice * quantity, item.notes ?? null, tenantId);
         }
 
         remainingOrder = {

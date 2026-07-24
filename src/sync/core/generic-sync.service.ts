@@ -19,6 +19,8 @@ import { ConflictResolver } from './conflict-resolver';
 import { DeadLetterQueue } from './dead-letter-queue';
 
 import { getRequestId, logTrace } from '../../server/utils/trace-utils';
+import { getSyncPaginationConfig } from '../sync-pagination.config';
+import { withRetryBackoff } from '../sync-retry.utils';
 
 export interface SyncResult {
   pushed: number;
@@ -479,7 +481,7 @@ export class GenericSyncService {
   }
 
   /* ==================================================================
-   *  PULL – Supabase → SQLite
+   *  PULL – Supabase → SQLite (Avec pagination complète + retry backoff)
    * ================================================================== */
 
   async pullByEntity(entity: string, tenantId: string): Promise<number> {
@@ -493,28 +495,86 @@ export class GenericSyncService {
     const tenantIdInt = Number.isFinite(Number(tenantId)) ? parseInt(tenantId, 10) : NaN;
     const tenantIdForQuery = Number.isNaN(tenantIdInt) ? tenantId : tenantIdInt;
 
-    let query = this.supabase.from(remoteTable).select('*');
+    const config = getSyncPaginationConfig();
+    const batchSize = config.pullBatchSize;
+    let offset = 0;
+    let totalPulled = 0;
+    let batchNumber = 0;
 
-    if (entity === 'tenant') {
-      query = query.gt('updated_at', since).order('updated_at', { ascending: true });
-    } else {
-      query = query.eq('tenant_id', tenantIdForQuery);
-      if (hasUpdatedAt) query = query.gt('updated_at', since).order('updated_at', { ascending: true });
-      else query = query.gt('created_at', since).order('created_at', { ascending: true });
-    }
+    const startTime = Date.now();
+    console.log(`[GenericSync] pullByEntity ${entity} tenant=${tenantId} since=${since} batchSize=${batchSize}`);
 
-    const { data, error } = await query;
-    if (error) {
-      if (entity !== 'tenant' && hasUpdatedAt && error.message?.toLowerCase().includes('updated_at')) {
-        const fallback = this.supabase.from(remoteTable).select('*').eq('tenant_id', tenantIdForQuery).gt('created_at', since).order('created_at', { ascending: true });
-        const { data: fbData } = await fallback;
-        if (fbData) return this.applyPullBatch(def, fbData, tenantId, cursorKey, since);
+    while (true) {
+      batchNumber++;
+      const batchStartTime = Date.now();
+
+      // Utiliser withRetryBackoff pour chaque requête paginée
+      const { result: data, state } = await withRetryBackoff(
+        async () => {
+          let query = this.supabase
+            .from(remoteTable)
+            .select('*')
+            .range(offset, offset + batchSize - 1);
+
+          if (entity === 'tenant') {
+            query = query.gt('updated_at', since).order('updated_at', { ascending: true });
+          } else {
+            query = query.eq('tenant_id', tenantIdForQuery);
+            if (hasUpdatedAt) {
+              query = query.gt('updated_at', since).order('updated_at', { ascending: true });
+            } else {
+              query = query.gt('created_at', since).order('created_at', { ascending: true });
+            }
+          }
+
+          const { data: result, error } = await query;
+          if (error) {
+            // Fallback si updated_at n'existe pas
+            if (entity !== 'tenant' && hasUpdatedAt && error.message?.toLowerCase().includes('updated_at')) {
+              const { data: fbResult } = await this.supabase
+                .from(remoteTable)
+                .select('*')
+                .eq('tenant_id', tenantIdForQuery)
+                .gt('created_at', since)
+                .order('created_at', { ascending: true })
+                .range(offset, offset + batchSize - 1);
+              return fbResult || [];
+            }
+            throw error;
+          }
+          return result || [];
+        },
+        `pull_${entity}_batch_${batchNumber}`,
+        { maxCursorRetries: config.maxCursorRetries, cursorRetryBaseDelayMs: config.cursorRetryBaseDelayMs, maxBackoffMs: config.maxBackoffMs }
+      );
+
+      // Si le mode degraded est actif, on arrête les pulls
+      if (state.isDegraded) {
+        console.error(`[GenericSync] ⚠️ DEGRADED MODE: pullByEntity ${entity} tenant=${tenantId} — arrêt des pulls`);
+        await this.enableDegradedMode(tenantId, entity, state.lastError || 'Max retries exceeded');
+        break;
       }
-      return 0;
-    }
-    if (!data || data.length === 0) return 0;
 
-    return this.applyPullBatch(def, data, tenantId, cursorKey, since);
+      if (!data || data.length === 0) break;
+
+      const batchDuration = Date.now() - batchStartTime;
+      console.log(`[GenericSync] pull batch #${batchNumber} ${entity}: ${data.length} items (offset=${offset}) in ${batchDuration}ms`);
+
+      // Appliquer le batch dans une transaction
+      const applied = this.applyPullBatch(def, data, tenantId, cursorKey, since);
+      totalPulled += applied;
+      offset += batchSize;
+
+      // Si moins d'items que le batch size, on a terminé
+      if (data.length < batchSize) break;
+    }
+
+    const totalDuration = Date.now() - startTime;
+    if (totalPulled > 0 || batchNumber > 1) {
+      console.log(`[GenericSync] pullByEntity ${entity} tenant=${tenantId}: ${totalPulled} items in ${batchNumber} batch(es) (${totalDuration}ms)`);
+    }
+
+    return totalPulled;
   }
 
   private applyPullBatch(def: SyncEntityDefinition, data: any[], tenantId: string, cursorKey: string, since: string): number {
@@ -829,6 +889,43 @@ export class GenericSyncService {
     }
 
     return { pushed, pulled, errors };
+  }
+
+  /* ==================================================================
+   *  DEGRADED MODE
+   * ================================================================== */
+
+  /**
+   * Active le mode degraded pour une entité spécifique.
+   * En mode degraded, les pulls sont arrêtés et seuls les pushes continuent.
+   * Un log est enregistré en base pour le monitoring.
+   */
+  private async enableDegradedMode(tenantId: string, entity: string, error: string): Promise<void> {
+    try {
+      // Enregistrer l'état degraded en base
+      this.db.prepare(`
+        INSERT OR REPLACE INTO sync_degraded_mode (tenant_id, entity, error, activated_at, status)
+        VALUES (?, ?, ?, datetime('now'), 'active')
+      `).run(Number(tenantId), entity, error);
+      console.error(`[GenericSync] ⚠️ DEGRADED MODE ACTIVATED: tenant=${tenantId} entity=${entity} error=${error}`);
+    } catch (err: any) {
+      console.error(`[GenericSync] Failed to enable degraded mode:`, err?.message);
+    }
+  }
+
+  /**
+   * Vérifie si le mode degraded est actif pour une entité.
+   */
+  private isDegradedModeActive(tenantId: string, entity: string): boolean {
+    try {
+      const row = this.db.prepare(`
+        SELECT status FROM sync_degraded_mode 
+        WHERE tenant_id = ? AND entity = ? AND status = 'active'
+      `).get(Number(tenantId), entity) as { status: string } | undefined;
+      return !!row;
+    } catch {
+      return false;
+    }
   }
 
   /* ==================================================================
