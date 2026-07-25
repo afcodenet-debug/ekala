@@ -1,6 +1,6 @@
 import db from '../db/database';
 import { notifyOrderCheckout, loadRawSettings } from '../services/notification.service';
-import { getGenericSyncService, getProductSyncService, withOutboxTransaction, isSyncEnabled } from '../../sync';
+import { getGenericSyncService, withOutboxTransaction, isSyncEnabled } from '../../sync';
 import { getCurrentTenantId } from '../db/tenant-context';
 import { dataSource } from '../infrastructure/data-source-manager';
 import { mirrorRemoteOrderToLocal, deleteMirroredOrder } from './order-local-mirror';
@@ -129,7 +129,16 @@ export class OrderService {
       VALUES (?, ?, ?, ?, ?, ?, ?)
     `);
 
-    const sync = getProductSyncService();
+    // 🔥 Décrémentation du stock local
+    const stockDeductStmt = db.prepare(`
+      UPDATE products
+      SET stock_quantity = stock_quantity - ?,
+          updated_at = CURRENT_TIMESTAMP,
+          version = version + 1
+      WHERE id = ? AND tenant_id = ? AND stock_quantity >= ?
+    `);
+
+    const sync = getGenericSyncService();
 
     for (const item of items as any[]) {
       const rawProductId = item.productId ?? item.product_id;
@@ -146,6 +155,12 @@ export class OrderService {
       }
 
       itemStmt.run(orderId, productId, quantity, unitPrice, unitPrice * quantity, item.notes ?? null, tenantId);
+
+      // 🔥 Décrémenter le stock local
+      const stockResult = stockDeductStmt.run(quantity, productId, tenantId, quantity);
+      if (stockResult.changes === 0) {
+        throw new Error(`Stock insuffisant pour le produit ID ${productId} (tenant ${tenantId})`);
+      }
 
       if (sync) {
         const product = db.prepare(
@@ -165,10 +180,11 @@ export class OrderService {
             },
             db
           );
-          console.log(`[Order] Queued product sync for ID ${product.id}, stock: ${product.stock_quantity}`);
+          console.log(`[Order] Queued product sync for ID ${product.id}, new stock: ${product.stock_quantity}`);
         }
       }
     }
+
   }
 
   private static replaceOrderItems(orderId: number, items: OrderItem[]): void {
@@ -176,14 +192,36 @@ export class OrderService {
     const tenantId = getCurrentTenantId();
     try {
       const oldItems = db.prepare('SELECT id FROM order_items WHERE order_id = ? AND tenant_id = ?').all(orderId, tenantId) as { id: number }[];
-      const sync = getProductSyncService();
+      const sync = getGenericSyncService();
       if (sync) {
         for (const item of oldItems) sync.queueChangeInsideTransaction('order_item', 'delete', { id: item.id });
       }
+
     } catch (e) { console.warn('[OrderService] Failed to queue item deletions for sync:', e); }
 
     db.prepare('DELETE FROM order_items WHERE order_id = ? AND tenant_id = ?').run(orderId, tenantId);
     this.insertOrderItems(orderId, items);
+
+    // FIX #7: Ajouter la queue des INSERT pour les nouveaux items
+    const sync = getGenericSyncService();
+    if (sync) {
+      const newItems = db.prepare(
+        'SELECT id, product_id, quantity, unit_price, total_price, notes FROM order_items WHERE order_id = ? AND tenant_id = ?'
+      ).all(orderId, tenantId) as any[];
+      for (const item of newItems) {
+        sync.queueChangeInsideTransaction('order_item', 'insert', {
+          id: item.id,
+          order_id: orderId,
+          product_id: item.product_id,
+          quantity: item.quantity,
+          unit_price: item.unit_price,
+          total_price: item.total_price,
+          notes: item.notes ?? null,
+          tenant_id: tenantId,
+          version: 1,
+        });
+      }
+    }
   }
 
   static async getAll(params: { waiter_id?: number; role?: string; table_id?: number; status?: string } = {}): Promise<OrderData[]> {
@@ -311,10 +349,10 @@ export class OrderService {
         try { const mirrorRes = await mirrorRemoteOrderToLocal(tenantId, data, normalizedItems); if (!mirrorRes.applied) console.log(`[OrderService] Order saved to Supabase only.`); } catch (mirrorErr: any) { console.warn('[OrderService] Cloud→SQLite mirror failed (non-critical):', mirrorErr?.message); }
 
         try {
-          const productSync = getProductSyncService();
-          if (productSync) {
+          const sync = getGenericSyncService();
+          if (sync) {
             setTimeout(() => {
-              productSync.syncNow(String(tenantId)).catch((err: Error) => {
+              sync.pushByEntity('product', String(tenantId)).catch((err: Error) => {
                 console.error(`[Order] Product sync failed:`, err);
               });
             }, 0);
@@ -360,10 +398,10 @@ export class OrderService {
             }
 
             try {
-              const productSync = getProductSyncService();
-              if (productSync) {
+              const sync = getGenericSyncService();
+              if (sync) {
                 setTimeout(() => {
-                  productSync.syncNow(String(tenantId)).catch((err: Error) => {
+                  sync.pushByEntity('product', String(tenantId)).catch((err: Error) => {
                     console.error(`[Order] Product sync failed:`, err);
                   });
                 }, 0);
@@ -383,18 +421,44 @@ export class OrderService {
         const newOrder = db.prepare(`SELECT o.*, t.table_number, COALESCE(ut.full_name, ut.username, u.full_name, u.username) as waiter_name, TRIM(COALESCE(ut.full_name, '') || ' ' || COALESCE(ut.username, '')) as table_waiter_name, TRIM(COALESCE(u.full_name, '') || ' ' || COALESCE(u.username, '')) as order_waiter_name FROM orders o LEFT JOIN restaurant_tables t ON o.table_id = t.id LEFT JOIN users ut ON (t.assigned_waiter_id = ut.id OR t.assigned_waiter_id = ut.remote_id) LEFT JOIN users u ON (o.waiter_id = u.id OR o.waiter_id = u.remote_id) WHERE o.id = ? AND o.tenant_id = ?`).get(orderId, tenantId) as any;
         const finalOrder = { ...newOrder, items: this.getItemsForOrder(orderId, JSON.stringify(normalizedItems)) };
         getGenericSyncService()?.queueChangeInsideTransaction('order', 'insert', finalOrder);
+
+        // FIX #1: Enfiler les order_items dans sync_outbox
+        const syncForItems = getGenericSyncService();
+        if (syncForItems) {
+          const orderItems = db.prepare(
+            'SELECT id, product_id, quantity, unit_price, total_price, notes FROM order_items WHERE order_id = ? AND tenant_id = ?'
+          ).all(orderId, tenantId) as any[];
+          for (const item of orderItems) {
+            syncForItems.queueChangeInsideTransaction('order_item', 'insert', {
+              id: item.id,
+              order_id: orderId,
+              product_id: item.product_id,
+              quantity: item.quantity,
+              unit_price: item.unit_price,
+              total_price: item.total_price,
+              notes: item.notes ?? null,
+              tenant_id: tenantId,
+              version: 1,
+            });
+          }
+        }
+
         if (isSyncEnabled()) {
             const sync = getGenericSyncService();
             sync?.pushByEntity('order', String(tenantId)).catch((e: Error) =>
                 console.warn('[OrderService] Sync push failed:', e.message)
             );
+            // FIX #8: Push immédiat des order_items après push des orders
+            sync?.pushByEntity('order_item', String(tenantId)).catch((e: Error) =>
+                console.warn('[OrderService] Order item sync push failed:', e.message)
+            );
         }
 
         try {
-          const productSync = getProductSyncService();
-          if (productSync) {
+          const sync = getGenericSyncService();
+          if (sync) {
             setTimeout(() => {
-              productSync.syncNow(String(tenantId)).catch((err: Error) => {
+              sync.pushByEntity('product', String(tenantId)).catch((err: Error) => {
                 console.error(`[Order] Product sync failed:`, err);
               });
             }, 0);

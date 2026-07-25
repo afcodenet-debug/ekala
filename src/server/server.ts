@@ -605,10 +605,13 @@ const supabaseCredsPresent = Boolean(
   process.env.SUPABASE_URL &&
   (process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY)
 );
+// FIX #5: Simplifier la condition — activer V2 si les credentials Supabase sont présents
+// (ou si on est en mode cloud). Plus besoin d'ENABLE_SUPABASE_SYNC ou de vérifier
+// explicitement le mode LOCAL : si Supabase est configuré, on active la sync.
 const shouldEnableSync =
   runtime.isCloud ||
-  process.env.ENABLE_SUPABASE_SYNC === 'true' ||
-  (runtime.mode === 'LOCAL' && supabaseCredsPresent && !env.RENDER_CLOUD_MODE);
+  supabaseCredsPresent;
+
 
 // ─── Always bind the server DB to the sync module ───────────────────────────
 // Even in LOCAL mode (sync engine disabled), routes call getProductSyncService()

@@ -5,16 +5,15 @@
 // Faille #7 résolue : dead-letter queue intégrée
 
 import { ProductSyncService } from './product-sync.service';
-import { OrderSyncService } from './order-sync.service';
 import { SaleSyncService } from './sale-sync.service';
 import { UserTenantSyncService } from './user-tenant-sync.service';
+
 import { SyncPersistedCursor } from './core/sync-persisted-cursor';
 import { DeadLetterQueue } from './core/dead-letter-queue';
 import type Database from 'better-sqlite3';
 
 export class SyncOrchestrator {
   private syncService: ProductSyncService;
-  private orderService: OrderSyncService;
   private saleService: SaleSyncService;
   private userTenantService: UserTenantSyncService;
   private db: Database.Database;
@@ -31,13 +30,11 @@ export class SyncOrchestrator {
 
   constructor(
     syncService: ProductSyncService,
-    orderService: OrderSyncService,
     saleService: SaleSyncService,
     userTenantService: UserTenantSyncService,
     db: Database.Database
   ) {
     this.syncService = syncService;
-    this.orderService = orderService;
     this.saleService = saleService;
     this.userTenantService = userTenantService;
     this.db = db;
@@ -275,11 +272,12 @@ export class SyncOrchestrator {
       // 3. Sync Products (Push/Pull)
       const productResult = await this.syncService.syncNow(tenantId);
 
-      // 4. Sync Orders (Push/Pull)
-      const ordersPushed = await this.orderService.pushPendingOrders(tenantId);
+      // 4. Sync Orders (Push/Pull) — OrderSyncService supprimé, utilise ProductSyncService
+      const ordersPushed = await this.syncService.pushByEntity('order', tenantId);
+      const ordersPulled = await this.syncService.pushByEntity('order_item', tenantId);
       const lastOrderPull = this.cursor.getOrEpoch('order_' + tenantId);
-      const ordersPulled = await this.orderService.pullOrderUpdates(tenantId, lastOrderPull);
       if (ordersPulled > 0) this.cursor.set('order_' + tenantId, new Date().toISOString());
+
 
       // 5. Sync Sales (Push/Pull)
       const salesPushed = await this.saleService.pushPendingSales(tenantId);

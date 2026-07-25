@@ -288,7 +288,17 @@ export class ProductSyncService {
   /*  PUSH – Outbox → Supabase                                           */
   /* ------------------------------------------------------------------ */
 
+  /**
+   * Alias de pushPendingByEntity pour compatibilité avec l'interface GenericSyncService.
+   * FIX #3: getGenericSyncService() peut retourner ProductSyncService en fallback,
+   * et le code appelle pushByEntity() (pas pushPendingByEntity).
+   */
+  async pushByEntity(entity: string, tenantId: string): Promise<number> {
+    return this.pushPendingByEntity(entity, tenantId);
+  }
+
   async pushPendingByEntity(entity: string, tenantId: string): Promise<number> {
+
     const table = this.ENTITY_TABLE[entity] || `${entity}s`;
     
     // [SYNC CORE] DEBUG: Log la requête de sélection

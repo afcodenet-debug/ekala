@@ -117,14 +117,31 @@ export function getOrchestratorV2(): SyncOrchestratorV2 {
 /**
  * Retourne le GenericSyncService pour synchroniser TOUTES les entités
  * (products, orders, sales, tables, categories, etc.)
+ *
+ * FIX #3: Unifier le chemin de synchronisation — retourne toujours un service valide.
+ * Si le SyncOrchestratorV2 n'est pas initialisé, on fait un fallback sur
+ * ProductSyncService (qui couvre products, orders, order_items, etc.).
  */
 export function getGenericSyncService(): any {
-  if (!orchestratorV2) {
-    console.warn('[Sync] GenericSyncService not available - running in local-only mode');
-    return null;
+  if (orchestratorV2) {
+    return orchestratorV2.getGenericSync();
   }
-  return orchestratorV2.getGenericSync();
+
+  // Fallback: ProductSyncService (legacy, mais couvre les entités critiques)
+  try {
+    const productSync = getProductSyncService();
+    if (productSync) {
+      console.warn('[Sync] Using ProductSyncService as fallback for getGenericSyncService()');
+      return productSync;
+    }
+  } catch (err: any) {
+    console.warn('[Sync] ProductSyncService fallback failed:', err?.message);
+  }
+
+  console.warn('[Sync] GenericSyncService not available - running in local-only mode');
+  return null;
 }
+
 
 // Export des entités et services
 export { SyncOrchestratorV2 } from './sync-orchestrator-v2';

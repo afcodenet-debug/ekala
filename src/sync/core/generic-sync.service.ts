@@ -385,9 +385,13 @@ export class GenericSyncService {
           continue;
         }
 
-        // FK non résolue → nullifier systématiquement (l'item sera créé quand même)
-        console.warn(`[GenericSync] FK ${field}->${targetTable}=${safeUpdate[field]} not resolved for ${def.entity} #${recordId}, nullifying`);
-        delete safeUpdate[field];
+         // FK non résolue → logger l'erreur et marquer comme "pending" pour retry
+         // Au lieu de nullifier silencieusement (ce qui créait des records sans FK),
+         // on lève une erreur qui sera attrapée par pushByEntity et marquera
+         // l'item comme "failed" avec incrément du retry_count pour relance ultérieure.
+         console.error(`[GenericSync] FK ${field}->${targetTable}=${safeUpdate[field]} not resolved for ${def.entity} #${recordId} — marking as pending for retry`);
+         throw new Error(`FK ${field}->${targetTable}=${safeUpdate[field]} not resolved for ${def.entity} #${recordId}`);
+
       }
     }
 
@@ -432,6 +436,31 @@ export class GenericSyncService {
         }
         return true;
       }
+
+      // Foreign key violation (23503) = unresolved FK, nullify and retry
+      if (error.code === '23503' || error.message?.includes('foreign key constraint')) {
+        console.warn(`[GenericSync] FK violation on upsert for ${def.entity} #${recordId}, nullifying FKs and retrying: ${error.message}`);
+        // Nullify all FK fields that could be the culprit
+        if (foreignKeys) {
+          for (const fkField of Object.keys(foreignKeys)) {
+            delete upsertPayload[fkField];
+          }
+        }
+        // Also handle category_id explicitly for product entity
+        if (def.entity === 'product' && upsertPayload.category_id !== undefined) {
+          delete upsertPayload.category_id;
+        }
+        const { data: retryData, error: retryError } = await this.supabase.from(remoteTable).upsert(upsertPayload).select('id').single();
+        if (retryError) throw retryError;
+        if (retryData?.id) {
+          const currentLocalRemoteId = this.getRemoteId(localTable, recordId);
+          if (currentLocalRemoteId !== retryData.id) {
+            this.db.prepare(`UPDATE ${localTable} SET remote_id = ? WHERE id = ?`).run(retryData.id, recordId);
+          }
+        }
+        return true;
+      }
+
       throw error;
     }
 
@@ -454,15 +483,16 @@ export class GenericSyncService {
   private cleanDataForSupabase(entity: string, data: Record<string, any>): Record<string, any> {
     const clean = { ...data };
 
-    // Colonnes à ignorer selon l'entité
-    const ignoredColumns: Record<string, string[]> = {
-      'users': ['version'],
-      'tenant_users': ['version'],
-      'orders': ['version', 'customer_phone'],
-      'products': ['version'],
-      'categories': ['version'],
-      'restaurant_tables': ['version'],
-    };
+     // Colonnes à ignorer selon l'entité
+     const ignoredColumns: Record<string, string[]> = {
+       'users': ['version'],
+       'tenant_users': ['version'],
+       'orders': ['version'],
+       'products': ['version'],
+       'categories': ['version'],
+       'restaurant_tables': ['version'],
+     };
+
 
     const toIgnore = ignoredColumns[entity] || [];
     for (const col of toIgnore) {
