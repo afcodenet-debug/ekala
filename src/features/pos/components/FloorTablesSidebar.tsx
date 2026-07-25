@@ -527,7 +527,7 @@ export const FloorTablesSidebar: React.FC<FloorTablesSidebarProps> = ({
   onTableSelect, selectedTableId, layout = 'vertical',
 }) => {
   const { user } = useAuthStore();
-  const { tables, isLoading, fetchTables } = useTableStore();
+  const { tables, isLoading, error, fetchTables } = useTableStore();
   const { selectTable } = usePOSStore();
   const [searchTerm, setSearchTerm]     = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
@@ -550,7 +550,18 @@ export const FloorTablesSidebar: React.FC<FloorTablesSidebarProps> = ({
     onTableSelect(tableId);
   };
 
-  useEffect(() => { if (user) fetchTables(); }, [user, fetchTables]);
+  // Fetch tables when user is available, and set up polling to retry
+  // every 10 seconds. This handles the race condition in Cloud mode where
+  // the billing gate may delay the initial fetch.
+  useEffect(() => {
+    if (user) {
+      fetchTables();
+      const interval = setInterval(() => {
+        fetchTables(true); // silent: don't show loading spinner on poll
+      }, 10000);
+      return () => clearInterval(interval);
+    }
+  }, [user, fetchTables]);
 
   if (isLoading) {
     return (
@@ -574,6 +585,37 @@ export const FloorTablesSidebar: React.FC<FloorTablesSidebarProps> = ({
             animation: 'pulse 1.5s infinite ease-in-out',
           }} />
         ))}
+      </div>
+    );
+  }
+
+  // Show error with retry button if tables failed to load
+  if (error && tables.length === 0 && !isLoading) {
+    return (
+      <div style={{
+        width: layout === 'horizontal' ? '100%' : '280px',
+        background: colors.surface,
+        borderBottom: layout === 'horizontal' ? `1px solid ${colors.border}` : 'none',
+        borderRight: layout === 'vertical' ? `1px solid ${colors.border}` : 'none',
+        padding: '20px', display: 'flex', flexDirection: 'column',
+        alignItems: 'center', justifyContent: 'center', gap: '12px',
+        minHeight: layout === 'horizontal' ? '100px' : '200px',
+      }}>
+        <span style={{ fontSize: 12, color: colors.text3, textAlign: 'center' }}>
+          {error}
+        </span>
+        <button
+          onClick={() => fetchTables()}
+          style={{
+            padding: '6px 16px', fontSize: 11, fontWeight: 700,
+            border: `1px solid ${colors.accent.gold}`,
+            background: colors.accent.goldDim, color: colors.accent.gold,
+            borderRadius: radius.md, cursor: 'pointer',
+            textTransform: 'uppercase', letterSpacing: '0.05em',
+          }}
+        >
+          {t('pos.retry')}
+        </button>
       </div>
     );
   }

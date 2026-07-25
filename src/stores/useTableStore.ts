@@ -49,8 +49,22 @@ export const useTableStore = create<TableStore>((set, get) => ({
   setUserContext: (userId, role) => set({ userId, role }),
 
   fetchTables: async (silent = false) => {
-    const { userId, role } = get();
-    if (!userId || !role) return;
+    let { userId, role } = get();
+
+    // Fallback: if userId/role not yet set in this store, try to resolve
+    // them from useAuthStore. This handles the race condition in Cloud mode
+    // where DataLoader is blocked by the billing gate and hasn't called
+    // setUserContext() yet, but the user is already authenticated.
+    if (!userId || !role) {
+      const authUser = useAuthStore.getState().user;
+      if (authUser?.id && authUser?.role) {
+        userId = authUser.id;
+        role = authUser.role;
+        get().setUserContext(userId, role);
+      } else {
+        return;
+      }
+    }
 
     if (!silent) set({ isLoading: true, error: null });
     try {

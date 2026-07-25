@@ -3,6 +3,7 @@ import { Navigate, Route, Routes } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { useSettingsStore } from './stores/useSettingsStore';
 import { useAuthStore } from './stores/useAuthStore';
+import { useTableStore } from './stores/useTableStore';
 import { useUIStore } from './stores/useUIStore';
 import { I18nProvider } from './lib/i18n';
 import Sidebar from './components/Sidebar';
@@ -75,10 +76,21 @@ const PageLoader = () => (
 
 const ProtectedRoute = ({ children, roles }: { children: React.ReactNode, roles?: string[] }) => {
   const { isAuthenticated, user } = useAuthStore();
-  
+  const { setUserContext, userId, role } = useTableStore();
+
+  // Set user context (userId/role) as soon as the user is authenticated,
+  // BEFORE the billing gate in DataLoader. This ensures fetchTables() and
+  // other table operations work on the POS page in Cloud mode without
+  // requiring the user to visit /tables first.
+  useEffect(() => {
+    if (isAuthenticated && user && (!userId || !role)) {
+      setUserContext(user.id, user.role);
+    }
+  }, [isAuthenticated, user, userId, role, setUserContext]);
+
   if (!isAuthenticated) return <Navigate to="/login" />;
   if (roles && user && !roles.includes(user.role)) return <Navigate to="/" />;
-  
+
   return (
     <>
       <DataLoader />
