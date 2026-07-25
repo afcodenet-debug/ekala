@@ -149,7 +149,7 @@ export class ConflictResolver {
 
     // Conflit si les deux ont été modifiés depuis la dernière sync
     const versionDiff = Math.abs(localVersion - remoteVersion);
-    return versionDiff > 1;
+    return versionDiff > 0;
   }
 
   /**
