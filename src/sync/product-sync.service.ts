@@ -262,12 +262,12 @@ export class ProductSyncService {
         errors++;
       }
 
-      // Produits : Bidirectional Sync (Push & Pull)
+      // Produits : Push d'abord (pour propager le stock local), puis Pull
       try {
-        console.log(`[SYNC CORE] Phase 3: PULL products tenant=${tenantId}`);
-        pulled += await this.pullByEntityFromSupabase('product', tenantId);
-        console.log(`[SYNC CORE] Phase 4: PUSH products tenant=${tenantId}`);
+        console.log(`[SYNC CORE] Phase 3: PUSH products tenant=${tenantId}`);
         pushed += await this.pushPendingByEntity('product', tenantId);
+        console.log(`[SYNC CORE] Phase 4: PULL products tenant=${tenantId}`);
+        pulled += await this.pullByEntityFromSupabase('product', tenantId);
       } catch (e: any) {
         console.error(`[SYNC CORE] Product sync failed:`, e?.message || e);
         errors++;
@@ -295,7 +295,7 @@ export class ProductSyncService {
     const items: OutboxItem[] = this.db
       .prepare(
         `SELECT * FROM sync_outbox 
-         WHERE entity = ? AND status = 'pending' AND tenant_id = ?
+         WHERE entity = ? AND status = 'pending' AND (tenant_id IS NULL OR CAST(tenant_id AS INTEGER) = ?)
          ORDER BY created_at ASC 
          LIMIT 50`
       )
