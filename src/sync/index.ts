@@ -120,7 +120,8 @@ export function getOrchestratorV2(): SyncOrchestratorV2 {
  */
 export function getGenericSyncService(): any {
   if (!orchestratorV2) {
-    throw new Error('SyncOrchestratorV2 not initialized. Call initializeSyncV2 first.');
+    console.warn('[Sync] GenericSyncService not available - running in local-only mode');
+    return null;
   }
   return orchestratorV2.getGenericSync();
 }

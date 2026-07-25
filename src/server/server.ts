@@ -716,16 +716,17 @@ app.listen(PORT, async () => {
   // The GenericSync engine also pulls orders, but only when the full sync
   // engine is initialized (requires ENABLE_SUPABASE_SYNC=true). The PullSync
   // worker is a lightweight alternative that works without the full sync engine.
-  if (dataSource.isLocal() && env.SUPABASE_URL && env.SUPABASE_SERVICE_ROLE_KEY && !syncOrchestratorV2) {
-    const explicit = process.env.ENABLE_SUPABASE_PULL;
-    if (explicit === 'true' || explicit === '1') {
-      const { startSupabasePullWorker } = require('./services/supabase-pull-sync.service');
-      startSupabasePullWorker();
-      console.log('[Supabase] ✅ PullSyncWorker started (Supabase → SQLite order pull active)');
-    } else {
-      console.log('[Supabase] PullSyncWorker not started — set ENABLE_SUPABASE_PULL=true to enable');
-    }
-  } else if (dataSource.isCloud()) {
+   if (dataSource.isLocal() && env.SUPABASE_URL && env.SUPABASE_SERVICE_ROLE_KEY && !syncOrchestratorV2) {
+     const explicit = process.env.ENABLE_SUPABASE_PULL;
+     // Enable PullSync by default when Supabase creds are present in local mode
+     if (explicit !== 'false' && explicit !== '0') {
+       const { startSupabasePullWorker } = require('./services/supabase-pull-sync.service');
+       startSupabasePullWorker();
+       console.log('[Supabase] ✅ PullSyncWorker started (Supabase → SQLite order pull active)');
+     } else {
+       console.log('[Supabase] PullSyncWorker not started — set ENABLE_SUPABASE_PULL=false to disable');
+     }
+   } else if (dataSource.isCloud()) {
     console.log('[Supabase] CLOUD mode — skipping pull workers (no local SQLite, reads from Supabase directly)');
   } else if (dataSource.isLocal()) {
     console.log('[Supabase] Local mode — skipping pull workers (credentials not configured)');
