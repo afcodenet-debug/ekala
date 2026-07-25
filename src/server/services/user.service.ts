@@ -26,7 +26,7 @@
 
 import db from '../db/database';
 import { env } from '../config/env';
-import { getUserTenantSyncService, withOutboxTransaction } from '../../sync';
+import { getGenericSyncService, withOutboxTransaction } from '../../sync';
 
 export type UserRole = 'admin' | 'manager' | 'cashier' | 'waiter' | 'owner';
 
@@ -308,11 +308,11 @@ export class UserService {
 
         // Queue the change for Supabase push via the SyncOrchestrator.
         try {
-          const userTenantService = getUserTenantSyncService();
+          const userTenantService = getGenericSyncService();
           if (userTenantService) {
-            userTenantService.queueUserChange('insert', newUser);
+            userTenantService.queueChangeInsideTransaction('user', 'insert', newUser);
           } else {
-            console.warn('[UserService] UserTenantSyncService not initialized — user will not be pushed to Supabase. Make sure initializeUserTenantSync() is called.');
+            console.warn('[UserService] GenericSyncService not initialized — user will not be pushed to Supabase.');
           }
         } catch (syncErr) {
           console.warn('[UserService] Failed to queue user for sync:', syncErr);
@@ -475,11 +475,11 @@ static async update(tenantId: number, id: number, updates: UserUpdateInput, requ
         if (!updated) throw new Error('Failed to retrieve updated user');
 
         try {
-          const userTenantService = getUserTenantSyncService();
+          const userTenantService = getGenericSyncService();
           if (userTenantService) {
-            userTenantService.queueUserChange('update', updated);
+            userTenantService.queueChangeInsideTransaction('user', 'update', updated);
           } else {
-            console.warn('[UserService] UserTenantSyncService not initialized — user will not be pushed to Supabase.');
+            console.warn('[UserService] GenericSyncService not initialized — user will not be pushed to Supabase.');
           }
         } catch (syncErr) {
           console.warn('[UserService] Failed to queue user update for sync:', syncErr);
@@ -558,11 +558,11 @@ static async update(tenantId: number, id: number, updates: UserUpdateInput, requ
 
         if (result.changes > 0) {
           try {
-            const userTenantService = getUserTenantSyncService();
+            const userTenantService = getGenericSyncService();
             if (userTenantService) {
-              userTenantService.queueUserChange('delete', { id: user.id, remote_id: user.remote_id });
+              userTenantService.queueChangeInsideTransaction('user', 'delete', { id: user.id, remote_id: user.remote_id });
             } else {
-              console.warn('[UserService] UserTenantSyncService not initialized — user deletion will not be pushed to Supabase.');
+              console.warn('[UserService] GenericSyncService not initialized — user deletion will not be pushed to Supabase.');
             }
           } catch (syncErr) {
             console.warn('[UserService] Failed to queue user deletion for sync:', syncErr);

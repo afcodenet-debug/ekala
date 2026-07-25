@@ -1,6 +1,6 @@
 import db from '../db/database';
 import { env } from '../config/env';
-import { getUserTenantSyncService, withOutboxTransaction } from '../../sync';
+import { getGenericSyncService, withOutboxTransaction } from '../../sync';
 
 export type TenantUserRole = 'owner' | 'admin' | 'manager' | 'cashier' | 'waiter' | 'staff';
 
@@ -122,9 +122,9 @@ export class TenantUserService {
         const created = db.prepare('SELECT * FROM tenant_users WHERE id = ?').get(result.lastInsertRowid) as TenantUser;
 
         try {
-          const syncService = getUserTenantSyncService();
+          const syncService = getGenericSyncService();
           if (syncService) {
-            syncService.queueTenantUserChange('insert', created);
+            syncService.queueChangeInsideTransaction('tenant_user', 'insert', created);
           }
         } catch (syncErr) {
           console.warn('[TenantUserService] Failed to queue tenant_user insert for sync:', syncErr);
@@ -190,9 +190,9 @@ export class TenantUserService {
         const updated = db.prepare('SELECT * FROM tenant_users WHERE tenant_id = ? AND user_id = ?').get(tenantId, userId) as TenantUser;
 
         try {
-          const syncService = getUserTenantSyncService();
+          const syncService = getGenericSyncService();
           if (syncService) {
-            syncService.queueTenantUserChange('update', updated);
+            syncService.queueChangeInsideTransaction('tenant_user', 'update', updated);
           }
         } catch (syncErr) {
           console.warn('[TenantUserService] Failed to queue tenant_user update for sync:', syncErr);
@@ -238,9 +238,9 @@ export class TenantUserService {
 
         if (result.changes > 0) {
           try {
-            const syncService = getUserTenantSyncService();
+            const syncService = getGenericSyncService();
             if (syncService) {
-              syncService.queueTenantUserChange('delete', { id: existing.id, remote_id: existing.remote_id });
+              syncService.queueChangeInsideTransaction('tenant_user', 'delete', { id: existing.id, remote_id: existing.remote_id });
             }
           } catch (syncErr) {
             console.warn('[TenantUserService] Failed to queue tenant_user deletion for sync:', syncErr);

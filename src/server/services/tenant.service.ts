@@ -1,6 +1,6 @@
 import db from '../db/database';
 import { env } from '../config/env';
-import { getUserTenantSyncService, withOutboxTransaction } from '../../sync';
+import { getGenericSyncService, withOutboxTransaction } from '../../sync';
 
 export interface Tenant {
   id: number;
@@ -125,9 +125,9 @@ export class TenantService {
         const updated = db.prepare('SELECT * FROM tenants WHERE id = ?').get(id) as Tenant;
         
         try {
-          const syncService = getUserTenantSyncService();
+          const syncService = getGenericSyncService();
           if (syncService) {
-            syncService.queueTenantChange('update', updated);
+            syncService.queueChangeInsideTransaction('tenant', 'update', updated);
           }
         } catch (syncErr) {
           console.warn('[TenantService] Failed to queue tenant update for sync:', syncErr);

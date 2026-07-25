@@ -2,7 +2,7 @@ import express from 'express';
 import db from '../db/database';
 import { notifyOrderCheckout } from '../services/notification.service';
 import { requirePermission } from '../middleware/auth';
-import { getProductSyncService, getOrderSyncService, getOrchestratorV2 } from '../../sync';
+import { getProductSyncService, getGenericSyncService, getOrchestratorV2 } from '../../sync';
 import { createClient } from '@supabase/supabase-js';
 import { env } from '../config/env';
 import { dataSource } from '../infrastructure/data-source-manager';
@@ -721,7 +721,7 @@ router.post('/checkout', requirePermission('PROCESS_PAYMENTS'), async (req: any,
           console.warn('[Sales] Failed to queue inventory movement for sync:', syncErr);
         }
 
-        db.prepare('UPDATE products SET stock_quantity = ? WHERE id = ? AND tenant_id = ?').run(quantityAfter, item.productId, tenantId);
+        db.prepare('UPDATE products SET stock_quantity = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND tenant_id = ?').run(quantityAfter, item.productId, tenantId);
         
         // Sync product stock
         getProductSyncService()?.queueChangeInsideTransaction('product', 'update', {
@@ -792,7 +792,7 @@ router.post('/checkout', requirePermission('PROCESS_PAYMENTS'), async (req: any,
             SELECT id, product_id as productId, quantity, unit_price as price, notes 
             FROM order_items WHERE order_id = ? AND tenant_id = ?
           `).all(normalizedOrderId, tenantId);
-          getOrderSyncService()?.queueOrderChange('update', { ...remainingOrder, items: itemsWithIds }, String(tenantId));
+          getGenericSyncService()?.queueChangeInsideTransaction('order', 'update', { ...remainingOrder, items: itemsWithIds });
         } catch (e) {
           console.warn('[Sales] Failed to queue partial order update for sync:', e);
         }
@@ -810,7 +810,7 @@ router.post('/checkout', requirePermission('PROCESS_PAYMENTS'), async (req: any,
         // Queue sync
         try {
           const updatedOrder = db.prepare('SELECT * FROM orders WHERE id = ? AND tenant_id = ?').get(normalizedOrderId, tenantId);
-          getOrderSyncService()?.queueOrderChange('update', updatedOrder, String(tenantId));
+          getGenericSyncService()?.queueChangeInsideTransaction('order', 'update', updatedOrder);
         } catch (e) {
           console.warn('[Sales] Failed to queue order paid status for sync:', e);
         }

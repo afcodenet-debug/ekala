@@ -406,8 +406,11 @@ export class GenericSyncService {
       else delete safeUpdate.id;
     }
 
+    // Clean data for Supabase (remove columns that may not exist or shouldn't be pushed)
+    const cleanData = this.cleanDataForSupabase(def.entity, safeUpdate);
+
     const isValidRemoteId = effectiveRemoteId && /^\d+$/.test(String(effectiveRemoteId));
-    const upsertPayload = isValidRemoteId ? { ...safeUpdate, id: String(effectiveRemoteId) } : safeUpdate;
+    const upsertPayload = isValidRemoteId ? { ...cleanData, id: String(effectiveRemoteId) } : cleanData;
 
     const shouldInsert = def.entity === 'inventory_movement' && !effectiveRemoteId;
 
@@ -440,6 +443,33 @@ export class GenericSyncService {
     }
 
     return true;
+  }
+
+  /**
+   * Nettoie les données avant le push vers Supabase.
+   * Supprime les colonnes qui n'existent pas (ou qui posent problème) en Supabase.
+   * C'est une sécurité défensive : les colonnes devraient être ajoutées via les migrations,
+   * mais cette méthode évite les erreurs en cas de schéma non aligné.
+   */
+  private cleanDataForSupabase(entity: string, data: Record<string, any>): Record<string, any> {
+    const clean = { ...data };
+
+    // Colonnes à ignorer selon l'entité
+    const ignoredColumns: Record<string, string[]> = {
+      'users': ['version'],
+      'tenant_users': ['version'],
+      'orders': ['version', 'customer_phone'],
+      'products': ['version'],
+      'categories': ['version'],
+      'restaurant_tables': ['version'],
+    };
+
+    const toIgnore = ignoredColumns[entity] || [];
+    for (const col of toIgnore) {
+      delete clean[col];
+    }
+
+    return clean;
   }
 
   private async handleDelete(def: SyncEntityDefinition, _item: any, payload: any, recordId: number, remoteId?: number | string | null) {

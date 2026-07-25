@@ -1,6 +1,6 @@
 import db from '../db/database';
 import { notifyOrderCheckout, loadRawSettings } from '../services/notification.service';
-import { getOrderSyncService, getProductSyncService, withOutboxTransaction, isSyncEnabled } from '../../sync';
+import { getGenericSyncService, getProductSyncService, withOutboxTransaction, isSyncEnabled } from '../../sync';
 import { getCurrentTenantId } from '../db/tenant-context';
 import { dataSource } from '../infrastructure/data-source-manager';
 import { mirrorRemoteOrderToLocal, deleteMirroredOrder } from './order-local-mirror';
@@ -351,8 +351,13 @@ export class OrderService {
             this.replaceOrderItems(existingOrder.id, mergedItems);
             const updatedOrder = db.prepare(`SELECT o.*, t.table_number, COALESCE(ut.full_name, ut.username, u.full_name, u.username) as waiter_name, TRIM(COALESCE(ut.full_name, '') || ' ' || COALESCE(ut.username, '')) as table_waiter_name, TRIM(COALESCE(u.full_name, '') || ' ' || COALESCE(u.username, '')) as order_waiter_name FROM orders o LEFT JOIN restaurant_tables t ON o.table_id = t.id LEFT JOIN users ut ON (t.assigned_waiter_id = ut.id OR t.assigned_waiter_id = ut.remote_id) LEFT JOIN users u ON (o.waiter_id = u.id OR o.waiter_id = u.remote_id) WHERE o.id = ? AND o.tenant_id = ?`).get(existingOrder.id, tenantId) as any;
             const finalOrder = { ...updatedOrder, items: mergedItems };
-            getOrderSyncService()?.queueOrderChange('update', finalOrder, String(tenantId));
-            if (isSyncEnabled()) getOrderSyncService()?.pushPendingOrders(String(tenantId)).catch(e => console.warn('[OrderService] Sync push failed:', e));
+            getGenericSyncService()?.queueChangeInsideTransaction('order', 'update', finalOrder);
+            if (isSyncEnabled()) {
+                const sync = getGenericSyncService();
+                sync?.pushByEntity('order', String(tenantId)).catch((e: Error) =>
+                    console.warn('[OrderService] Sync push failed:', e.message)
+                );
+            }
 
             try {
               const productSync = getProductSyncService();
@@ -377,8 +382,13 @@ export class OrderService {
 
         const newOrder = db.prepare(`SELECT o.*, t.table_number, COALESCE(ut.full_name, ut.username, u.full_name, u.username) as waiter_name, TRIM(COALESCE(ut.full_name, '') || ' ' || COALESCE(ut.username, '')) as table_waiter_name, TRIM(COALESCE(u.full_name, '') || ' ' || COALESCE(u.username, '')) as order_waiter_name FROM orders o LEFT JOIN restaurant_tables t ON o.table_id = t.id LEFT JOIN users ut ON (t.assigned_waiter_id = ut.id OR t.assigned_waiter_id = ut.remote_id) LEFT JOIN users u ON (o.waiter_id = u.id OR o.waiter_id = u.remote_id) WHERE o.id = ? AND o.tenant_id = ?`).get(orderId, tenantId) as any;
         const finalOrder = { ...newOrder, items: this.getItemsForOrder(orderId, JSON.stringify(normalizedItems)) };
-        getOrderSyncService()?.queueOrderChange('insert', finalOrder, String(tenantId));
-        if (isSyncEnabled()) getOrderSyncService()?.pushPendingOrders(String(tenantId)).catch(e => console.warn('[OrderService] Sync push failed:', e));
+        getGenericSyncService()?.queueChangeInsideTransaction('order', 'insert', finalOrder);
+        if (isSyncEnabled()) {
+            const sync = getGenericSyncService();
+            sync?.pushByEntity('order', String(tenantId)).catch((e: Error) =>
+                console.warn('[OrderService] Sync push failed:', e.message)
+            );
+        }
 
         try {
           const productSync = getProductSyncService();
@@ -424,7 +434,7 @@ export class OrderService {
         this.replaceOrderItems(id, normalizedItems);
         const updatedOrder = db.prepare(`SELECT o.*, t.table_number, COALESCE(ut.full_name, ut.username, u.full_name, u.username) as waiter_name, TRIM(COALESCE(ut.full_name, '') || ' ' || COALESCE(ut.username, '')) as table_waiter_name, TRIM(COALESCE(u.full_name, '') || ' ' || COALESCE(u.username, '')) as order_waiter_name FROM orders o LEFT JOIN restaurant_tables t ON o.table_id = t.id LEFT JOIN users ut ON (t.assigned_waiter_id = ut.id OR t.assigned_waiter_id = ut.remote_id) LEFT JOIN users u ON (o.waiter_id = u.id OR o.waiter_id = u.remote_id) WHERE o.id = ? AND o.tenant_id = ?`).get(id, tenantId) as any;
         const result = { ...updatedOrder, items: normalizedItems };
-        getOrderSyncService()?.queueOrderChange('update', result, String(tenantId));
+        getGenericSyncService()?.queueChangeInsideTransaction('order', 'update', result);
         return result;
       } catch (error) { throw error; }
     });
@@ -467,8 +477,13 @@ export class OrderService {
         db.prepare('UPDATE orders SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND tenant_id = ?').run(status, id, tenantId);
         const updatedOrder = db.prepare(`SELECT o.*, t.table_number, COALESCE(ut.full_name, ut.username, u.full_name, u.username) as waiter_name, TRIM(COALESCE(ut.full_name, '') || ' ' || COALESCE(ut.username, '')) as table_waiter_name, TRIM(COALESCE(u.full_name, '') || ' ' || COALESCE(u.username, '')) as order_waiter_name FROM orders o LEFT JOIN restaurant_tables t ON o.table_id = t.id LEFT JOIN users ut ON (t.assigned_waiter_id = ut.id OR t.assigned_waiter_id = ut.remote_id) LEFT JOIN users u ON (o.waiter_id = u.id OR o.waiter_id = u.remote_id) WHERE o.id = ? AND o.tenant_id = ?`).get(id, tenantId) as any;
         const result = { ...updatedOrder, items: this.getItemsForOrder(id, updatedOrder.items) };
-        getOrderSyncService()?.queueOrderChange('update', result, String(tenantId));
-        if (isSyncEnabled()) getOrderSyncService()?.pushPendingOrders(String(tenantId)).catch(e => console.warn('[OrderService] Sync push failed:', e));
+      getGenericSyncService()?.queueChangeInsideTransaction('order', 'update', result);
+      if (isSyncEnabled()) {
+        const sync = getGenericSyncService();
+        sync?.pushByEntity('order', String(tenantId)).catch((e: Error) =>
+          console.warn('[OrderService] Sync push failed:', e.message)
+        );
+      }
 
         if (!wasPaid && status === 'paid') {
           const saleExists = db.prepare('SELECT 1 FROM sales WHERE order_id = ? AND tenant_id = ? LIMIT 1').get(id, tenantId);
@@ -510,7 +525,7 @@ export class OrderService {
       db.prepare('DELETE FROM order_items WHERE order_id = ? AND tenant_id = ?').run(id, tenantId);
       const result = db.prepare('DELETE FROM orders WHERE id = ? AND tenant_id = ?').run(id, tenantId);
       if (result.changes === 0) throw new Error('Order not found');
-      getOrderSyncService()?.queueOrderChange('delete', { id } as any, String(tenantId));
+      getGenericSyncService()?.queueChangeInsideTransaction('order', 'delete', { id });
     });
   }
 }

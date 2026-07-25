@@ -716,7 +716,7 @@ app.listen(PORT, async () => {
   // The GenericSync engine also pulls orders, but only when the full sync
   // engine is initialized (requires ENABLE_SUPABASE_SYNC=true). The PullSync
   // worker is a lightweight alternative that works without the full sync engine.
-  if (dataSource.isLocal() && env.SUPABASE_URL && env.SUPABASE_SERVICE_ROLE_KEY) {
+  if (dataSource.isLocal() && env.SUPABASE_URL && env.SUPABASE_SERVICE_ROLE_KEY && !syncOrchestratorV2) {
     const explicit = process.env.ENABLE_SUPABASE_PULL;
     if (explicit === 'true' || explicit === '1') {
       const { startSupabasePullWorker } = require('./services/supabase-pull-sync.service');

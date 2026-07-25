@@ -3,12 +3,12 @@
 // This file is meant to be imported from src/main/main.js
 
 import { app } from 'electron';
-import { initializeProductSync, getOrderSyncService, getSaleSyncService, initializeUserTenantSync } from './index';
-import { SyncOrchestrator } from './sync-orchestrator';
+import { initializeSyncV2 } from './index';
+import { SyncOrchestratorV2 } from './sync-orchestrator-v2';
 import Database from 'better-sqlite3';
 import path from 'path';
 
-let orchestrator: SyncOrchestrator | null = null;
+let orchestrator: SyncOrchestratorV2 | null = null;
 
 interface SyncSetupOptions {
   supabaseUrl: string;
@@ -48,16 +48,8 @@ export function initializeProductionSync(options: SyncSetupOptions) {
     console.warn('[ProductionSync] Fallback: opened data/database.db directly for sync');
   }
 
-  // 1. Initialize the core sync service (with the correct db)
-  const syncService = initializeProductSync(db, supabaseUrl, supabaseAnonKey);
-  const orderService = getOrderSyncService();
-  const saleService = getSaleSyncService();
-
-  // 1b. Initialize the user/tenant sync service (used for bidirectional user/tenant sync)
-  const userTenantService = initializeUserTenantSync(db, supabaseUrl, supabaseAnonKey);
-
-  // 2. Create the production orchestrator
-  orchestrator = new SyncOrchestrator(syncService, orderService, saleService, userTenantService, db, tenantId);
+  // 1. Initialize the V2 sync orchestrator (covers ALL entities via GenericSyncService)
+  orchestrator = initializeSyncV2(db, supabaseUrl, supabaseAnonKey, tenantId);
 
   // 3. Start the scheduler
   orchestrator.startScheduler(syncIntervalMs);
@@ -80,7 +72,7 @@ export function initializeProductionSync(options: SyncSetupOptions) {
   return orchestrator;
 }
 
-export function getSyncOrchestrator(): SyncOrchestrator {
+export function getSyncOrchestrator(): SyncOrchestratorV2 {
   if (!orchestrator) {
     throw new Error('Sync orchestrator not initialized. Call initializeProductionSync() first.');
   }

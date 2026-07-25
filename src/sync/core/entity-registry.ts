@@ -79,7 +79,7 @@ export const SYNC_ENTITIES: SyncEntityDefinition[] = [
     entity: 'tenant_user',
     localTable: 'tenant_users',
     remoteTable: 'tenant_users',
-    syncOrder: 8,
+    syncOrder: 46,
     allowedFields: [...ALLOWED_BASE, 'tenant_id', 'user_id', 'role', 'is_default', 'is_active', 'invited_at', 'joined_at'],
     foreignKeys: { tenant_id: 'tenants', user_id: 'users' },
     booleanFields: ['is_default', 'is_active'],
