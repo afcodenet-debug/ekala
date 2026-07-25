@@ -5,6 +5,8 @@
 
 import type Database from 'better-sqlite3';
 
+export type RuntimeMode = 'local' | 'cloud' | 'hybrid';
+
 export type ConflictStrategy = 'lww' | 'field-merge' | 'manual';
 
 export interface ConflictRecord {
@@ -51,32 +53,45 @@ export class ConflictResolver {
   }
 
   /**
-   * Stratégie Last-Writer-Wins versionnée — LOCAL-FIRST.
+   * Stratégie Last-Writer-Wins versionnée — adaptée au mode d'exécution.
    * 
-   * PRINCIPE : SQLite est la source de vérité. En cas de conflit (modifications
-   * concurrentes détectées par un écart de version), la version locale gagne
-   * TOUJOURS. Cela garantit que les modifications effectuées en mode offline
-   * ne sont jamais écrasées par des données distantes.
+   * PRINCIPE : 
+   * - En mode LOCAL : SQLite est la source de vérité → local gagne TOUJOURS
+   * - En mode CLOUD : Supabase est la source de vérité → remote gagne si plus récent
+   * - En mode HYBRID : comparer les timestamps (le plus récent gagne)
    * 
    * RÈGLE :
-   * - Si écart de version > 0 (conflit) → local gagne (SQLite source de vérité)
-   * - Si versions identiques → comparer les timestamps (le plus récent gagne)
-   * - Si égalité parfaite → local gagne (préserve l'état local)
+   * - Mode LOCAL : local gagne toujours (préserve les modifications offline)
+   * - Mode CLOUD : remote gagne si version différente ou timestamp plus récent
+   * - Mode HYBRID : le plus récent gagne (timestamp)
    * 
+   * @param mode - Le mode d'exécution actuel ('local' | 'cloud' | 'hybrid')
    * @see docs/CONFLICT_RESOLUTION.md pour la stratégie complète
    */
   resolveLWW(
     localVersion: number,
     remoteVersion: number,
     localUpdatedAt: string,
-    remoteUpdatedAt: string
+    remoteUpdatedAt: string,
+    mode: RuntimeMode = 'local'
   ): 'local_wins' | 'remote_wins' {
-    // Conflit détecté : écart de version > 0 → LOCAL GAGNE TOUJOURS
-    // Ceci est le comportement LOCAL-FIRST : SQLite est la source de vérité
-    if (Math.abs(localVersion - remoteVersion) > 0) {
+    // Mode LOCAL : SQLite est la source de vérité → local gagne TOUJOURS
+    if (mode === 'local') {
       return 'local_wins';
     }
-    // Versions identiques : comparer les timestamps
+    
+    // Mode CLOUD : Supabase est la source de vérité → remote gagne si plus récent
+    if (mode === 'cloud') {
+      if (Math.abs(localVersion - remoteVersion) > 0) {
+        return 'remote_wins';
+      }
+      const localTime = new Date(localUpdatedAt).getTime();
+      const remoteTime = new Date(remoteUpdatedAt).getTime();
+      if (remoteTime >= localTime) return 'remote_wins';
+      return 'local_wins';
+    }
+    
+    // Mode HYBRID : le plus récent gagne (timestamp)
     const localTime = new Date(localUpdatedAt).getTime();
     const remoteTime = new Date(remoteUpdatedAt).getTime();
     if (localTime > remoteTime) return 'local_wins';
